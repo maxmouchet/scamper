@@ -1,0 +1,6 @@
+logfile
+*.core
+*.warts
+Makefile
+Makefile.in
+config*
