@@ -1,13 +1,15 @@
 /*
  * sc_analysis_dump
  *
- * $Id: sc_analysis_dump.c,v 1.42.2.2 2012/04/04 00:05:59 mjl Exp $
+ * $Id: sc_analysis_dump.c,v 1.58 2013/07/08 22:22:42 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012-2013 The Regents of the University of California
+ * Copyright (C) 2012      Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_analysis_dump.c,v 1.42.2.2 2012/04/04 00:05:59 mjl Exp $";
+  "$Id: sc_analysis_dump.c,v 1.58 2013/07/08 22:22:42 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -37,8 +39,10 @@ static const char rcsid[] =
 #include "scamper_list.h"
 #include "scamper_addr.h"
 #include "scamper_file.h"
+#include "scamper_icmpext.h"
 #include "trace/scamper_trace.h"
 #include "mjl_splaytree.h"
+#include "utils.h"
 
 #define OPT_SKIP          0x00001
 #define OPT_DEBUG         0x00002
@@ -55,6 +59,10 @@ static const char rcsid[] =
 #define OPT_HIDEPATH      0x01000
 #define OPT_HIDEIRTT      0x02000
 #define OPT_HELP          0x04000
+#define OPT_SHOWUSERID    0x08000
+#define OPT_SHOWQTTL      0x10000
+#define OPT_SHOWMPLS      0x20000
+#define OPT_SHOWIPTTL     0x40000
 
 static uint32_t options = 0;
 
@@ -68,21 +76,19 @@ static int    filelist_len = 0;
 /* where the output goes.  stdout by default */
 static FILE *out = NULL;
 
-#ifdef USE_NETACUITY_
+#ifdef HAVE_NETACUITY
 #define OPT_GEO           0x08000
 #define OPT_GEOSERV       0x10000
 static char               *geo_serv = NULL;
 static struct splaytree_t *geo_seen = NULL;
 #endif
 
-static void usage(const uint32_t opt_mask)
+static void usage(void)
 {
   fprintf(stderr,
-	  "usage: sc_analysis_dump [-oeCsdlctrHpigh] [-S skip trace count]\n"
-	  "                        [-D debug trace count] [-G geo server]\n"
-	  "                        [file1 file2 ... fileN]\n");
-
-  if(opt_mask == 0) return;
+	  "usage: sc_analysis_dump [-oeCsdlctrHpighUQMT]\n"
+	  "                        [-S skip count] [-D debug count]\n"
+	  "                        [-G geo server] [file1 file2 ... fileN]\n");
 
   return;
 }
@@ -92,9 +98,9 @@ static int check_options(int argc, char *argv[])
   int i;
   char opts[48];
   char ch;
-  snprintf(opts, sizeof(opts), "oeCsdlctrHpiS:D:h");
+  snprintf(opts, sizeof(opts), "oeCsdlctrHpiS:D:?UQMT");
 
-#ifdef USE_NETACUITY
+#ifdef HAVE_NETACUITY
   strcat(opts, "gG:");
 #endif
 
@@ -161,7 +167,23 @@ static int check_options(int argc, char *argv[])
 	  options |= OPT_HIDEIRTT;
 	  break;
 
-#ifdef USE_NETACUITY_
+	case 'U':
+	  options |= OPT_SHOWUSERID;
+	  break;
+
+	case 'Q':
+	  options |= OPT_SHOWQTTL;
+	  break;
+
+	case 'M':
+	  options |= OPT_SHOWMPLS;
+	  break;
+
+	case 'T':
+	  options |= OPT_SHOWIPTTL;
+	  break;
+
+#ifdef HAVE_NETACUITY
 	case 'g':
 	  options |= OPT_GEO;
 	  break;
@@ -172,12 +194,12 @@ static int check_options(int argc, char *argv[])
 	  break;
 #endif
 
-	case 'h':
+	case '?':
 	  options |= OPT_HELP;
 	  break;
 
 	default:
-	  usage(0);
+	  usage();
 	  return -1;
 	}
     }
@@ -206,15 +228,16 @@ static char *rtt_tostr(char *str, const size_t len, const struct timeval *rtt)
 
 static void print_help()
 {
-  usage(0);
+  usage();
   fprintf(stderr,
-  "  This program prints out skitter Arts traces.\n"
+  "  This program prints out scamper warts and skitter arts traces.\n"
   "  C - hide comments\n"
   "  o - old format version 1.0\n"
   "  s - hide Source \n"
   "  d - hide Destination \n"
   "  l - hide list number\n"
   "  c - hide cycle number\n"
+  "  U - show userid number\n"
   "  t - hide Timestamp \n"
   "  r - hide Reply Fields\n"
   "     DestReplied, DestRTT, RequestTTL, ReplyTTL \n"
@@ -224,133 +247,245 @@ static void print_help()
   "      PathComplete, PerHopData\n"
   "  i - hides hop non IP data\n"
   "      HopRTT, HopNumTries\n"
+  "  M - show MPLS headers recorded in ICMP extension headers\n"
+  "  Q - show quoted IP-TTL in response\n"
+  "  T - show IP-TTL in response\n"
   "\n"
   "  e - add Destination to Ending\n"
   "\n"
-  "  D numline - debug mode that only reads the first numline\n"
-  "      of arts objects\n"
-  "  S numline - skips first numline of art objects in the file\n"
+  "  D numline - debug mode that only reads the first numline objects\n"
+  "  S numline - skips first numline objects in the file\n"
   "\n"
+#ifdef HAVE_NETACUITY
   "  g - print out geographical information\n"
   "      assuming that environmental variable NETACUITY_SERVER is set\n"
   "      to the NETACUITY server\n"
   "  G servername - the same as g except it uses the servername\n"
   "      given on the command line.\n"
   " \n"
-  "  h - prints this message\n"
+#endif
+  "  ? - prints this message\n"
   " \n"
  );
- exit(0);
+
+  return;
 }
 
 
 static void print_header_comments(void)
 {
+  uint32_t u32;
+  int i = 1;
+  char buf[64], buf2[64], buf3[64];
+  size_t off;
+
   printf(
  "# =======================================================================\n"
- "# This file contains an ASCII representation of the IPv4 paths stored in \n"
- "# the binary skitter arts++ and scamper warts file formats.              \n"
- "#                                                                        \n"
- "# This ASCII file format is in the sk_analysis_dump text output          \n"
- "# format: imdc.datcat.org/format/1-003W-7                                \n"
- "#                                                                        \n"
+ "# This file contains an ASCII representation of the IP paths stored in\n"
+ "# the binary skitter arts++ and scamper warts file formats.\n"
+ "#\n"
+ "# This ASCII file format is in the sk_analysis_dump text output\n"
+ "# format: imdc.datcat.org/format/1-003W-7\n"
+ "#\n"
  "# =======================================================================\n"
- "# There is one trace per line, with the following tab-separated fields:  \n"
- "#                                                                        \n"
- "#                                                                        \n"
- "# 1. Key -- Indicates the type of line and determines the meaning of the \n"
- "#           remaining fields.  This will always be 'T' for an IP trace.  \n"
- "#                                                                        \n"
- "# -------------------- Header Fields ------------------                  \n"
- "#                                                                        \n"
- "# 2. Source -- Source IP of skitter/scamper monitor performing the trace.\n"
- "#                                                                        \n"
- "# 3. Destination -- Destination IP being traced.                         \n"
- "#                                                                        \n"
- "# 4. ListId -- ID of the destination list containing this destination    \n"
- "#              address.                                                  \n"
- "#                                                                        \n"
- "#      This value will be zero if no list ID was provided.  (uint32_t)   \n"
- "#                                                                        \n"
- "# 5. CycleId -- ID of current probing cycle (a cycle is a single run     \n"
- "#               through a given list).  For skitter traces, cycle IDs    \n"
- "#               will be equal to or slightly earlier than the timestamp  \n"
- "#               of the first trace in each cycle. There is no standard   \n"
- "#               interpretation for scamper cycle IDs.                    \n"
- "#                                                                        \n"
- "#      This value will be zero if no cycle ID was provided.  (uint32_t)  \n"
- "#                                                                        \n"
- "# 6. Timestamp -- Timestamp when trace began to this destination.        \n"
- "#                                                                        \n"
- "# -------------------- Reply Fields ------------------                   \n"
- "#                                                                        \n"
- "# 7. DestReplied -- Whether a response from the destination was received.\n"
- "#                                                                        \n"
- "#      R - Replied, reply was received                                   \n"
- "#      N - Not-replied, no reply was received;                           \n"
- "#          Since skitter sends a packet with a TTL of 255 when it halts  \n"
- "#          probing, it is still possible for the final destination to    \n"
- "#          send a reply and for the HaltReasonData (see below) to not    \n"
- "#          equal no_halt.  Note: scamper does not perform this last-ditch\n"
- "#          probing at TTL 255.                                           \n"
- "#                                                                        \n"
- "# 8. DestRTT -- RTT (ms) of first response packet from destination.      \n"
- "#      0 if DestReplied is N.                                            \n"
- "#                                                                        \n"
- "# 9. RequestTTL -- TTL set in request packet which elicited a response   \n"
- "#      (echo reply) from the destination.                                \n"
- "#      0 if DestReplied is N.                                            \n"
- "#                                                                        \n"
- "# 10. ReplyTTL -- TTL found in reply packet from destination;            \n"
- "#      0 if DestReplied is N.                                            \n"
- "#                                                                        \n"
- "# -------------------- Halt Fields ------------------                    \n"
- "#                                                                        \n"
- "# 11. HaltReason -- The reason, if any, why incremental probing stopped. \n"
- "#                                                                        \n"
- "# 12. HaltReasonData -- Extra data about why probing halted.             \n"
- "#                                                                        \n"
- "#        HaltReason            HaltReasonData                            \n"
- "#        ------------------------------------                            \n"
- "#        S (success/no_halt)    0                                        \n"
- "#        U (icmp_unreachable)   icmp_code                                \n"
- "#        L (loop_detected)      loop_length                              \n"
- "#        G (gap_detected)       gap_limit                                \n"
- "#                                                                        \n"
- "# -------------------- Path Fields ------------------                    \n"
- "#                                                                        \n"
- "# 13. PathComplete -- Whether all hops to destination were found.        \n"
- "#                                                                        \n"
- "#        C - Complete, all hops found                                    \n"
- "#        I - Incomplete, at least one hop is missing (i.e., did not      \n"
- "#            respond)                                                    \n"
- "#                                                                        \n"
- "# 14. PerHopData -- Response data for the first hop.                     \n"
- "#                                                                        \n"
- "#       If multiple IP addresses respond at the same hop, response data  \n"
- "#       for each IP address are separated by semicolons:                 \n"
- "#                                                                        \n"
- "#       IP,RTT,numTries                     (for only one responding IP) \n"
- "#       IP,RTT,numTries;IP,RTT,numTries;... (for multiple responding IPs)\n"
- "#                                                                        \n"
- "#         where                                                          \n"
- "#                                                                        \n"
- "#       IP -- IP address which sent a TTL expired packet                 \n"
- "#       RTT -- RTT of the TTL expired packet                             \n"
- "#       num_tries -- num tries before response received from TTL.        \n"
- "#                                                                        \n"
- "#       This field will have the value 'q' if there was no response at   \n"
- "#       this hop.                                                        \n"
- "#                                                                        \n"
- "# 15. PerHopData -- Response data for the second hop in the same format  \n"
- "#       as field 14.                                                     \n"
- "#                                                                        \n"
- "# ...                                                                    \n"
- "#                                                                        \n"
- "# N. PerHopData -- Response data for the destination                     \n"
- "#       (if destination replied).                                        \n"
- "#                                                                        \n"
-	 );
+ "# There is one trace per line, with the following tab-separated fields:\n"
+ "#\n"
+ "#\n");
+
+  if((options & OPT_OLDFORMAT) == 0)
+    {
+      printf(
+ "# %2d. Key -- Indicates the type of line and determines the meaning of the\n"
+ "#            remaining fields.  This will always be 'T' for an IP trace.\n"
+ "#\n", i++);
+
+      u32 = (OPT_HIDESRC|OPT_HIDEDST|OPT_HIDELIST|OPT_HIDECYCLE|OPT_HIDETIME);
+      if((options & u32) != u32 || (options & OPT_SHOWUSERID) != 0)
+	printf(
+ "# -------------------- Header Fields ------------------\n"
+ "#\n");
+
+      if((options & OPT_HIDESRC) == 0)
+	printf(
+ "# %2d. Source -- Source IP of skitter/scamper monitor performing the trace.\n"
+ "#\n", i++);
+
+      if((options & OPT_HIDEDST) == 0)
+	printf(
+ "# %2d. Destination -- Destination IP being traced.\n"
+ "#\n", i++);
+
+      if((options & OPT_HIDELIST) == 0)
+	printf(
+ "# %2d. ListId -- ID of the list containing this destination address.\n"
+ "#\n"
+ "#        This value will be zero if no list ID was provided.  (uint32_t)\n"
+ "#\n", i++);
+
+      if((options & OPT_HIDECYCLE) == 0)
+	printf(
+ "# %2d. CycleId -- ID of current probing cycle (a cycle is a single run\n"
+ "#                through a given list).  For skitter traces, cycle IDs\n"
+ "#                will be equal to or slightly earlier than the timestamp\n"
+ "#                of the first trace in each cycle. There is no standard\n"
+ "#                interpretation for scamper cycle IDs.\n"
+ "#\n"
+ "#        This value will be zero if no cycle ID was provided.  (uint32_t)\n"
+ "#\n", i++);
+
+      if((options & OPT_SHOWUSERID) != 0)
+	printf(
+ "# %2d. UserId -- ID provided by the user for this trace.\n"
+ "#\n"
+ "#        This value will be zero if no user ID was provided.  (uint32_t)\n"
+ "#\n", i++);
+
+      if((options & OPT_HIDETIME) == 0)
+	printf(
+ "# %2d. Timestamp -- Timestamp when trace began to this destination.\n"
+ "#\n", i++);
+
+      if((options & OPT_HIDEREPLY) == 0)
+	{
+	  printf(
+ "# -------------------- Reply Fields ------------------\n"
+ "#\n"
+ "# %2d. DestReplied -- Whether a response from the destination was received.\n"
+ "#\n"
+ "#        R - Replied, reply was received\n"
+ "#        N - Not-replied, no reply was received;\n"
+ "#            Since skitter sends a packet with a TTL of 255 when it halts\n"
+ "#            probing, it is still possible for the final destination to\n"
+ "#            send a reply and for the HaltReasonData (see below) to not\n"
+ "#            equal no_halt.  Note: scamper does not perform last-ditch\n"
+ "#            probing at TTL 255 by default.\n"
+ "#\n", i++);
+
+	  printf(
+ "# %2d. DestRTT -- RTT (ms) of first response packet from destination.\n"
+ "#        0 if DestReplied is N.\n"
+ "#\n", i++);
+
+	  printf(
+ "# %2d. RequestTTL -- TTL set in request packet which elicited a response\n"
+ "#      (echo reply) from the destination.\n"
+ "#        0 if DestReplied is N.\n"
+ "#\n", i++);
+
+	  printf(
+ "# %2d. ReplyTTL -- TTL found in reply packet from destination;\n"
+ "#        0 if DestReplied is N.\n"
+ "#\n", i++);
+	}
+
+      if((options & OPT_HIDEHALT) == 0)
+	{
+	  printf(
+ "# -------------------- Halt Fields ------------------\n"
+ "#\n"
+ "# %2d. HaltReason -- The reason, if any, why incremental probing stopped.\n"
+ "#\n", i++);
+
+	  printf(
+ "# %2d. HaltReasonData -- Extra data about why probing halted.\n"
+ "#\n"
+ "#        HaltReason            HaltReasonData\n"
+ "#        ------------------------------------\n"
+ "#        S (success/no_halt)    0\n"
+ "#        U (icmp_unreachable)   icmp_code\n"
+ "#        L (loop_detected)      loop_length\n"
+ "#        G (gap_detected)       gap_limit\n"
+ "#\n", i++);
+	}
+    }
+
+  if((options & OPT_HIDEPATH) == 0)
+    {
+      printf(
+ "# -------------------- Path Fields ------------------\n"
+ "#\n"
+ "# %2d. PathComplete -- Whether all hops to destination were found.\n"
+ "#\n"
+ "#        C - Complete, all hops found\n"
+ "#        I - Incomplete, at least one hop is missing (i.e., did not\n"
+ "#            respond)\n"
+ "#\n", i++);
+
+      printf(
+ "# %2d. PerHopData -- Response data for the first hop.\n"
+ "#\n"
+ "#       If multiple IP addresses respond at the same hop, response data\n"
+ "#       for each IP address are separated by semicolons:\n"
+ "#\n", i++);
+
+      off = 0;
+      string_concat(buf, sizeof(buf), &off, "IP");
+      if((options & OPT_HIDEIRTT) == 0)
+	string_concat(buf, sizeof(buf), &off, ",RTT,nTries");
+      if((options & OPT_SHOWQTTL) != 0)
+	string_concat(buf, sizeof(buf), &off, ",Q|quoted-TTL");
+      if((options & OPT_SHOWMPLS) != 0)
+	string_concat(buf, sizeof(buf), &off, ",M|ttl|label|exp|s");
+      if((options & OPT_SHOWIPTTL) != 0)
+	string_concat(buf, sizeof(buf), &off, ",T|IP-TTL");
+
+      snprintf(buf2, sizeof(buf2),
+	       "#       %%-%ds %%s\n", (int)((off*2) + 5));
+      printf(buf2, buf, "(for only one responding IP)");
+
+      snprintf(buf3, sizeof(buf3), "%s;%s;...", buf, buf);
+      printf(buf2, buf3, "(for multiple responding IPs)");
+
+      printf(
+ "#\n"
+ "#         where\n"
+ "#\n"
+ "#       IP -- IP address which sent a TTL expired packet\n");
+      if((options & OPT_HIDEIRTT) == 0)
+	{
+	  printf(
+ "#       RTT -- RTT of the TTL expired packet\n"
+ "#       nTries -- number of tries before response received from hop\n");
+	}
+      if((options & OPT_SHOWQTTL) != 0)
+	{
+	  printf(
+ "#       qTTL -- the IP-TTL in the quoted packet ('-' if not present)\n");
+	}
+      if((options & OPT_SHOWMPLS) != 0)
+	{
+	  printf(
+ "#       ttl   -- the TTL in the MPLS header\n"
+ "#       label -- the label in the MPLS header\n"
+ "#       exp   -- the value of the 3 Exp bits in the MPLS header\n"
+ "#       s     -- the value of the 'S' bit in the MPLS header\n");
+	}
+
+      printf(
+ "#\n"
+ "#       This field will have the value 'q' if there was no response at\n"
+ "#       this hop.\n"
+ "#\n");
+
+      printf(
+ "# %2d. PerHopData -- Response data for the second hop in the same format\n"
+ "#       as field %d.\n", i, i-1);
+
+      printf(
+ "#\n"
+ "# ...\n"
+ "#\n");
+
+      if(options & OPT_DSTEND)
+	{
+	  printf(
+ "#  N. PerHopData -- Response data for the destination\n"
+ "#       (if destination replied).\n"
+ "#\n"
+		 );
+	}
+    }
+
   return;
 }
 
@@ -359,29 +494,22 @@ static void print_header_fields(const scamper_trace_t *trace)
   char  buf[256];
 
   if((options & OPT_HIDESRC) == 0)
-    {
-      fprintf(out, "\t%s", scamper_addr_tostr(trace->src, buf, sizeof(buf)));
-    }
+    fprintf(out, "\t%s", scamper_addr_tostr(trace->src, buf, sizeof(buf)));
 
   if((options & OPT_HIDEDST) == 0)
-    {
-      fprintf(out, "\t%s", scamper_addr_tostr(trace->dst, buf, sizeof(buf)));
-    }
+    fprintf(out, "\t%s", scamper_addr_tostr(trace->dst, buf, sizeof(buf)));
 
   if((options & OPT_HIDELIST) == 0)
-    {
-      fprintf(out, "\t%d", (trace->list != NULL) ? trace->list->id : 0);
-    }
+    fprintf(out, "\t%d", (trace->list != NULL) ? trace->list->id : 0);
 
   if((options & OPT_HIDECYCLE) == 0)
-    {
-      fprintf(out, "\t%d", (trace->cycle != NULL) ? trace->cycle->id : 0);
-    }
+    fprintf(out, "\t%d", (trace->cycle != NULL) ? trace->cycle->id : 0);
+
+  if((options & OPT_SHOWUSERID) != 0)
+    fprintf(out, "\t%d", trace->userid);
 
   if((options & OPT_HIDETIME) == 0)
-    {
-      fprintf(out, "\t%ld", (long)trace->start.tv_sec);
-    }
+    fprintf(out, "\t%ld", (long)trace->start.tv_sec);
 
   return;
 }
@@ -453,31 +581,62 @@ static void print_old_fields(const scamper_trace_t *trace,
   return;
 }
 
+static char *hop_tostr(const scamper_trace_hop_t *hop, char *buf, size_t len)
+{
+  const scamper_icmpext_t *ie;
+  char rtt[128], addr[128];
+  size_t off = 0;
+  int i;
+
+  string_concat(buf, len, &off, "%s",
+		scamper_addr_tostr(hop->hop_addr, addr, sizeof(addr)));
+
+  if((options & OPT_HIDEIRTT) == 0)
+    string_concat(buf, len, &off, ",%s,%d",
+		  rtt_tostr(rtt, sizeof(rtt), &hop->hop_rtt),
+		  hop->hop_probe_id);
+
+  if((options & OPT_SHOWQTTL) != 0 && SCAMPER_TRACE_HOP_IS_ICMP_Q(hop))
+    string_concat(buf, len, &off, ",Q|%d", hop->hop_icmp_q_ttl);
+
+  if((options & OPT_SHOWIPTTL) != 0)
+    string_concat(buf, len, &off, ",T|%d", hop->hop_reply_ttl);
+
+  if((options & OPT_SHOWMPLS) != 0)
+    {
+      for(ie=hop->hop_icmpext; ie != NULL; ie = ie->ie_next)
+	{
+	  if(SCAMPER_ICMPEXT_IS_MPLS(ie))
+	    {
+	      for(i=0; i<SCAMPER_ICMPEXT_MPLS_COUNT(ie); i++)
+		{
+		  string_concat(buf, len, &off, ",M|%d|%d|%d|%d",
+				SCAMPER_ICMPEXT_MPLS_TTL(ie, i),
+				SCAMPER_ICMPEXT_MPLS_LABEL(ie, i),
+				SCAMPER_ICMPEXT_MPLS_EXP(ie, i),
+				SCAMPER_ICMPEXT_MPLS_S(ie, i));
+		}
+	    }
+	}
+    }
+
+  return buf;
+}
+
 static void print_path_fields(const scamper_trace_t *trace,
 			      const scamper_trace_hop_t *dst)
 {
   scamper_trace_hop_t *hop;
-  char path_complete;
-  char rtt[128], addr[128];
-  int i;
-  int unresponsive = 0;
+  char buf[256], path_complete;
+  int i, unresponsive = 0;
 
-#ifdef USE_NETACUITY_
-  if(trace->hop_count != 0)
+#ifdef HAVE_NETACUITY
+  if((options & OPT_GEO) != 0 && trace->hop_count != 0)
     {
       for(i=0; i<trace->hop_count; i++)
 	{
-	  if((hop = trace->hops[i]) != NULL)
-	    {
-	      do
-		{
-		  if(options & OPT_GEO)
-		    {
-		      print_geo_info(hop->hop_addr);
-		    }
-		}
-	      while((hop = hop->hop_next) != NULL);
-	    }
+	  for(hop = trace->hops[i]; hop != NULL; hop = hop->hop_next)
+	    print_geo_info(hop->hop_addr);
 	}
     }
 #endif
@@ -492,17 +651,11 @@ static void print_path_fields(const scamper_trace_t *trace,
   if(dst != NULL)
     {
       for(i=0; i<dst->hop_probe_ttl; i++)
-	{
-	  if(trace->hops[i] == NULL)
-	    {
-	      break;
-	    }
-	}
+	if(trace->hops[i] == NULL)
+	  break;
 
       if(i == dst->hop_probe_ttl && (options & OPT_OLDFORMAT) == 0)
-	{
-	  path_complete = 'C';
-	}
+	path_complete = 'C';
     }
   else if(options & OPT_OLDFORMAT)
     {
@@ -523,7 +676,6 @@ static void print_path_fields(const scamper_trace_t *trace,
       print_old_fields(trace, dst);
     }
 
-
   for(i=0; i<trace->hop_count; i++)
     {
       if((hop = trace->hops[i]) != NULL)
@@ -532,10 +684,9 @@ static void print_path_fields(const scamper_trace_t *trace,
 	  if(hop == dst)
 	    {
 	      if(hop->hop_next == NULL)
-		{
-		  break;
-		}
-	      else hop = hop->hop_next;
+		break;
+	      else
+		hop = hop->hop_next;
 	    }
 
 	  while(unresponsive > 0)
@@ -550,31 +701,14 @@ static void print_path_fields(const scamper_trace_t *trace,
 	  for(;;)
 	    {
 	      if((options & OPT_OLDFORMAT) == 0)
-	        { 
-	          if((options & OPT_HIDEIRTT) == 0)
-		    {
-		      fprintf(out, "%s,%s,%d",
-			  scamper_addr_tostr(hop->hop_addr,addr,sizeof(addr)),
-			  rtt_tostr(rtt, sizeof(rtt), &hop->hop_rtt),
-			  hop->hop_probe_id);
-		    }
-		  else 
-		    {
-		      fprintf(out, "%s",
-			  scamper_addr_tostr(hop->hop_addr,addr,sizeof(addr)));
-		    }
-	       }
+		fprintf(out, "%s", hop_tostr(hop, buf, sizeof(buf)));
 
 	      if((hop = hop->hop_next) != NULL && hop != dst)
 		{
 		  if((options & OPT_OLDFORMAT) == 0)
-		    {
-		      fprintf(out, ";");
-		    }
+		    fprintf(out, ";");
 		  else
-		    {
-		      fprintf(out, ",");
-		    }
+		    fprintf(out, ",");
 		}
 	      else break;
 	    }
@@ -587,29 +721,19 @@ static void print_path_fields(const scamper_trace_t *trace,
 
   if(dst != NULL && options & OPT_DSTEND)
     {
-      while (i < dst->hop_probe_ttl-1) 
+      while (i < dst->hop_probe_ttl-1)
         {
 	  i++;
           fprintf(out, "\tq");
-	} 
-      if((options & OPT_HIDEIRTT) == 0)
-        {
-          fprintf(out, "\t%s,%s,%d",
-	        scamper_addr_tostr(dst->hop_addr,addr,sizeof(addr)),
-	        rtt_tostr(rtt, sizeof(rtt), &dst->hop_rtt),
-	        dst->hop_probe_id);
 	}
-      else 
-	{
-	    fprintf(out, "\t%s",
-	        scamper_addr_tostr(dst->hop_addr,addr,sizeof(addr)));
-	}
+
+      fprintf(out, "\t%s", hop_tostr(dst, buf, sizeof(buf)));
     }
 
   return;
 }
 
-#ifdef USE_NETACUITY_
+#ifdef HAVE_NETACUITY
 static int print_geo_info(scamper_addr_t *addr)
 {
   na_geo_struct answer;
@@ -719,7 +843,7 @@ static int setup_netacuity_server(char *server)
   return -1;
 }
 
-#endif /* USE_NETACUITY_ */
+#endif /* HAVE_NETACUITY */
 
 static void print_trace(const scamper_trace_t *trace)
 {
@@ -765,12 +889,12 @@ static void print_trace(const scamper_trace_t *trace)
 		  dst = hop;
 		  break;
 		}
-		 
+
 	    }
 	}
     }
 
-#ifdef USE_NETACUITY_
+#ifdef HAVE_NETACUITY
   if(options & OPT_GEO)
     {
       if((options & OPT_HIDESRC) == 0)
@@ -864,9 +988,10 @@ int main(int argc, char *argv[])
     {
       return -1;
     }
-  if(options & OPT_HELP) 
+  if(options & OPT_HELP)
     {
       print_help();
+      return 0;
     }
 
   if((filter = scamper_file_filter_alloc(&type, 1)) == NULL)

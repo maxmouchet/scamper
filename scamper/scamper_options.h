@@ -1,7 +1,7 @@
 /*
  * scamper_options.h: code to handle parsing of options
  *
- * $Id: scamper_options.h,v 1.6 2008/08/30 08:56:16 mjl Exp $
+ * $Id: scamper_options.h,v 1.7 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2006-2008 The University of Waikato
  * Author: Matthew Luckie
@@ -57,7 +57,7 @@ typedef struct scamper_option_in
    * are defined above.
    */
   int type;
-  
+
 } scamper_option_in_t;
 
 #define SCAMPER_OPTION_COUNT(opts) (sizeof(opts)/sizeof(scamper_option_in_t))

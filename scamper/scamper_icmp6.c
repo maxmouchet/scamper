@@ -1,7 +1,7 @@
 /*
  * scamper_icmp6.c
  *
- * $Id: scamper_icmp6.c,v 1.93 2011/10/24 22:23:47 mjl Exp $
+ * $Id: scamper_icmp6.c,v 1.95 2013/08/07 20:48:23 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmp6.c,v 1.93 2011/10/24 22:23:47 mjl Exp $";
+  "$Id: scamper_icmp6.c,v 1.95 2013/08/07 20:48:23 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -63,6 +63,10 @@ static void icmp6_header(scamper_probe_t *probe, uint8_t *buf)
 
     case ICMP6_PACKET_TOO_BIG:
       bytes_htonl(buf+4, probe->pr_icmp_mtu);
+      break;
+
+    default:
+      memset(buf+4, 0, 4);
       break;
     }
 
@@ -388,14 +392,14 @@ int scamper_icmp6_recv(int fd, scamper_icmp_resp_t *resp)
   icmp = (struct icmp6_hdr *)rxbuf;
   if(pbuflen < (ssize_t)sizeof(struct icmp6_hdr))
     {
-      return -1; 
+      return -1;
     }
 
   type = icmp->icmp6_type;
   code = icmp->icmp6_code;
 
-  /* check to see if the ICMP type / code is what we want */ 
-  if((type != ICMP6_TIME_EXCEEDED || code != ICMP6_TIME_EXCEED_TRANSIT) && 
+  /* check to see if the ICMP type / code is what we want */
+  if((type != ICMP6_TIME_EXCEEDED || code != ICMP6_TIME_EXCEED_TRANSIT) &&
       type != ICMP6_DST_UNREACH && type != ICMP6_PACKET_TOO_BIG &&
       type != ICMP6_ECHO_REPLY)
     {

@@ -1,7 +1,7 @@
 /*
  * scamper_firewall.c
  *
- * $Id: scamper_firewall.c,v 1.41 2011/02/03 21:13:49 mjl Exp $
+ * $Id: scamper_firewall.c,v 1.43 2013/08/24 15:51:33 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -23,7 +23,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_firewall.c,v 1.41 2011/02/03 21:13:49 mjl Exp $";
+  "$Id: scamper_firewall.c,v 1.43 2013/08/24 15:51:33 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -35,6 +35,7 @@ static const char rcsid[] =
 #include "scamper_debug.h"
 #include "scamper_firewall.h"
 #include "scamper_privsep.h"
+#include "scamper_osinfo.h"
 #include "mjl_heap.h"
 #include "mjl_splaytree.h"
 #include "utils.h"
@@ -48,8 +49,6 @@ struct scamper_firewall_entry
 };
 
 static splaytree_t *entries = NULL;
-static int have_ipv6 = 0;
-static int have_ipv4 = 0;
 
 static int firewall_rule_cmp(const scamper_firewall_rule_t *a,
 			     const scamper_firewall_rule_t *b)
@@ -89,6 +88,21 @@ static int firewall_rule_cmp(const scamper_firewall_rule_t *a,
   return 0;
 }
 
+static int firewall_entry_cmp(const void *a, const void *b)
+{
+  return firewall_rule_cmp(((const scamper_firewall_entry_t *)a)->rule,
+			   ((const scamper_firewall_entry_t *)b)->rule);
+}
+
+#ifdef HAVE_IPFW
+/*
+ * variables required to keep state with ipfw, which is rule-number based.
+ */
+static heap_t *freeslots = NULL;
+static int ipfw_inited = 0;
+static int have_ipv6 = 0;
+static int have_ipv4 = 0;
+
 static scamper_firewall_rule_t *firewall_rule_dup(scamper_firewall_rule_t *sfw)
 {
   scamper_firewall_rule_t *dup;
@@ -119,13 +133,6 @@ static void firewall_rule_free(scamper_firewall_rule_t *sfw)
   return;
 }
 
-static int firewall_entry_cmp(const void *a, const void *b)
-{
-  return firewall_rule_cmp(((const scamper_firewall_entry_t *)a)->rule,
-			   ((const scamper_firewall_entry_t *)b)->rule);
-}
-
-#ifdef HAVE_IPFW
 /*
  * firewall_entry_free
  *
@@ -140,15 +147,6 @@ static void firewall_entry_free(scamper_firewall_entry_t *entry)
   free(entry);
   return;
 }
-#endif
-
-#if defined(HAVE_IPFW)
-
-/*
- * variables required to keep state with ipfw, which is rule-number based.
- */
-static heap_t *freeslots = NULL;
-static int ipfw_inited = 0;
 
 /*
  * freeslots_cmp
@@ -168,7 +166,7 @@ static int freeslots_cmp(const void *va, const void *vb)
 
 static int ipfw_sysctl_check(void)
 {
-  scamper_osinfo_t *osinfo = NULL;
+  const scamper_osinfo_t *osinfo;
   size_t len;
   char *name;
   int i;
@@ -196,17 +194,12 @@ static int ipfw_sysctl_check(void)
       if(errno != ENOENT)
 	return -1;
 
-      if((osinfo = uname_wrap()) == NULL)
-	{
-	  printerror(errno, strerror, __func__, "could not uname");
-	  return -1;
-	}
-
       /*
        * check if the system is known to not have a separate sysctl for
        * ipv6 ipfw.
        */
       i = 0;
+      osinfo = scamper_osinfo_get();
       if((osinfo->os_id == SCAMPER_OSINFO_OS_FREEBSD &&
 	  osinfo->os_rel[0] == 6 && osinfo->os_rel[1] < 3) ||
 	 (osinfo->os_id == SCAMPER_OSINFO_OS_DARWIN &&
@@ -215,8 +208,6 @@ static int ipfw_sysctl_check(void)
 	  have_ipv6 = have_ipv4;
 	}
       else i++;
-
-      scamper_osinfo_free(osinfo);
 
       if(i != 0)
 	return -1;
@@ -783,44 +774,6 @@ static void ipfw_cleanup(void)
 
   return;
 }
-#endif /* HAVE_IPFW */
-
-#ifndef HAVE_IPFW
-static scamper_firewall_entry_t *firewall_entry_get(void)
-{
-  return NULL;
-}
-
-static void firewall_rule_delete(scamper_firewall_entry_t *entry)
-{
-  return;
-}
-#endif
-
-void scamper_firewall_entry_free(scamper_firewall_entry_t *entry)
-{
-  entry->refcnt--;
-  if(entry->refcnt > 0)
-    {
-      return;
-    }
-
-  /* remove the entry from the tree */
-  splaytree_remove_node(entries, entry->node);
-  entry->node = NULL;
-
-  /*
-   * if the entry is still loaded in the firewall, remove it now.
-   * note that this code is to handle the case that scamper_firewall_cleanup
-   * is called before this function is called.
-   */
-  if(entry->slot >= 0)
-    {
-      firewall_rule_delete(entry);
-    }
-
-  return;
-}
 
 scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sfw)
 {
@@ -842,21 +795,21 @@ scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sf
 
   if(sfw->sfw_5tuple_src->type == SCAMPER_ADDR_TYPE_IPV4)
     {
-      af = AF_INET;
       if(have_ipv4 == 0)
 	{
 	  scamper_debug(__func__, "IPv4 rule requested but no IPv4 firewall");
 	  goto err;
 	}
+      af = AF_INET;
     }
   else if(sfw->sfw_5tuple_src->type == SCAMPER_ADDR_TYPE_IPV6)
     {
-      af = AF_INET6;
       if(have_ipv6 == 0)
 	{
 	  scamper_debug(__func__, "IPv6 rule requested but no IPv6 firewall");
 	  goto err;
 	}
+      af = AF_INET6;
     }
   else
     {
@@ -891,14 +844,12 @@ scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sf
   else
     d = sfw->sfw_5tuple_dst->addr;
 
-#if defined(HAVE_IPFW)
 #ifdef WITHOUT_PRIVSEP
   if(scamper_firewall_ipfw_add(n, af, p, s, d, sp, dp) != 0)
     goto err;
 #else
   if(scamper_privsep_ipfw_add(n, af, p, s, d, sp, dp) != 0)
     goto err;
-#endif
 #endif
 
   return entry;
@@ -912,6 +863,46 @@ scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sf
     }
   return NULL;
 }
+#endif /* HAVE_IPFW */
+
+#ifndef HAVE_IPFW
+static void firewall_rule_delete(scamper_firewall_entry_t *entry)
+{
+  return;
+}
+
+scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sfw)
+{
+  return NULL;
+}
+#endif
+
+void scamper_firewall_entry_free(scamper_firewall_entry_t *entry)
+{
+  entry->refcnt--;
+  if(entry->refcnt > 0)
+    {
+      return;
+    }
+
+  /* remove the entry from the tree */
+  splaytree_remove_node(entries, entry->node);
+  entry->node = NULL;
+
+  /*
+   * if the entry is still loaded in the firewall, remove it now.
+   * note that this code is to handle the case that scamper_firewall_cleanup
+   * is called before this function is called.
+   */
+  if(entry->slot >= 0)
+    {
+      firewall_rule_delete(entry);
+    }
+
+  return;
+}
+
+
 
 void scamper_firewall_cleanup(void)
 {

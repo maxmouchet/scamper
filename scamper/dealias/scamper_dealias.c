@@ -1,9 +1,10 @@
 /*
  * scamper_dealias.c
  *
- * $Id: scamper_dealias.c,v 1.30 2010/12/02 01:18:21 mjl Exp $
+ * $Id: scamper_dealias.c,v 1.41 2013/08/04 23:26:10 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
+ * Copyright (C) 2012-2013 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This code implements alias resolution techniques published by others
@@ -27,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias.c,v 1.30 2010/12/02 01:18:21 mjl Exp $";
+  "$Id: scamper_dealias.c,v 1.41 2013/08/04 23:26:10 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -90,7 +91,7 @@ int scamper_dealias_ipid(const scamper_dealias_probe_t **probes,
       if(diff > maxd)
 	maxd = diff;
       sum += diff;
-      
+
       /* byteswap case */
       cur = byteswap16(r->ipid);
       prev = byteswap16(prev);
@@ -190,7 +191,7 @@ static void dealias_radargun_free(void *data)
       free(radargun->probedefs);
     }
   free(radargun);
-  return; 
+  return;
 }
 
 static void dealias_prefixscan_free(void *data)
@@ -232,6 +233,26 @@ static void dealias_bump_free(void *data)
   dealias_probedef_free(&bump->probedefs[1]);
   free(bump);
   return;
+}
+
+const char *scamper_dealias_probedef_method_tostr(const scamper_dealias_probedef_t *d,
+						  char *b, size_t l)
+{
+  static const char *m[] = {
+    NULL,
+    "icmp-echo",
+    "tcp-ack",
+    "udp",
+    "tcp-ack-sport",
+    "udp-dport",
+    "tcp-syn-sport",
+  };
+  if(d->method > sizeof(m) / sizeof(char *) || m[d->method] == NULL)
+    {
+      snprintf(b, l, "%d", d->method);
+      return b;
+    }
+  return m[d->method];
 }
 
 scamper_dealias_probedef_t *scamper_dealias_probedef_alloc(void)
@@ -297,67 +318,58 @@ uint32_t scamper_dealias_reply_count(const scamper_dealias_t *dealias)
   return rc;
 }
 
-static int dealias_probe_tx_cmp(const void *va, const void *vb)
+static int dealias_probe_tx_cmp(const scamper_dealias_probe_t *a,
+				const scamper_dealias_probe_t *b)
 {
-  const scamper_dealias_probe_t *a = *((const scamper_dealias_probe_t **)va);
-  const scamper_dealias_probe_t *b = *((const scamper_dealias_probe_t **)vb);
   return timeval_cmp(&a->tx, &b->tx);
 }
 
-static int dealias_probe_seq_cmp(const void *va, const void *vb)
+static int dealias_probe_seq_cmp(const scamper_dealias_probe_t *a,
+				 const scamper_dealias_probe_t *b)
 {
-  const scamper_dealias_probe_t *a = *((const scamper_dealias_probe_t **)va);
-  const scamper_dealias_probe_t *b = *((const scamper_dealias_probe_t **)vb);
-
   if(a->seq < b->seq)
     return -1;
   if(a->seq > b->seq)
     return 1;
-
-  if(a->probedef->id < b->probedef->id)
+  if(a->def->id < b->def->id)
     return -1;
-  if(a->probedef->id > b->probedef->id)
+  if(a->def->id > b->def->id)
     return 1;
-
   return 0;
 }
 
-static int dealias_probe_def_cmp(const void *va, const void *vb)
+static int dealias_probe_def_cmp(const scamper_dealias_probe_t *a,
+				 const scamper_dealias_probe_t *b)
 {
-  const scamper_dealias_probe_t *a = *((const scamper_dealias_probe_t **)va);
-  const scamper_dealias_probe_t *b = *((const scamper_dealias_probe_t **)vb);
-
-  if(a->probedef->id < b->probedef->id)
+  if(a->def->id < b->def->id)
     return -1;
-  if(a->probedef->id > b->probedef->id)
+  if(a->def->id > b->def->id)
     return 1;
-
   if(a->seq < b->seq)
     return -1;
   if(a->seq > b->seq)
     return 1;
-
   return 0;
 }
 
 void scamper_dealias_probes_sort_tx(scamper_dealias_t *dealias)
 {
-  qsort(dealias->probes, dealias->probec,
-	sizeof(scamper_dealias_probe_t *), dealias_probe_tx_cmp);
+  array_qsort((void **)dealias->probes, dealias->probec,
+	      (array_cmp_t)dealias_probe_tx_cmp);
   return;
 }
 
 void scamper_dealias_probes_sort_seq(scamper_dealias_t *dealias)
 {
-  qsort(dealias->probes, dealias->probec,
-	sizeof(scamper_dealias_probe_t *), dealias_probe_seq_cmp);
+  array_qsort((void **)dealias->probes, dealias->probec,
+	      (array_cmp_t)dealias_probe_seq_cmp);
   return;
 }
 
 void scamper_dealias_probes_sort_def(scamper_dealias_t *dealias)
 {
-  qsort(dealias->probes, dealias->probec,
-	sizeof(scamper_dealias_probe_t *), dealias_probe_def_cmp);
+  array_qsort((void **)dealias->probes, dealias->probec,
+	      (array_cmp_t)dealias_probe_def_cmp);
   return;
 }
 
@@ -370,7 +382,7 @@ int scamper_dealias_probe_add(scamper_dealias_t *dealias,
       dealias->probes[dealias->probec++] = probe;
       return 0;
     }
-  return -1;  
+  return -1;
 }
 
 int scamper_dealias_reply_add(scamper_dealias_probe_t *probe,
@@ -389,7 +401,6 @@ int scamper_dealias_ally_alloc(scamper_dealias_t *dealias)
 {
   if((dealias->data = malloc_zero(sizeof(scamper_dealias_ally_t))) != NULL)
     return 0;
-
   return -1;
 }
 
@@ -397,7 +408,6 @@ int scamper_dealias_mercator_alloc(scamper_dealias_t *dealias)
 {
   if((dealias->data = malloc_zero(sizeof(scamper_dealias_mercator_t))) != NULL)
     return 0;
-
   return -1;
 }
 
@@ -405,7 +415,6 @@ int scamper_dealias_radargun_alloc(scamper_dealias_t *dealias)
 {
   if((dealias->data = malloc_zero(sizeof(scamper_dealias_radargun_t))) != NULL)
     return 0;
-
   return -1;
 }
 
@@ -425,21 +434,21 @@ int scamper_dealias_bump_alloc(scamper_dealias_t *dealias)
   return -1;
 }
 
-static int dealias_ipid_inseq(uint32_t a, uint32_t b, uint32_t fudge)
+static uint16_t dealias_ipid16_diff(uint32_t a, uint32_t b)
 {
-  if(a == b)
-    return 0;
-
-  if(a > b)
+  if(b < a)
     b += 0x10000;
-
-  if(b - a <= fudge)
-    return 1;
-
-  return 0;
+  return b - a;
 }
 
-static int dealias_ipid_inseq3(uint32_t a, uint32_t b, uint32_t c, uint32_t f)
+static int dealias_ipid16_inseq2(uint16_t a, uint16_t b, uint16_t fudge)
+{
+  if(a == b || dealias_ipid16_diff(a, b) > fudge)
+    return 0;
+  return 1;
+}
+
+static int dealias_ipid16_inseq3(uint32_t a,uint32_t b,uint32_t c,uint32_t f)
 {
   if(a == b || b == c || a == c)
     return 0;
@@ -463,53 +472,197 @@ static int dealias_ipid_inseq3(uint32_t a, uint32_t b, uint32_t c, uint32_t f)
   return 1;
 }
 
-int scamper_dealias_ipid_inseq(scamper_dealias_probe_t **probes,
-			       int probec, uint16_t fudge)
+static uint16_t dealias_ipid32_diff(uint64_t a, uint64_t b)
 {
-  uint16_t a, b, c;
-  int i;
+  if(b < a)
+    b += 0x100000000ULL;
+  return b - a;
+}
 
-  if(probec < 2)
-    return -1;
+static int dealias_ipid32_inseq2(uint32_t a, uint32_t b, uint32_t fudge)
+{
+  if(a == b || dealias_ipid32_diff(a, b) > fudge)
+    return 0;
+  return 1;
+}
 
-  if(probec == 2)
+static int dealias_ipid32_inseq3(uint64_t a,uint64_t b,uint64_t c,uint64_t f)
+{
+  if(a == b || b == c || a == c)
+    return 0;
+
+  if(a > b)
+    b += 0x100000000ULL;
+  if(a > c)
+    c += 0x100000000ULL;
+
+  if(f != 0)
     {
-      /* if it is a strict sequence check, we don't actually know */
-      if(fudge == 0)
-	return 1;
-
-      /* check if ipids are in range */
-      a = probes[0]->replies[0]->ipid;
-      b = probes[1]->replies[0]->ipid;
-      if(dealias_ipid_inseq(a, b, fudge) != 0)
-	return 1;
-
-      return 0;
+      if(b - a > f || c - b > f)
+	return 0;
     }
-
-  for(i=2; i<probec; i+=2)
+  else
     {
-      a = probes[i-2]->replies[0]->ipid;
-      b = probes[i-1]->replies[0]->ipid;
-      c = probes[i-0]->replies[0]->ipid;
-      if(dealias_ipid_inseq3(a, b, c, fudge) == 0)
+      if(a > b || b > c)
 	return 0;
     }
 
   return 1;
 }
 
-int scamper_dealias_ipid_inseqbs(scamper_dealias_probe_t **probes,
-				 int probec, uint16_t fudge)
+static int dealias_ipid16_bo(scamper_dealias_probe_t **probes, int probec)
+{
+  scamper_dealias_probe_t **s = NULL;
+  uint16_t a, b, c = 1, max_bs = 0, max_nobs = 0, u16;
+  int i, rc = 2;
+
+  if((s = memdup(probes, sizeof(scamper_dealias_probe_t *) * probec)) == NULL)
+    return -1;
+  array_qsort((void **)s, probec, (array_cmp_t)dealias_probe_def_cmp);
+
+  for(i=0; i<probec-1; i++)
+    {
+      if(s[i]->def != s[i+1]->def)
+	{
+	  if(c >= 3)
+	    {
+	      if(max_nobs < max_bs)
+		rc = 0;
+	      else if(max_nobs > max_bs)
+		rc = 1;
+	      if(rc == 0)
+		goto done;
+	    }
+	  c = 1; max_nobs = 0; max_bs = 0;
+	}
+      else
+	{
+	  a = s[i]->replies[0]->ipid; b = s[i+1]->replies[0]->ipid;
+	  u16 = dealias_ipid16_diff(a, b);
+	  if(u16 > max_nobs || max_nobs == 0)
+	    max_nobs = u16;
+	  u16 = dealias_ipid16_diff(byteswap16(a), byteswap16(b));
+	  if(u16 > max_bs || max_bs == 0)
+	    max_bs = u16;
+	  c++;
+	}
+    }
+
+ done:
+  if(s != NULL) free(s);
+  return rc;
+}
+
+static int dealias_ipid16_inseq(scamper_dealias_probe_t **probes,
+				int probec, uint16_t fudge, int bs)
 {
   uint16_t a, b, c;
-  int i, bs;
+  int i;
 
-  if(probec < 2)
+  /*
+   * do a preliminary check to see if the ipids could in in sequence with
+   * two samples.
+   */
+  if(probec == 2)
+    {
+      /* if it is a strict sequence check, we don't actually know */
+      if(fudge == 0)
+	return 1;
+
+      a = probes[0]->replies[0]->ipid;
+      b = probes[1]->replies[0]->ipid;
+      if(bs != 0)
+	{
+	  a = byteswap16(a);
+	  b = byteswap16(b);
+	}
+      if(dealias_ipid16_inseq2(a, b, fudge) != 0)
+	return 1;
+      return 0;
+    }
+
+  for(i=0; i+2<probec; i+=2)
+    {
+      a = probes[i+0]->replies[0]->ipid;
+      b = probes[i+1]->replies[0]->ipid;
+      c = probes[i+2]->replies[0]->ipid;
+      if(bs != 0)
+	{
+	  a = byteswap16(a);
+	  b = byteswap16(b);
+	  c = byteswap16(c);
+	}
+      if(dealias_ipid16_inseq3(a, b, c, fudge) == 0)
+	return 0;
+    }
+
+  /* check stragglers */
+  if(probec - i > 1)
+    {
+      a = probes[probec-3]->replies[0]->ipid;
+      b = probes[probec-2]->replies[0]->ipid;
+      c = probes[probec-1]->replies[0]->ipid;
+      if(bs != 0)
+	{
+	  a = byteswap16(a);
+	  b = byteswap16(b);
+	  c = byteswap16(c);
+	}
+      if(dealias_ipid16_inseq3(a, b, c, fudge) == 0)
+	return 0;
+    }
+
+  return 1;
+}
+
+static int dealias_ipid32_bo(scamper_dealias_probe_t **probes, int probec)
+{
+  scamper_dealias_probe_t **s = NULL;
+  uint32_t a, b, c = 1, max_bs = 0, max_nobs = 0, u32;
+  int i, rc = 2;
+
+  if((s = memdup(probes, sizeof(scamper_dealias_probe_t *) * probec)) == NULL)
     return -1;
+  array_qsort((void **)s, probec, (array_cmp_t)dealias_probe_def_cmp);
 
-  a = probes[0]->replies[0]->ipid;
-  b = probes[1]->replies[0]->ipid;
+  for(i=0; i<probec-1; i++)
+    {
+      if(s[i]->def != s[i+1]->def)
+	{
+	  if(c >= 3)
+	    {
+	      if(max_nobs < max_bs)
+		rc = 0;
+	      else if(max_nobs > max_bs)
+		rc = 1;
+	      if(rc == 0)
+		goto done;
+	    }
+	  c = 1; max_nobs = 0; max_bs = 0;
+	}
+      else
+	{
+	  a = s[i]->replies[0]->ipid32; b = s[i+1]->replies[0]->ipid32;
+	  u32 = dealias_ipid32_diff(a, b);
+	  if(u32 > max_nobs || max_nobs == 0)
+	    max_nobs = u32;
+	  u32 = dealias_ipid32_diff(byteswap32(a), byteswap32(b));
+	  if(u32 > max_bs || max_bs == 0)
+	    max_bs = u32;
+	  c++;
+	}
+    }
+
+ done:
+  if(s != NULL) free(s);
+  return rc;
+}
+
+static int dealias_ipid32_inseq(scamper_dealias_probe_t **probes,
+				int probec, uint16_t fudge, int bs)
+{
+  uint32_t a, b, c;
+  int i;
 
   /*
    * do a preliminary check to see if the ipids could in insequence with
@@ -521,81 +674,90 @@ int scamper_dealias_ipid_inseqbs(scamper_dealias_probe_t **probes,
       if(fudge == 0)
 	return 1;
 
-      /* check if ipids are in range */
-      if(dealias_ipid_inseq(a, b, fudge) != 0)
-	return 1;
-      if(dealias_ipid_inseq(byteswap16(a), byteswap16(b), fudge) != 0)
+      a = probes[0]->replies[0]->ipid32;
+      b = probes[1]->replies[0]->ipid32;
+      if(bs != 0)
+	{
+	  a = byteswap32(a);
+	  b = byteswap32(b);
+	}
+      if(dealias_ipid32_inseq2(a, b, fudge) != 0)
 	return 1;
       return 0;
     }
 
-  c = probes[2]->replies[0]->ipid;
-
-  /* check if a < b < c, without doing any byte order changes */
-  if(dealias_ipid_inseq3(a, b, c, fudge))
-    {
-      bs = 0;
-    }
-  else
-    {
-      /* check if a < b < c when byte order is changed */
-      a = byteswap16(a);
-      b = byteswap16(b);
-      c = byteswap16(c);
-
-      if(dealias_ipid_inseq3(a, b, c, fudge))
-	bs = 1;
-      else
-	return 0;
-    }
-
   for(i=0; i+2<probec; i+=2)
     {
-      a = probes[i+0]->replies[0]->ipid;
-      b = probes[i+1]->replies[0]->ipid;
-      c = probes[i+2]->replies[0]->ipid;
-
-      /* change byte order if necessary */
+      a = probes[i+0]->replies[0]->ipid32;
+      b = probes[i+1]->replies[0]->ipid32;
+      c = probes[i+2]->replies[0]->ipid32;
       if(bs != 0)
 	{
-	  a = byteswap16(a);
-	  b = byteswap16(b);
-	  c = byteswap16(c);
+	  a = byteswap32(a);
+	  b = byteswap32(b);
+	  c = byteswap32(c);
 	}
-
-      if(dealias_ipid_inseq3(a, b, c, fudge) == 0)
+      if(dealias_ipid32_inseq3(a, b, c, fudge) == 0)
 	return 0;
     }
 
   /* check stragglers */
   if(probec - i > 1)
     {
-      a = probes[probec-3]->replies[0]->ipid;
-      b = probes[probec-2]->replies[0]->ipid;
-      c = probes[probec-1]->replies[0]->ipid;
-
+      a = probes[probec-3]->replies[0]->ipid32;
+      b = probes[probec-2]->replies[0]->ipid32;
+      c = probes[probec-1]->replies[0]->ipid32;
       if(bs != 0)
 	{
-	  a = byteswap16(a);
-	  b = byteswap16(b);
-	  c = byteswap16(c);
+	  a = byteswap32(a);
+	  b = byteswap32(b);
+	  c = byteswap32(c);
 	}
-
-      if(dealias_ipid_inseq3(a, b, c, fudge) == 0)
+      if(dealias_ipid32_inseq3(a, b, c, fudge) == 0)
 	return 0;
     }
 
   return 1;
 }
 
-int scamper_dealias_ally_inseq(scamper_dealias_t *dealias, uint16_t fudge)
+int scamper_dealias_ipid_inseq(scamper_dealias_probe_t **probes,
+			       int probec, uint16_t fudge, int bs)
 {
-  return scamper_dealias_ipid_inseq(dealias->probes, dealias->probec, fudge);
-}
+  static int (*const inseq[])(scamper_dealias_probe_t **,int,uint16_t,int) = {
+    dealias_ipid16_inseq,
+    dealias_ipid32_inseq,
+  };
+  static int (*const bo[])(scamper_dealias_probe_t **, int) = {
+    dealias_ipid16_bo,
+    dealias_ipid32_bo,
+  };
+  int i, x;
 
-int scamper_dealias_ally_inseqbs(scamper_dealias_t *dealias, uint16_t fudge)
-{
-  return scamper_dealias_ipid_inseqbs(dealias->probes, dealias->probec, fudge);
+  if(probec < 2)
+    return -1;
+
+  if(SCAMPER_ADDR_TYPE_IS_IPV4(probes[0]->def->dst))
+    x = 0;
+  else if(SCAMPER_ADDR_TYPE_IS_IPV6(probes[0]->def->dst))
+    x = 1;
+  else
+    return -1;
+
+  if(bs == 3)
+    {
+      if((i = bo[x](probes, probec)) == -1)
+	return -1;
+      return inseq[x](probes, probec, fudge, i);
+    }
+
+  if(bs == 2)
+    {
+      if(inseq[x](probes, probec, fudge, 0) == 1)
+	return 1;
+      return inseq[x](probes, probec, fudge, 1);
+    }
+
+  return inseq[x](probes, probec, fudge, bs);
 }
 
 int scamper_dealias_probes_alloc(scamper_dealias_t *dealias, uint32_t cnt)
@@ -652,26 +814,21 @@ static int dealias_fudge_inseq(scamper_dealias_probe_t *pr_a,
   return 1;
 }
 
-static int xs_cmp(const void *va, const void *vb)
-{
-  const scamper_addr_t *a = *((const scamper_addr_t **)va);
-  const scamper_addr_t *b = *((const scamper_addr_t **)vb);
-  return scamper_addr_cmp(a, b);
-}
-
 int scamper_dealias_prefixscan_xs_add(scamper_dealias_t *dealias,
 				      scamper_addr_t *addr)
 {
   scamper_dealias_prefixscan_t *prefixscan = dealias->data;
   int tmp;
 
-  if(array_find((void **)prefixscan->xs, prefixscan->xc, addr, xs_cmp) != NULL)
+  if(array_find((void **)prefixscan->xs, prefixscan->xc, addr,
+		(array_cmp_t)scamper_addr_cmp) != NULL)
     return 0;
 
   if((tmp = prefixscan->xc) == 65535)
     return -1;
 
-  if(array_insert((void ***)&prefixscan->xs, &tmp, addr, xs_cmp) != 0)
+  if(array_insert((void ***)&prefixscan->xs, &tmp, addr,
+		  (array_cmp_t)scamper_addr_cmp) != 0)
     return -1;
 
   scamper_addr_use(addr);
@@ -683,7 +840,8 @@ int scamper_dealias_prefixscan_xs_in(scamper_dealias_t *dealias,
 				     scamper_addr_t *addr)
 {
   scamper_dealias_prefixscan_t *prefixscan = dealias->data;
-  if(array_find((void **)prefixscan->xs, prefixscan->xc, addr, xs_cmp) != NULL)
+  if(array_find((void **)prefixscan->xs, prefixscan->xc, addr,
+		(array_cmp_t)scamper_addr_cmp) != NULL)
     return 1;
   return 0;
 }
@@ -751,7 +909,7 @@ int scamper_dealias_radargun_fudge(scamper_dealias_t *dealias,
   for(x=0; x<dealias->probec; x++)
     {
       pr = dealias->probes[x];
-      pid = pr->probedef->id;
+      pid = pr->def->id;
 
       /*
        * if this probedef has already been determined to be useless for
@@ -766,7 +924,7 @@ int scamper_dealias_radargun_fudge(scamper_dealias_t *dealias,
 	    free(dr[pid].probes);
 	  dr[pid].probec = -1;
 
-	  if(pr->probedef == def)
+	  if(pr->def == def)
 	    goto done;
 	  continue;
 	}
@@ -797,7 +955,7 @@ int scamper_dealias_radargun_fudge(scamper_dealias_t *dealias,
 	      free(dr[pid].probes);
 	      dr[pid].probec = -1;
 
-	      if(pr->probedef == def)
+	      if(pr->def == def)
 		goto done;
 	      continue;
 	    }
@@ -890,6 +1048,40 @@ int scamper_dealias_radargun_fudge(scamper_dealias_t *dealias,
 	  free(dr[x].probes);
     }
   return -1;
+}
+
+const char *scamper_dealias_method_tostr(const scamper_dealias_t *d, char *b, size_t l)
+{
+  static const char *m[] = {
+    NULL,
+    "mercator",
+    "ally",
+    "radargun",
+    "prefixscan",
+    "bump",
+  };
+  if(d->method > sizeof(m) / sizeof(char *) || m[d->method] == NULL)
+    {
+      snprintf(b, l, "%d", d->method);
+      return b;
+    }
+  return m[d->method];
+}
+
+const char *scamper_dealias_result_tostr(const scamper_dealias_t *d, char *b, size_t l)
+{
+  static char *t[] = {
+    "none",
+    "aliases",
+    "not-aliases",
+    "halted",
+  };
+  if(d->result > sizeof(t) / sizeof(char *) || t[d->result] == NULL)
+    {
+      snprintf(b, l, "%d", d->result);
+      return b;
+    }
+  return t[d->result];
 }
 
 void scamper_dealias_free(scamper_dealias_t *dealias)

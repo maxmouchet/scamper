@@ -3,9 +3,10 @@
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012-2013 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping.c,v 1.25 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_ping.c,v 1.29 2013/07/23 23:06:56 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping.c,v 1.25 2011/09/16 03:15:44 mjl Exp $";
+  "$Id: scamper_ping.c,v 1.29 2013/07/23 23:06:56 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -38,49 +39,59 @@ static const char rcsid[] =
 
 #include "utils.h"
 
-int scamper_ping_stats(const scamper_ping_t *ping,
-		       uint32_t *nreplies, uint32_t *ndups, uint16_t *nloss,
-		       struct timeval *min_rtt, struct timeval *max_rtt,
-		       struct timeval *avg_rtt, struct timeval *stddev_rtt)
+char *scamper_ping_method2str(const scamper_ping_t *ping, char *buf, size_t len)
 {
-  struct timeval min_rtt_, max_rtt_, avg_rtt_, stddev_rtt_;
+  static char *m[] = {
+    "icmp-echo",
+    "tcp-ack",
+    "tcp-ack-sport",
+    "udp",
+    "udp-dport",
+    "icmp-time",
+  };
+
+  if(ping->probe_method > sizeof(m) / sizeof(char *))
+    {
+      snprintf(buf, len, "%d", ping->probe_method);
+      return buf;
+    }
+
+  return m[ping->probe_method];
+}
+
+int scamper_ping_stats(const scamper_ping_t *ping, scamper_ping_stats_t *stats)
+{
   scamper_ping_reply_t *reply;
   uint16_t i;
   uint32_t us;
-  uint32_t nreplies_ = 0;
-  uint32_t ndups_ = 0;
-  uint16_t nloss_ = 0;
   double d, sum = 0, diff = 0, rtt;
   int first = 1;
   uint32_t n;
 
-  memset(&min_rtt_, 0, sizeof(min_rtt_));
-  memset(&max_rtt_, 0, sizeof(max_rtt_));
-  memset(&avg_rtt_, 0, sizeof(avg_rtt_));
-  memset(&stddev_rtt_, 0, sizeof(stddev_rtt_));
+  memset(stats, 0, sizeof(scamper_ping_stats_t));
 
   for(i=0; i<ping->ping_sent; i++)
     {
       if((reply = ping->ping_replies[i]) == NULL)
 	{
-	  nloss_++;
+	  stats->nloss++;
 	  continue;
 	}
 
-      nreplies_++;
+      stats->nreplies++;
       for(;;)
 	{
 	  if(first == 0)
 	    {
-	      if(timeval_cmp(&reply->rtt, &min_rtt_) < 0)
-		memcpy(&min_rtt_, &reply->rtt, sizeof(min_rtt_));
-	      if(timeval_cmp(&reply->rtt, &max_rtt_) > 0)
-		memcpy(&max_rtt_, &reply->rtt, sizeof(max_rtt_));
+	      if(timeval_cmp(&reply->rtt, &stats->min_rtt) < 0)
+		timeval_cpy(&stats->min_rtt, &reply->rtt);
+	      if(timeval_cmp(&reply->rtt, &stats->max_rtt) > 0)
+		timeval_cpy(&stats->max_rtt, &reply->rtt);
 	    }
 	  else
 	    {
-	      memcpy(&min_rtt_, &reply->rtt, sizeof(min_rtt_));
-	      memcpy(&max_rtt_, &reply->rtt, sizeof(max_rtt_));
+	      timeval_cpy(&stats->min_rtt, &reply->rtt);
+	      timeval_cpy(&stats->max_rtt, &reply->rtt);
 	      first = 0;
 	    }
 
@@ -89,20 +100,20 @@ int scamper_ping_stats(const scamper_ping_t *ping,
 	  if(reply->next != NULL)
 	    {
 	      reply = reply->next;
-	      ndups_++;
+	      stats->ndups++;
 	    }
 	  else break;
 	}
     }
 
-  n = nreplies_ + ndups_;
+  n = stats->nreplies + stats->ndups;
 
   if(n > 0)
     {
       /* compute the average */
       us = (sum / n);
-      avg_rtt_.tv_sec  = us / 1000000;
-      avg_rtt_.tv_usec = us % 1000000;
+      stats->avg_rtt.tv_sec  = us / 1000000;
+      stats->avg_rtt.tv_usec = us % 1000000;
 
       /* compute the standard deviation */
       d = (sum / n);
@@ -118,17 +129,9 @@ int scamper_ping_stats(const scamper_ping_t *ping,
 	}
 
       us = sqrt(sum/n);
-      stddev_rtt_.tv_sec  = us / 1000000;
-      stddev_rtt_.tv_usec = us % 1000000;
+      stats->stddev_rtt.tv_sec  = us / 1000000;
+      stats->stddev_rtt.tv_usec = us % 1000000;
     }
-
-  if(min_rtt != NULL) memcpy(min_rtt, &min_rtt_, sizeof(min_rtt_));
-  if(max_rtt != NULL) memcpy(max_rtt, &max_rtt_, sizeof(max_rtt_));
-  if(avg_rtt != NULL) memcpy(avg_rtt, &avg_rtt_, sizeof(avg_rtt_));
-  if(stddev_rtt != NULL) memcpy(stddev_rtt, &stddev_rtt_, sizeof(stddev_rtt_));
-  if(ndups != NULL) *ndups = ndups_;
-  if(nreplies != NULL) *nreplies = nreplies_;
-  if(nloss != NULL) *nloss = nloss_;
 
   return 0;
 }
@@ -167,6 +170,17 @@ int scamper_ping_setdata(scamper_ping_t *ping, uint8_t *bytes, uint16_t len)
 scamper_addr_t *scamper_ping_addr(const void *va)
 {
   return ((const scamper_ping_t *)va)->dst;
+}
+
+scamper_ping_reply_tsreply_t *scamper_ping_reply_tsreply_alloc(void)
+{
+  return malloc_zero(sizeof(scamper_ping_reply_tsreply_t));
+}
+
+void scamper_ping_reply_tsreply_free(scamper_ping_reply_tsreply_t *tsr)
+{
+  free(tsr);
+  return;
 }
 
 void scamper_ping_v4ts_free(scamper_ping_v4ts_t *ts)
@@ -333,18 +347,18 @@ scamper_ping_reply_v4ts_t *scamper_ping_reply_v4ts_alloc(uint8_t tsc, int ip)
 {
   scamper_ping_reply_v4ts_t *ts = NULL;
 
-  if(tsc == 0)
-    goto err;
-
   if((ts = malloc_zero(sizeof(scamper_ping_reply_v4ts_t))) == NULL)
     goto err;
   ts->tsc = tsc;
 
-  if((ts->tss = malloc_zero(sizeof(uint32_t) * tsc)) == NULL)
-    goto err;
-
-  if(ip != 0 && (ts->ips = malloc_zero(sizeof(scamper_addr_t *)*tsc)) == NULL)
-    goto err;
+  if(tsc > 0)
+    {
+      if((ts->tss = malloc_zero(sizeof(uint32_t) * tsc)) == NULL)
+	goto err;
+      if(ip != 0 &&
+	 (ts->ips = malloc_zero(sizeof(scamper_addr_t *) * tsc)) == NULL)
+	goto err;
+    }
 
   return ts;
 
@@ -410,6 +424,9 @@ void scamper_ping_reply_free(scamper_ping_reply_t *reply)
 
   if(reply->v4ts != NULL)
     scamper_ping_reply_v4ts_free(reply->v4ts);
+
+  if(reply->tsreply != NULL)
+    scamper_ping_reply_tsreply_free(reply->tsreply);
 
   free(reply);
   return;

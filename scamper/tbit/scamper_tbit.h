@@ -1,10 +1,12 @@
 /*
  * scamper_tbit.h
  *
- * $Id: scamper_tbit.h,v 1.17 2011/11/17 21:14:58 mjl Exp $
+ * $Id: scamper_tbit.h,v 1.29 2012/05/10 00:27:05 mjl Exp $
  *
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2010-2011 University of Waikato
+ * Copyright (C) 2012      Matthew Luckie
+ * Copyright (C) 2012      The Regents of the University of California
  *
  * This file implements algorithms described in the tbit-1.0 source code,
  * as well as the papers:
@@ -55,6 +57,7 @@
 #define SCAMPER_TBIT_RESULT_HALTED           7 /* halted */
 #define SCAMPER_TBIT_RESULT_TCP_BADOPT       8 /* bad TCP option */
 #define SCAMPER_TBIT_RESULT_TCP_FIN          9 /* early fin */
+#define SCAMPER_TBIT_RESULT_TCP_ZEROWIN      10 /* zero window */
 
 /* possible PMTUD test results */
 #define SCAMPER_TBIT_RESULT_PMTUD_NOACK      20 /* no ACK of request */
@@ -92,7 +95,15 @@
 #define SCAMPER_TBIT_PMTUD_OPTION_BLACKHOLE  0x1 /* test blackhole behaviour */
 
 /* null options */
-#define SCAMPER_TBIT_NULL_OPTION_TCPTS       0x1 /* tcp timestamps */
+#define SCAMPER_TBIT_NULL_OPTION_TCPTS       0x01 /* tcp timestamps */
+#define SCAMPER_TBIT_NULL_OPTION_IPTS_SYN    0x02 /* IP TS option on SYN */
+#define SCAMPER_TBIT_NULL_OPTION_IPRR_SYN    0x04 /* IP RR option on SYN */
+#define SCAMPER_TBIT_NULL_OPTION_IPQS_SYN    0x08 /* IP QS option on SYN */
+#define SCAMPER_TBIT_NULL_OPTION_SACK        0x10 /* offer use of TCP SACK */
+
+/* null results */
+#define SCAMPER_TBIT_NULL_RESULT_TCPTS       0x01 /* TCP timestamps OK */
+#define SCAMPER_TBIT_NULL_RESULT_SACK        0x02 /* use of TCP SACK OK */
 
 typedef struct scamper_tbit_pkt
 {
@@ -119,6 +130,7 @@ typedef struct scamper_tbit_pmtud
 typedef struct scamper_tbit_null
 {
   uint16_t             options;
+  uint16_t             results;
 } scamper_tbit_null_t;
 
 /*
@@ -171,6 +183,8 @@ char *scamper_tbit_type2str(const scamper_tbit_t *tbit, char *buf, size_t len);
 scamper_tbit_pkt_t *scamper_tbit_pkt_alloc(uint8_t dir, uint8_t *data,
 					   uint16_t len, struct timeval *tv);
 void scamper_tbit_pkt_free(scamper_tbit_pkt_t *pkt);
+int scamper_tbit_pkt_tcpdatabytes(const scamper_tbit_pkt_t *pkt, uint16_t *bc);
+int scamper_tbit_pkt_tcpack(const scamper_tbit_pkt_t *pkt, uint32_t *ack);
 
 scamper_tbit_pmtud_t *scamper_tbit_pmtud_alloc(void);
 void scamper_tbit_pmtud_free(scamper_tbit_pmtud_t *pmtud);
@@ -185,5 +199,89 @@ void scamper_tbit_app_http_free(scamper_tbit_app_http_t *http);
 
 int scamper_tbit_pkts_alloc(scamper_tbit_t *tbit, uint32_t count);
 int scamper_tbit_record_pkt(scamper_tbit_t *tbit, scamper_tbit_pkt_t *pkt);
+
+/*
+ * scamper_tbit_tcpq functions.
+ *
+ * these functions are used to maintain in-order processing of TCP packets
+ * when the packets are received out of order.  for these routines to work
+ * correctly, all TCP packets that are received in range must be processed
+ * through the queue so that the queue knows what sequence number is
+ * expected.
+ *
+ * scamper_tbit_tcpq_alloc: allocate a new tcp data queue with an initial
+ *  sequence number seeding the queue.
+ *
+ * scamper_tbit_tcpq_free: free the tcp data queue.  the ff parameter is an
+ *  optional free() function that can be called on all queue entry param
+ *  fields.
+ *
+ * scamper_tbit_tcpq_add: add a new segment to the queue.  the seq, flags,
+ *  and length must be supplied.  the param field is an optional field that
+ *  will be returned with the queue entry when the segment is returned in
+ *  order.
+ *
+ * scamper_tbit_tcpq_seg: return the sequence number and payload length of
+ *  the next packet in line to be returned.  the segment remains in the queue.
+ *  returns -1 if there is no segment in the queue, zero otherwise.
+ *
+ * scamper_tbit_tcpq_pop: return the next queue entry that is next in line
+ *  to be returned.  the segment is now the responsibility of the caller.
+ *
+ * scamper_tbit_tcpq_sack: return a set of sack blocks that specify the
+ *  state of the tcpq.  the caller must pass a pointer to an array of
+ *  (c*2) uint32_t.  the routine returns the number of sack blocks
+ *  computed given the constraint of c and the state of the queue.
+ *
+ * scamper_tbit_tcpqe_free: free the queue entry passed in.  ff is an
+ *  optional free() function that will be called on the param if not null.
+ *
+ */
+typedef struct scamper_tbit_tcpq scamper_tbit_tcpq_t;
+typedef struct scamper_tbit_tcpqe
+{
+  uint32_t seq;
+  uint16_t len;
+  uint8_t  flags;
+  uint8_t *data;
+} scamper_tbit_tcpqe_t;
+scamper_tbit_tcpq_t *scamper_tbit_tcpq_alloc(uint32_t isn);
+void scamper_tbit_tcpq_free(scamper_tbit_tcpq_t *q, void (*ff)(void *));
+int scamper_tbit_tcpq_add(scamper_tbit_tcpq_t *q, uint32_t seq,
+			  uint8_t flags, uint16_t len, uint8_t *data);
+int scamper_tbit_tcpq_seg(scamper_tbit_tcpq_t *q,uint32_t *seq,uint16_t *len);
+scamper_tbit_tcpqe_t *scamper_tbit_tcpq_pop(scamper_tbit_tcpq_t *q);
+int scamper_tbit_tcpq_sack(scamper_tbit_tcpq_t *q, uint32_t *blocks, int c);
+void scamper_tbit_tcpqe_free(scamper_tbit_tcpqe_t *qe, void (*ff)(void *));
+
+/*
+ * convenience functions.
+ *
+ * scamper_tbit_data_inrange: determine if a particular packet and length
+ *  are in range or not.
+ *
+ * scamper_tbit_data_seqoff: determine the difference in sequence number
+ *  space between a and b handling wrapping.  this function assumes that
+ *  the caller has used scamper_tbit_data_inrange first to determine
+ *  the packet is in the current window.
+ *
+ */
+int scamper_tbit_data_inrange(uint32_t rcv_nxt, uint32_t seq, uint16_t len);
+int scamper_tbit_data_seqoff(uint32_t rcv_nxt, uint32_t seq);
+
+/*
+ * scamper_tbit_stats
+ *
+ * give some idea about what took place during the tbit measurement.
+ */
+typedef struct scamper_tbit_stats
+{
+  struct timeval synack_rtt;
+  uint32_t       rx_xfersize;
+  uint32_t       rx_totalsize;
+  struct timeval xfertime;
+} scamper_tbit_stats_t;
+
+int scamper_tbit_stats(const scamper_tbit_t *tbit,scamper_tbit_stats_t *stats);
 
 #endif /* __SCAMPER_TBIT_H */

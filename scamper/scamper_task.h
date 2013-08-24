@@ -1,10 +1,11 @@
 /*
  * scamper_task.h
  *
- * $Id: scamper_task.h,v 1.38 2011/10/20 21:59:14 mjl Exp $
+ * $Id: scamper_task.h,v 1.40 2013/04/01 23:16:38 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2013      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -19,7 +20,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef __SCAMPER_TASK_H
@@ -49,7 +50,7 @@ typedef struct scamper_task_sig
     struct tx_ip
     {
       struct scamper_addr *dst;
-      struct scamper_addr *src;      
+      struct scamper_addr *src;
     } ip;
     struct tx_nd
     {
@@ -137,6 +138,7 @@ scamper_fd_t *scamper_task_fd_udp6(scamper_task_t *task, void *a, uint16_t sp);
 scamper_fd_t *scamper_task_fd_tcp4(scamper_task_t *task, void *a, uint16_t sp);
 scamper_fd_t *scamper_task_fd_tcp6(scamper_task_t *task, void *a, uint16_t sp);
 scamper_fd_t *scamper_task_fd_dl(scamper_task_t *task, int ifindex);
+scamper_fd_t *scamper_task_fd_ip4(scamper_task_t *task);
 #endif
 
 #if defined(__SCAMPER_FD_H) && !defined(_WIN32)

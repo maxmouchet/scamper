@@ -1,7 +1,7 @@
 /*
  * mjl_heap
  *
- * Copyright (C) 2006-2010 Matthew Luckie. All rights reserved.
+ * Copyright (C) 2006-2012 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,7 +24,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_heap.h,v 1.5 2010/04/20 21:54:54 mjl Exp $
+ * $Id: mjl_heap.h,v 1.6 2012/04/27 05:20:27 mjl Exp $
  *
  */
 
@@ -36,7 +36,7 @@ typedef struct heap_node heap_node_t;
 
 typedef int  (*heap_cmp_t)(const void *a, const void *b);
 typedef int  (*heap_free_t)(void *ptr);
-typedef void (*heap_foreach_t)(const void *param, const void *item);
+typedef void (*heap_foreach_t)(void *param, void *item);
 typedef void (*heap_onremove_t)(void *ptr);
 
 #ifndef DMALLOC

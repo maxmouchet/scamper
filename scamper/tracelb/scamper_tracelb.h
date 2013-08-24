@@ -1,7 +1,7 @@
 /*
  * scamper_tracelb.h
  *
- * $Id: scamper_tracelb.h,v 1.56 2009/10/02 21:00:26 mjl Exp $
+ * $Id: scamper_tracelb.h,v 1.57 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2008-2009 The University of Waikato
  * Author: Matthew Luckie
@@ -359,7 +359,7 @@ int scamper_tracelb_fwdpathc(const scamper_tracelb_t *trace, int *fwdpathc);
  *
  * this function determines the index (if any) into the trace at which
  * the path converges to a single node.  the caller should pass the array
- * 
+ *
  * if the path does not reconverge, -1 is passed back in the to variable.
  * returns zero on success, or -1 if an error occurs.
  */

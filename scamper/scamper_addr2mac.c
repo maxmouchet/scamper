@@ -1,10 +1,11 @@
 /*
  * scamper_addr2mac.c: handle a cache of IP to MAC address mappings
  *
- * $Id: scamper_addr2mac.c,v 1.36 2011/09/16 03:15:43 mjl Exp $
+ * $Id: scamper_addr2mac.c,v 1.39 2012/05/08 17:32:42 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_addr2mac.c,v 1.36 2011/09/16 03:15:43 mjl Exp $";
+  "$Id: scamper_addr2mac.c,v 1.39 2012/05/08 17:32:42 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -50,11 +51,6 @@ static const char rcsid[] =
 
 #if defined(__DragonFly__)
 #define HAVE_BSD_ARPCACHE
-#endif
-
-#if defined(HAVE_BSD_ARPCACHE)
-#define ROUNDUP(size) \
-        ((size > 0) ? (1 + ((size - 1) | (sizeof(long) - 1))) : sizeof(long))
 #endif
 
 #if defined(__linux__)
@@ -122,9 +118,9 @@ struct rtattr
 #define RTM_NEWNEIGH   (RTM_BASE+12)
 #define RTM_GETNEIGH   (RTM_BASE+14)
 #define NLM_F_REQUEST   1
-#define NLM_F_ROOT      0x100 
+#define NLM_F_ROOT      0x100
 #define NLM_F_MATCH     0x200
-#define NETLINK_ROUTE   0 
+#define NETLINK_ROUTE   0
 #define NUD_REACHABLE   0x02
 
 #endif /* __linux__ */
@@ -132,6 +128,7 @@ struct rtattr
 #include "scamper.h"
 #include "scamper_addr.h"
 #include "scamper_addr2mac.h"
+#include "scamper_rtsock.h"
 #include "scamper_debug.h"
 #include "utils.h"
 #include "mjl_splaytree.h"
@@ -435,6 +432,21 @@ static int addr2mac_init_linux()
 #endif
 
 #if defined(HAVE_BSD_ARPCACHE)
+static void addr2mac_mib_make(int *mib, int af)
+{
+  mib[0] = CTL_NET;
+  mib[1] = PF_ROUTE;
+  mib[2] = 0;
+  mib[3] = af;
+  mib[4] = NET_RT_FLAGS;
+#if defined(RTF_LLINFO)
+  mib[5] = RTF_LLINFO;
+#else
+  mib[5] = 0;
+#endif
+  return;
+}
+
 static int addr2mac_init_bsd(void)
 {
   struct rt_msghdr      *rtm;
@@ -453,22 +465,7 @@ static int addr2mac_init_bsd(void)
    * we get it by using the sysctl interface to the cache and parsing each
    * entry
    */
-  mib[0] = CTL_NET;
-  mib[1] = PF_ROUTE;
-  mib[2] = 0;
-  mib[3] = AF_INET;
-  mib[4] = NET_RT_FLAGS;
-
-  /*
-   * freebsd8 removed the RTF_LLINFO mib branch.
-   *
-   */
-#if defined(RTF_LLINFO)
-  mib[5] = RTF_LLINFO;
-#else
-  mib[5] = 0;
-#endif
-
+  addr2mac_mib_make(mib, AF_INET);
   if(sysctl_wrap(mib, 6, &vbuf, &size) == -1)
     {
       printerror(errno, strerror, __func__, "sysctl arp cache");
@@ -476,13 +473,13 @@ static int addr2mac_init_bsd(void)
     }
 
   iptype = SCAMPER_ADDR_TYPE_IPV4;
-
+  buf = (uint8_t *)vbuf;
   for(i=0; i<size; i += rtm->rtm_msglen)
     {
       j = i;
-      buf = (uint8_t *)vbuf;
       rtm = (struct rt_msghdr *)(buf + j); j += sizeof(struct rt_msghdr);
-      sin = (struct sockaddr_inarp *)(buf + j); j += ROUNDUP(sin->sin_len);
+      sin = (struct sockaddr_inarp *)(buf + j);
+      j += scamper_rtsock_roundup(sin->sin_len);
       sdl = (struct sockaddr_dl *)(buf + j);
 
       /* don't deal with permanent arp entries at this time */
@@ -505,8 +502,7 @@ static int addr2mac_init_bsd(void)
     }
 
   /* now it is time to get the IPv6 neighbour discovery cache */
-  mib[3] = AF_INET6;
-
+  addr2mac_mib_make(mib, AF_INET6);
   if(sysctl_wrap(mib, 6, &vbuf, &size) == -1)
     {
       /*
@@ -514,21 +510,20 @@ static int addr2mac_init_bsd(void)
        * this system
        */
       if(errno == EINVAL || errno == EAFNOSUPPORT)
-	{
-	  return 0;
-	}
+	return 0;
+
       printerror(errno, strerror, __func__, "sysctl ndp cache");
       goto err;
     }
 
   iptype = SCAMPER_ADDR_TYPE_IPV6;
-
+  buf = (uint8_t *)vbuf;
   for(i=0; i<size; i += rtm->rtm_msglen)
     {
       j = i;
-      buf = (uint8_t *)vbuf;
       rtm = (struct rt_msghdr *)(buf + j); j += sizeof(struct rt_msghdr);
-      sin6 = (struct sockaddr_in6 *)(buf + j); j += ROUNDUP(sin6->sin6_len);
+      sin6 = (struct sockaddr_in6 *)(buf + j);
+      j += scamper_rtsock_roundup(sin6->sin6_len);
       sdl = (struct sockaddr_dl *)(buf + j);
 
       if(sdl->sdl_family != AF_LINK ||
@@ -619,6 +614,7 @@ int scamper_addr2mac_init()
 {
   if((tree = splaytree_alloc((splaytree_cmp_t)addr2mac_cmp)) == NULL)
     {
+      printerror(errno, strerror, __func__, "could not alloc tree");
       return -1;
     }
 

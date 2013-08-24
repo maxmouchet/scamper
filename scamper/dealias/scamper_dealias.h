@@ -1,9 +1,10 @@
 /*
  * scamper_dealias.h
  *
- * $Id: scamper_dealias.h,v 1.30 2011/06/23 02:44:14 mjl Exp $
+ * $Id: scamper_dealias.h,v 1.43 2013/08/04 23:26:11 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
+ * Copyright (C) 2012-2013 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This code implements alias resolution techniques published by others
@@ -49,6 +50,8 @@
 #define SCAMPER_DEALIAS_ALLY_FLAG_NOBS        1
 #define SCAMPER_DEALIAS_PREFIXSCAN_FLAG_NOBS  1
 #define SCAMPER_DEALIAS_RADARGUN_FLAG_SHUFFLE 1
+
+#define SCAMPER_DEALIAS_REPLY_FLAG_IPID32 1
 
 #define SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(def) (        \
  (def)->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_ICMP_ECHO)
@@ -112,6 +115,15 @@
 #define SCAMPER_DEALIAS_METHOD_IS_BUMP(d) ( \
  (d)->method == SCAMPER_DEALIAS_METHOD_BUMP)
 
+#define SCAMPER_DEALIAS_RESULT_IS_NONE(d) ( \
+ (d)->result == SCAMPER_DEALIAS_RESULT_NONE)
+
+#define SCAMPER_DEALIAS_RESULT_IS_ALIASES(d) ( \
+ (d)->result == SCAMPER_DEALIAS_RESULT_ALIASES)
+
+#define SCAMPER_DEALIAS_RESULT_IS_NOTALIASES(d) ( \
+ (d)->result == SCAMPER_DEALIAS_RESULT_NOTALIASES)
+
 #define SCAMPER_DEALIAS_ALLY_IS_NOBS(d) ( \
  (((scamper_dealias_ally_t *)(d)->data)->flags) & \
     SCAMPER_DEALIAS_ALLY_FLAG_NOBS)
@@ -121,25 +133,31 @@
     SCAMPER_DEALIAS_PREFIXSCAN_FLAG_NOBS)
 
 #define SCAMPER_DEALIAS_REPLY_FROM_TARGET(p, r) (          \
- (SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP((p)->probedef) &&  \
+ (SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP((p)->def) &&  \
   SCAMPER_DEALIAS_REPLY_IS_ICMP_UNREACH_PORT((r))) ||      \
- (SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP((p)->probedef) && \
+ (SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP((p)->def) && \
   SCAMPER_DEALIAS_REPLY_IS_ICMP_ECHO_REPLY((r))) ||        \
- (SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP((p)->probedef) &&  \
+ (SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP((p)->def) &&  \
   SCAMPER_DEALIAS_REPLY_IS_TCP((r))))
 
 typedef struct scamper_dealias_reply
 {
   scamper_addr_t               *src;
   struct timeval                rx;
-  uint16_t                      ipid;
+
+  uint8_t                       flags;
   uint8_t                       proto;
   uint8_t                       ttl;
   uint8_t                       icmp_type;
   uint8_t                       icmp_code;
   uint8_t                       icmp_q_ip_ttl;
-  struct scamper_icmpext       *icmp_ext;
   uint8_t                       tcp_flags;
+
+  uint16_t                      ipid;
+  uint32_t                      ipid32;
+
+  struct scamper_icmpext       *icmp_ext;
+
 } scamper_dealias_reply_t;
 
 typedef struct scamper_dealias_probedef_udp
@@ -150,8 +168,6 @@ typedef struct scamper_dealias_probedef_udp
 
 typedef struct scamper_dealias_probedef_icmp
 {
-  uint8_t  type;
-  uint8_t  code;
   uint16_t csum;
   uint16_t id;
 } scamper_dealias_probedef_icmp_t;
@@ -171,6 +187,8 @@ typedef struct scamper_dealias_probedef
   uint8_t                           method;
   uint8_t                           ttl;
   uint8_t                           tos;
+  uint16_t                          size;
+  uint16_t                          mtu;
   union
   {
     scamper_dealias_probedef_udp_t  udp;
@@ -181,7 +199,7 @@ typedef struct scamper_dealias_probedef
 
 typedef struct scamper_dealias_probe
 {
-  scamper_dealias_probedef_t   *probedef;
+  scamper_dealias_probedef_t   *def;
   uint32_t                      seq;
   struct timeval                tx;
   scamper_dealias_reply_t     **replies;
@@ -298,6 +316,11 @@ scamper_dealias_reply_t *scamper_dealias_reply_alloc(void);
 void scamper_dealias_reply_free(scamper_dealias_reply_t *);
 uint32_t scamper_dealias_reply_count(const scamper_dealias_t *);
 
+const char *scamper_dealias_method_tostr(const scamper_dealias_t *, char *, size_t);
+const char *scamper_dealias_result_tostr(const scamper_dealias_t *, char *, size_t);
+const char *scamper_dealias_probedef_method_tostr(const scamper_dealias_probedef_t *,
+						  char *, size_t);
+
 int scamper_dealias_probes_alloc(scamper_dealias_t *, uint32_t);
 int scamper_dealias_replies_alloc(scamper_dealias_probe_t *, uint16_t);
 
@@ -318,16 +341,17 @@ int scamper_dealias_prefixscan_alloc(scamper_dealias_t *);
 int scamper_dealias_bump_alloc(scamper_dealias_t *);
 
 /*
- * scamper_dealias_*_inseq
+ * scamper_dealias_ipid_inseq
  *
- * convenience functions to consider if a sequence of IPIDs are in sequence
- * (given a fudge value).  the bs functions will consider if the IPIDs are
- * in sequence if the IPID bytes are swapped.
+ * convenience function to consider if a sequence of IPIDs are in sequence
+ * (given a fudge value).
+ *
+ * the first two parameters: array of probes and its length.
+ * the third parameter:      fudge factor
+ * the fourth parameter:     0: no byteswap, 1: byteswap, 2: don't care
+ *
  */
-int scamper_dealias_ally_inseq(scamper_dealias_t *, uint16_t);
-int scamper_dealias_ipid_inseq(scamper_dealias_probe_t **, int, uint16_t);
-int scamper_dealias_ally_inseqbs(scamper_dealias_t *, uint16_t);
-int scamper_dealias_ipid_inseqbs(scamper_dealias_probe_t **, int, uint16_t);
+int scamper_dealias_ipid_inseq(scamper_dealias_probe_t **, int, uint16_t, int);
 
 int scamper_dealias_prefixscan_xs_add(scamper_dealias_t *, scamper_addr_t *);
 int scamper_dealias_prefixscan_xs_in(scamper_dealias_t *, scamper_addr_t *);
@@ -362,17 +386,5 @@ typedef struct scamper_dealias_ipid
 
 int scamper_dealias_ipid(const scamper_dealias_probe_t **probes,
 			 uint32_t probec, scamper_dealias_ipid_t *ipid);
-
-#ifndef ICMP_ECHO
-#define ICMP_ECHO 8
-#endif
-
-#ifndef TH_SYN
-#define TH_SYN 0x02
-#endif
-
-#ifndef TH_ACK
-#define TH_ACK 0x10
-#endif
 
 #endif /* __SCAMPER_DEALIAS_H */

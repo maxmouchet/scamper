@@ -1,7 +1,7 @@
 /*
  * scamper_do_sting.h
  *
- * $Id: scamper_sting_do.h,v 1.3 2010/10/24 03:28:31 mjl Exp $
+ * $Id: scamper_sting_do.h,v 1.4 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Author: Matthew Luckie
@@ -25,7 +25,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef __SCAMPER_DO_STING_H

@@ -1,7 +1,7 @@
 /*
  * scamper_icmp4.c
  *
- * $Id: scamper_icmp4.c,v 1.103 2011/09/20 22:04:41 mjl Exp $
+ * $Id: scamper_icmp4.c,v 1.108 2013/08/07 20:45:59 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmp4.c,v 1.103 2011/09/20 22:04:41 mjl Exp $";
+  "$Id: scamper_icmp4.c,v 1.108 2013/08/07 20:45:59 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -57,6 +57,7 @@ static void icmp4_header(scamper_probe_t *probe, uint8_t *buf)
     {
     case ICMP_ECHO:
     case ICMP_ECHOREPLY:
+    case ICMP_TSTAMP:
       bytes_htons(buf+4, probe->pr_icmp_id);
       bytes_htons(buf+6, probe->pr_icmp_seq);
       break;
@@ -65,6 +66,10 @@ static void icmp4_header(scamper_probe_t *probe, uint8_t *buf)
       memset(buf+4, 0, 4);
       if(probe->pr_icmp_code == ICMP_UNREACH_NEEDFRAG)
 	bytes_htons(buf+6, probe->pr_icmp_mtu);
+      break;
+
+    default:
+      memset(buf+4, 0, 4);
       break;
     }
 
@@ -159,6 +164,7 @@ int scamper_icmp4_probe(scamper_probe_t *probe)
   switch(probe->pr_icmp_type)
     {
     case ICMP_ECHO:
+    case ICMP_TSTAMP:
       icmphdrlen = (1 + 1 + 2 + 2 + 2);
       break;
 
@@ -363,6 +369,8 @@ static void ip_quote_ts(scamper_icmp_resp_t *ir, int fl,
   const uint8_t *ptr = buf;
   uint8_t i, tsc;
 
+  ir->ir_flags |= SCAMPER_ICMP_RESP_FLAG_INNER_IPOPT_TS;
+
   if((tsc = ip_tsc(fl, len)) == 0)
     return;
 
@@ -395,6 +403,8 @@ static void ip_ts(scamper_icmp_resp_t *ir, int fl, const uint8_t *buf, int len)
 {
   const uint8_t *ptr = buf;
   uint8_t i, tsc;
+
+  ir->ir_flags |= SCAMPER_ICMP_RESP_FLAG_IPOPT_TS;
 
   if((tsc = ip_tsc(fl, len)) == 0)
     return;
@@ -464,10 +474,12 @@ static void ipopt_parse(scamper_icmp_resp_t *ir, const uint8_t *buf, int iphl,
       else if(buf[off] == 68 && ts != NULL)
 	{
 	  /* timestamp */
-	  p  = buf[off+2] - 1;
+	  p  = buf[off+2];
 	  fl = buf[off+3] & 0xf;
-	  if(p <= ol)
-	    ts(ir, fl, buf+off+4, p-4);
+	  if(p == 1) /* RFC 781, not in 791 */
+	    ts(ir, fl, buf+off+4, ol-4);
+	  else if(p >= 5 && p-1 <= ol)
+	    ts(ir, fl, buf+off+4, p-5);
 	}
 
       off += ol;
@@ -517,7 +529,7 @@ static void icmp4_recv_ip(int fd, scamper_icmp_resp_t *ir, const uint8_t *buf,
 	    }
 	  cmsg = (struct cmsghdr *)CMSG_NXTHDR(msg, cmsg);
 	}
-    }  
+    }
 #elif defined(SIOCGSTAMP)
   if(ioctl(fd, SIOCGSTAMP, &ir->ir_rx) != -1)
     {
@@ -608,7 +620,7 @@ int scamper_icmp4_recv(int fd, scamper_icmp_resp_t *resp)
    */
   if(pbuflen < iphl + 8)
     {
-      scamper_debug(__func__, "pbuflen [%d] < iphl [%d] + 8", pbuflen, iphl); 
+      scamper_debug(__func__, "pbuflen [%d] < iphl [%d] + 8", pbuflen, iphl);
       return -1;
     }
 
@@ -616,9 +628,10 @@ int scamper_icmp4_recv(int fd, scamper_icmp_resp_t *resp)
   type = icmp->icmp_type;
   code = icmp->icmp_code;
 
-  /* check to see if the ICMP type / code is what we want */ 
-  if((type != ICMP_TIMXCEED || code != ICMP_TIMXCEED_INTRANS) && 
-      type != ICMP_UNREACH && type != ICMP_ECHOREPLY)
+  /* check to see if the ICMP type / code is what we want */
+  if((type != ICMP_TIMXCEED || code != ICMP_TIMXCEED_INTRANS) &&
+     type != ICMP_UNREACH && type != ICMP_ECHOREPLY &&
+     type != ICMP_TSTAMPREPLY)
     {
       scamper_debug(__func__, "type %d, code %d not wanted", type, code);
       return -1;
@@ -633,12 +646,19 @@ int scamper_icmp4_recv(int fd, scamper_icmp_resp_t *resp)
    * was no error condition.
    * so get the outer packet's details and be done
    */
-  if(type == ICMP_ECHOREPLY)
+  if(type == ICMP_ECHOREPLY || type == ICMP_TSTAMPREPLY)
     {
       resp->ir_icmp_id  = ntohs(icmp->icmp_id);
       resp->ir_icmp_seq = ntohs(icmp->icmp_seq);
       memcpy(&resp->ir_inner_ip_dst.v4, &ip_outer->ip_src,
 	     sizeof(struct in_addr));
+
+      if(type == ICMP_TSTAMPREPLY)
+	{
+	  resp->ir_icmp_tso = bytes_ntohl(rxbuf + iphl + 8);
+	  resp->ir_icmp_tsr = bytes_ntohl(rxbuf + iphl + 12);
+	  resp->ir_icmp_tst = bytes_ntohl(rxbuf + iphl + 16);
+	}
 
 #ifndef _WIN32
       icmp4_recv_ip(fd, resp, rxbuf, iphl, &msg);
@@ -841,7 +861,8 @@ int scamper_icmp4_open(const void *addr)
 #if defined(ICMP_FILTER)
   filter.data = ~((1 << ICMP_DEST_UNREACH)  |
 		  (1 << ICMP_TIME_EXCEEDED) |
-		  (1 << ICMP_ECHOREPLY)
+		  (1 << ICMP_ECHOREPLY) |
+		  (1 << ICMP_TSTAMPREPLY)
 		  );
   if(setsockopt(fd, SOL_RAW, ICMP_FILTER, &filter, sizeof(filter)) == -1)
     {

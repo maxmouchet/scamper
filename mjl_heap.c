@@ -4,7 +4,7 @@
  *
  * Adapted from the priority queue in "Robert Sedgewick's Algorithms in C++"
  *
- * Copyright (C) 2006-2010 Matthew Luckie. All rights reserved
+ * Copyright (C) 2006-2012 Matthew Luckie. All rights reserved
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,7 +31,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_heap.c,v 1.10 2010/04/20 21:54:54 mjl Exp $";
+  "$Id: mjl_heap.c,v 1.11 2012/04/27 05:20:42 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -70,13 +70,9 @@ static void heap_assert(const heap_t *heap)
 
       /* parent has to have higher priority than its children */
       if(i+i <= heap->N)
-	{
-	  assert(heap->cmp(heap->a[i]->item, heap->a[i+i]->item) >= 0);
-	}
+	assert(heap->cmp(heap->a[i]->item, heap->a[i+i]->item) >= 0);
       if(i+i+1 <= heap->N)
-	{
-	  assert(heap->cmp(heap->a[i]->item, heap->a[i+i+1]->item) >= 0);
-	}
+	assert(heap->cmp(heap->a[i]->item, heap->a[i+i+1]->item) >= 0);
     }
   return;
 }
@@ -112,14 +108,10 @@ static void downheap(heap_t *heap, int k)
       j = k+k;
 
       if(j < heap->N && heap->cmp(heap->a[j]->item, heap->a[j+1]->item) < 0)
-	{
-	  j++;
-	}
+	j++;
 
       if(heap->cmp(v->item, heap->a[j]->item) >= 0)
-	{
-	  break;
-	}
+	break;
 
       heap->a[k] = heap->a[j];
       heap->a[k]->id = k;
@@ -156,9 +148,7 @@ heap_t *heap_alloc_dm(heap_cmp_t cmp, const char *file, const int line)
   heap->onremove = NULL;
 
   if((heap->a = malloc(sizeof(heap_node_t *) * heap->max)) == NULL)
-    {
-      goto err;
-    }
+    goto err;
 
   return heap;
 
@@ -242,9 +232,7 @@ heap_node_t *heap_insert_dm(heap_t *heap, void *ptr, const char *file,
     {
       size = (heap->max + HEAP_GROWBY) * sizeof(heap_node_t *);
       if((tmp = realloc(heap->a, size)) == NULL)
-	{
-	  goto err;
-	}
+	goto err;
 
       heap->max += HEAP_GROWBY;
       heap->a = (heap_node_t **)tmp;
@@ -272,12 +260,8 @@ heap_node_t *heap_insert_dm(heap_t *heap, void *ptr, const char *file,
 heap_node_t *heap_head_node(heap_t *heap)
 {
   heap_assert(heap);
-
   if(heap->N == 0)
-    {
-      return NULL;
-    }
-
+    return NULL;
   return heap->a[1];
 }
 
@@ -289,12 +273,8 @@ heap_node_t *heap_head_node(heap_t *heap)
 void *heap_head_item(heap_t *heap)
 {
   heap_assert(heap);
-
   if(heap->N == 0)
-    {
-      return NULL;
-    }
-
+    return NULL;
   return heap->a[1]->item;
 }
 
@@ -306,9 +286,7 @@ void *heap_remove(heap_t *heap)
   heap_assert(heap);
 
   if(heap->N == 0)
-    {
-      return NULL;
-    }
+    return NULL;
 
   v = heap->a[1];
 
@@ -333,9 +311,7 @@ void heap_foreach(heap_t *heap, void *param, heap_foreach_t func)
   int i;
 
   for(i=1; i <= heap->N; i++)
-    {
-      func(param, heap->a[i]->item);
-    }
+    func(param, heap->a[i]->item);
 
   return;
 }

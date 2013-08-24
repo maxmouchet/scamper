@@ -3,10 +3,11 @@
  *
  * the WAND ARTS file format replacement
  *
- * $Id: scamper_file_warts.c,v 1.232 2011/10/25 02:58:46 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.238 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_warts.c,v 1.232 2011/10/25 02:58:46 mjl Exp $";
+  "$Id: scamper_file_warts.c,v 1.238 2012/04/05 18:00:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -89,6 +90,8 @@ static const warts_var_t cycle_vars[] =
   {WARTS_CYCLE_HOSTNAME,  -1, -1},
 };
 #define cycle_vars_mfb WARTS_VAR_MFB(cycle_vars)
+
+typedef int (*warts_obj_read_t)(scamper_file_t *,const warts_hdr_t *,void **);
 
 void flag_ij(const int id, int *i, int *j)
 {
@@ -181,10 +184,8 @@ int warts_str_size(const char *str)
   return strlen(str) + 1;
 }
 
-int warts_addr_cmp(const void *va, const void *vb)
+static int warts_addr_cmp(const warts_addr_t *a, const warts_addr_t *b)
 {
-  const warts_addr_t *a = *((const warts_addr_t **)va);
-  const warts_addr_t *b = *((const warts_addr_t **)vb);
   return scamper_addr_cmp(a->addr, b->addr);
 }
 
@@ -193,7 +194,8 @@ uint32_t warts_addr_size(warts_addrtable_t *t, scamper_addr_t *addr)
   warts_addr_t f, *wa;
 
   f.addr = addr;
-  if(array_find((void **)t->addrs, t->addrc, &f, warts_addr_cmp) != NULL)
+  if(array_find((void **)t->addrs, t->addrc, &f,
+		(array_cmp_t)warts_addr_cmp) != NULL)
     {
       return 1 + 4;
     }
@@ -203,7 +205,8 @@ uint32_t warts_addr_size(warts_addrtable_t *t, scamper_addr_t *addr)
       wa->addr = scamper_addr_use(addr);
       wa->id   = t->addrc;
 
-      if(array_insert((void ***)&t->addrs, &t->addrc, wa, warts_addr_cmp) != 0)
+      if(array_insert((void ***)&t->addrs, &t->addrc, wa,
+		      (array_cmp_t)warts_addr_cmp) != 0)
 	{
 	  free(wa);
 	}
@@ -239,7 +242,8 @@ void insert_addr(uint8_t *buf, uint32_t *off, const uint32_t len,
   assert(len - *off >= 1 + 1);
 
   f.addr = (scamper_addr_t *)addr;
-  wa = array_find((void **)table->addrs, table->addrc, &f, warts_addr_cmp);
+  wa = array_find((void **)table->addrs, table->addrc, &f,
+		  (array_cmp_t)warts_addr_cmp);
   assert(wa != NULL);
 
   if(wa->ondisk == 0)
@@ -345,7 +349,7 @@ void insert_timeval(uint8_t *buf, uint32_t *off, const uint32_t len,
 
   t32 = htonl(in->tv_sec);
   memcpy(buf + *off, &t32, 4); *off += 4;
-  
+
   t32 = htonl(in->tv_usec);
   memcpy(buf + *off, &t32, 4); *off += 4;
 
@@ -476,7 +480,7 @@ int extract_byte(const uint8_t *buf, uint32_t *off,
     }
 
   *out = buf[(*off)++];
-  return 0;  
+  return 0;
 }
 
 int extract_bytes_ptr(const uint8_t *buf, uint32_t *off,
@@ -719,7 +723,7 @@ int warts_params_read(const uint8_t *buf, uint32_t *off, uint32_t len,
   return 0;
 
  err:
-  return -1;  
+  return -1;
 }
 
 void warts_params_write(uint8_t *buf, uint32_t *off,
@@ -796,11 +800,25 @@ void warts_params_write(uint8_t *buf, uint32_t *off,
  */
 int warts_read(scamper_file_t *sf, uint8_t **buf, size_t len)
 {
+  scamper_file_readfunc_t rf = scamper_file_getreadfunc(sf);
   warts_state_t *state = scamper_file_getstate(sf);
   int            fd    = scamper_file_getfd(sf);
   uint8_t       *tmp   = NULL;
   int            ret;
   size_t         rc;
+
+  *buf = NULL;
+
+  if(rf != NULL)
+    {
+      if((ret = rf(scamper_file_getreadparam(sf), buf, len)) == 0 || ret == -2)
+	{
+	  if(ret == -2)
+	    scamper_file_seteof(sf);
+	  return 0;
+	}
+      return -1;
+    }
 
   /* if there is data left over from a prior read, then append to it. */
   if(state->readbuf != NULL)
@@ -829,7 +847,6 @@ int warts_read(scamper_file_t *sf, uint8_t **buf, size_t len)
 	   * read has not completed yet, but we haven't got a failure
 	   * condition either.
 	   */
-	  *buf = NULL;
 	  return 0;
 	}
 
@@ -838,15 +855,12 @@ int warts_read(scamper_file_t *sf, uint8_t **buf, size_t len)
       state->readbuf = NULL;
       state->readbuf_len = 0;
       state->off += len;
-
       return 0;
     }
 
   /* no data left over, reading from scratch */
   if((tmp = malloc(len)) == NULL)
-    {
-      return -1;
-    }
+    return -1;
 
   /* try and read.  if we read the whole amount, everything is good */
   if((ret = read_wrap(fd, tmp, &rc, len)) == 0)
@@ -876,18 +890,14 @@ int warts_read(scamper_file_t *sf, uint8_t **buf, size_t len)
 
       /* partial read, so error condition */
       if(rc != 0)
-	{
-	  return -1;
-	}
+	return -1;
 
       return 0;
     }
 
   /* if the read would block, then there's no problem */
   if(ret == -1 && errno == EAGAIN)
-    {
-      return 0;
-    }
+    return 0;
 
   return -1;
 }
@@ -1683,7 +1693,7 @@ int warts_cycle_stop_read(scamper_file_t *sf, const warts_hdr_t *hdr,
    * defined, or is the null cycle entry, or there is no current cycle
    * for this id) then we have a problem...
    */
-  if(extract_uint32(buf, &off, hdr->len, &id, NULL) != 0 || 
+  if(extract_uint32(buf, &off, hdr->len, &id, NULL) != 0 ||
      id >= state->cycle_count || id == 0 || state->cycle_table[id] == NULL)
     {
       goto err;
@@ -1833,7 +1843,7 @@ int warts_icmpext_read(const uint8_t *buf, uint32_t *off, uint32_t len,
 	}
       cn = buf[*off+2];
       ct = buf[*off+3];
-      
+
       if((ie = scamper_icmpext_alloc(cn, ct, u16, &buf[*off+4])) == NULL)
 	{
 	  return -1;
@@ -1899,14 +1909,29 @@ void warts_icmpext_write(uint8_t *buf,uint32_t *off,const uint32_t len,
 int scamper_file_warts_read(scamper_file_t *sf, scamper_file_filter_t *filter,
 			    uint16_t *type, void **data)
 {
+  static const warts_obj_read_t objread[] =
+  {
+    NULL,
+    (warts_obj_read_t)warts_list_read,
+    (warts_obj_read_t)warts_cycle_read,
+    (warts_obj_read_t)warts_cycle_read,
+    (warts_obj_read_t)warts_cycle_stop_read,
+    (warts_obj_read_t)warts_addr_read,
+    (warts_obj_read_t)scamper_file_warts_trace_read,
+    (warts_obj_read_t)scamper_file_warts_ping_read,
+    (warts_obj_read_t)scamper_file_warts_tracelb_read,
+    (warts_obj_read_t)scamper_file_warts_dealias_read,
+    (warts_obj_read_t)scamper_file_warts_neighbourdisc_read,
+    (warts_obj_read_t)scamper_file_warts_tbit_read,
+    (warts_obj_read_t)scamper_file_warts_sting_read,
+    (warts_obj_read_t)scamper_file_warts_sniff_read,
+  };
   warts_state_t   *state = scamper_file_getstate(sf);
-  scamper_list_t  *list;
-  scamper_cycle_t *cycle;
-  scamper_addr_t  *addr;
   warts_hdr_t      hdr;
   int              isfilter;
   int              tmp;
   uint8_t         *buf;
+  void            *ptr;
   char             offs[16];
 
   for(;;)
@@ -1921,117 +1946,67 @@ int scamper_file_warts_read(scamper_file_t *sf, scamper_file_filter_t *filter,
 	  if((tmp = warts_hdr_read(sf, &hdr)) == 0)
 	    {
 	      *data = NULL;
-	      break;
-	    }
-	  else if(tmp == -1)
-	    {
-	      /* partial record */
-	      return -1;
+	      return 0;
 	    }
 
 	  /* if the header does not pass a basic sanity check, then give up */
-	  if(hdr.magic != WARTS_MAGIC || hdr.type == 0)
-	    {
-	      goto err;
-	    }
+	  if(tmp == -1 || hdr.magic != WARTS_MAGIC || hdr.type == 0)
+	    goto err;
 	}
       else
 	{
 	  hdr = state->hdr;
 	}
 
-      /* does the caller wants to know about this type? */
+      /*
+       * does the caller want to know about this type?
+       * if they do, tell them what type of object (might be) returned.
+       */
       if((isfilter = scamper_file_filter_isset(filter, hdr.type)) == 1)
-	{
-	  *type = hdr.type;
-	}
-
+	*type = hdr.type;
       *data = NULL;
 
-      if(hdr.type == SCAMPER_FILE_OBJ_ADDR)
+      if(hdr.type == SCAMPER_FILE_OBJ_ADDR        ||
+	 hdr.type == SCAMPER_FILE_OBJ_LIST        ||
+	 hdr.type == SCAMPER_FILE_OBJ_CYCLE_DEF   ||
+	 hdr.type == SCAMPER_FILE_OBJ_CYCLE_START ||
+	 hdr.type == SCAMPER_FILE_OBJ_CYCLE_STOP)
 	{
-	  if(warts_addr_read(sf, &hdr, &addr) != 0)
+	  if(objread[hdr.type](sf, &hdr, &ptr) != 0)
 	    goto err;
 
-	  if(addr != NULL)
+	  if(ptr == NULL)
 	    {
-	      memset(&state->hdr, 0, sizeof(state->hdr));
-	      if(isfilter == 1)
-		{
-		  *data = scamper_addr_use(addr);
-		  break;
-		}
-	    }
-	  else
-	    {
+	      /* partial read.  return for now */
 	      state->hdr = hdr;
-	      break;
+	      return 0;
 	    }
-	}
-      else if(hdr.type == SCAMPER_FILE_OBJ_LIST)
-	{
-	  if(warts_list_read(sf, &hdr, &list) != 0)
-	    goto err;
 
-	  if(list != NULL)
-	    {
-	      memset(&state->hdr, 0, sizeof(state->hdr));
-	      if(isfilter == 1)
-		{
-		  *data = scamper_list_use(list);
-		  break;
-		}
-	    }
-	  else
-	    {
-	      state->hdr = hdr;
-	      break;
-	    }
-	}
-      else if(hdr.type == SCAMPER_FILE_OBJ_CYCLE_DEF ||
-	      hdr.type == SCAMPER_FILE_OBJ_CYCLE_START)
-	{
-	  if(warts_cycle_read(sf, &hdr, &cycle) != 0)
-	    goto err;
+	  memset(&state->hdr, 0, sizeof(state->hdr));
 
-	  if(cycle != NULL)
+	  if(isfilter != 0)
 	    {
-	      memset(&state->hdr, 0, sizeof(state->hdr));
-	      if(isfilter == 1)
+	      switch(hdr.type)
 		{
-		  *data = scamper_cycle_use(cycle);
+		case SCAMPER_FILE_OBJ_ADDR:
+		  *data = scamper_addr_use((scamper_addr_t *)ptr);
+		  break;
+		case SCAMPER_FILE_OBJ_LIST:
+		  *data = scamper_list_use((scamper_list_t *)ptr);
+		  break;
+		case SCAMPER_FILE_OBJ_CYCLE_DEF:
+		case SCAMPER_FILE_OBJ_CYCLE_START:
+		  *data = scamper_cycle_use((scamper_cycle_t *)ptr);
+		  break;
+		case SCAMPER_FILE_OBJ_CYCLE_STOP:
+		  *data = ptr;
 		  break;
 		}
+	      return 0;
 	    }
-	  else
-	    {
-	      state->hdr = hdr;
-	      break;
-	    }
-	}
-      else if(hdr.type == SCAMPER_FILE_OBJ_CYCLE_STOP)
-	{
-	  if(warts_cycle_stop_read(sf, &hdr, &cycle) != 0)
-	    goto err;
 
-	  if(cycle != NULL)
-	    {
-	      memset(&state->hdr, 0, sizeof(state->hdr));
-	      if(isfilter == 1)
-		{
-		  *data = cycle;
-		  break;
-		}
-	      else
-		{
-		  scamper_cycle_free(cycle);
-		}
-	    }
-	  else
-	    {
-	      state->hdr = hdr;
-	      break;
-	    }
+	  if(hdr.type == SCAMPER_FILE_OBJ_CYCLE_STOP)
+	    scamper_cycle_free((scamper_cycle_t *)ptr);
 	}
       else if(isfilter == 0)
 	{
@@ -2039,132 +2014,27 @@ int scamper_file_warts_read(scamper_file_t *sf, scamper_file_filter_t *filter,
 	  buf = NULL;
 	  if(warts_read(sf, &buf, hdr.len) != 0)
 	    goto err;
-
-	  if(buf != NULL)
+	  if(buf == NULL)
 	    {
-	      memset(&state->hdr, 0, sizeof(state->hdr));
-	      free(buf);
-	    }
-	  else
-	    {
+	      /* partial read.  return for now */
 	      state->hdr = hdr;
-	      break;
+	      return 0;
 	    }
-	}
-      else if(hdr.type == SCAMPER_FILE_OBJ_TRACE)
-	{
-	  if(scamper_file_warts_trace_read(sf, &hdr,
-					   (struct scamper_trace **)data) != 0)
-	    {
-	      goto err;
-	    }
-
-	  if(*data != NULL)
-	    memset(&state->hdr, 0, sizeof(state->hdr));
-	  else
-	    state->hdr = hdr;
-
-	  break;
-	}
-      else if(hdr.type == SCAMPER_FILE_OBJ_PING)
-	{
-	  if(scamper_file_warts_ping_read(sf, &hdr,
-					  (struct scamper_ping **)data) != 0)
-	    {
-	      goto err;
-	    }
-
-	  if(*data != NULL)
-	    memset(&state->hdr, 0, sizeof(state->hdr));
-	  else
-	    state->hdr = hdr;
-
-	  break;
-	}
-      else if(hdr.type == SCAMPER_FILE_OBJ_TRACELB)
-	{
-	  if(scamper_file_warts_tracelb_read(sf, &hdr,
-			     (struct scamper_tracelb **)data) != 0)
-	    {
-	      goto err;
-	    }
-
-	  if(*data != NULL)
-	    memset(&state->hdr, 0, sizeof(state->hdr));
-	  else
-	    state->hdr = hdr;
-
-	  break;
-	}
-      else if(hdr.type == SCAMPER_FILE_OBJ_DEALIAS)
-	{
-	  if(scamper_file_warts_dealias_read(sf, &hdr,
-			     (struct scamper_dealias **)data) != 0)
-	    goto err;
-
-	  if(*data != NULL)
-	    memset(&state->hdr, 0, sizeof(state->hdr));
-	  else
-	    state->hdr = hdr;
-
-	  break;
-	}
-      else if(hdr.type == SCAMPER_FILE_OBJ_NEIGHBOURDISC)
-	{
-	  if(scamper_file_warts_neighbourdisc_read(sf, &hdr,
-			  (struct scamper_neighbourdisc **)data) != 0)
-	    goto err;
-
-	  if(*data != NULL)
-	    memset(&state->hdr, 0, sizeof(state->hdr));
-	  else
-	    state->hdr = hdr;
-
-	  break;
-	}
-      else if(hdr.type == SCAMPER_FILE_OBJ_TBIT)
-	{
-	  if(scamper_file_warts_tbit_read(sf, &hdr,
-			  (struct scamper_tbit **)data) != 0)
-	    goto err;
-
-	  if(*data != NULL)
-	    memset(&state->hdr, 0, sizeof(state->hdr));
-	  else
-	    state->hdr = hdr;
-
-	  break;
-	}
-      else if(hdr.type == SCAMPER_FILE_OBJ_STING)
-	{
-	  if(scamper_file_warts_sting_read(sf, &hdr,
-			  (struct scamper_sting **)data) != 0)
-	    goto err;
-
-	  if(*data != NULL)
-	    memset(&state->hdr, 0, sizeof(state->hdr));
-	  else
-	    state->hdr = hdr;
-
-	  break;
-	}
-      else if(hdr.type == SCAMPER_FILE_OBJ_SNIFF)
-	{
-	  if(scamper_file_warts_sniff_read(sf, &hdr,
-					   (struct scamper_sniff **)data) != 0)
-	    goto err;
-
-	  if(*data != NULL)
-	    memset(&state->hdr, 0, sizeof(state->hdr));
-	  else
-	    state->hdr = hdr;
-
-	  break;
+	  free(buf);
+	  memset(&state->hdr, 0, sizeof(state->hdr));
 	}
       else
 	{
-	  /* we don't know about this object */
-	  return -1;
+	  if(hdr.type >= sizeof(objread)/sizeof(warts_obj_read_t) ||
+	     objread[hdr.type] == NULL ||
+	     objread[hdr.type](sf, &hdr, data) != 0)
+	    goto err;
+
+	  if(*data != NULL)
+	    memset(&state->hdr, 0, sizeof(state->hdr));
+	  else
+	    state->hdr = hdr;
+	  break;
 	}
     }
 
@@ -2366,7 +2236,7 @@ int scamper_file_warts_init_append(scamper_file_t *sf)
 	      return -1;
 	    }
 	  break;
-	}      
+	}
     }
 
   /* get the state structure created in init_read */

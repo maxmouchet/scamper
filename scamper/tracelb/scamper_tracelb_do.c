@@ -1,9 +1,10 @@
 /*
  * scamper_do_tracelb.c
  *
- * $Id: scamper_tracelb_do.c,v 1.266 2011/11/03 01:39:48 mjl Exp $
+ * $Id: scamper_tracelb_do.c,v 1.270 2012/04/25 05:46:26 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * MDA traceroute technique authored by
@@ -22,12 +23,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb_do.c,v 1.266 2011/11/03 01:39:48 mjl Exp $";
+  "$Id: scamper_tracelb_do.c,v 1.270 2012/04/25 05:46:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -202,7 +203,7 @@ typedef struct tracelb_branch
   int                      k;            /* # of probes replied to */
   int                      l;            /* # of lost probes */
   int                      n;            /* # of loadbal paths to rule out */
-  tracelb_bringfwd_t      *bringfwd;     /* paths leading to this path */
+  tracelb_bringfwd_t     **bringfwd;     /* paths leading to this path */
   int                      bringfwdc;    /* # of paths in subset */
   int                      bringfwd0;    /* number of probes in this state */
   heap_node_t             *heapnode;     /* corresponding node in heap */
@@ -257,9 +258,6 @@ typedef struct tracelb_state
   tracelb_path_t         **paths;        /* paths established */
   int                      pathc;        /* count of paths */
 } tracelb_state_t;
-
-/* the default source port to use */
-static uint16_t             default_sport;
 
 /* address cache used to avoid reallocating the same address multiple times */
 extern scamper_addrcache_t *addrcache;
@@ -735,10 +733,36 @@ static void tracelb_set_visited0(tracelb_state_t *state)
 {
   int i;
   for(i=0; i<state->pathc; i++)
-    {
-      state->paths[i]->visited = 0;
-    }
+    state->paths[i]->visited = 0;
   return;
+}
+
+static void tracelb_bringfwd_free(tracelb_branch_t *br)
+{
+  int i;
+  if(br->bringfwd != NULL)
+    {
+      for(i=0; i<br->bringfwdc; i++)
+	if(br->bringfwd[i] != NULL)
+	  free(br->bringfwd[i]);
+      free(br->bringfwd);
+      br->bringfwd = NULL;
+    }
+  br->bringfwdc = 0;
+  return;
+}
+
+static int tracelb_bringfwd_add(tracelb_branch_t *br, tracelb_path_t *path)
+{
+  tracelb_bringfwd_t *bf;
+  if((bf = malloc_zero(sizeof(tracelb_bringfwd_t))) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not malloc");
+      return -1;
+    }
+  bf->path = path;
+  br->bringfwd[br->bringfwdc++] = bf;
+  return 0;
 }
 
 /*
@@ -749,7 +773,7 @@ static void tracelb_set_visited0(tracelb_state_t *state)
  */
 static int tracelb_bringfwd_dft(tracelb_branch_t *branch, tracelb_path_t *path)
 {
-  int i, rc = 0;
+  int i, x, rc = 0;
 
   assert(path != NULL);
 
@@ -758,26 +782,24 @@ static int tracelb_bringfwd_dft(tracelb_branch_t *branch, tracelb_path_t *path)
 
   if(path->backc == 0)
     {
-      branch->bringfwd[branch->bringfwdc].path = path;
-      branch->bringfwd[branch->bringfwdc].k = 0;
-      branch->bringfwdc++;
-
+      if(tracelb_bringfwd_add(branch, path) != 0)
+	return -1;
       path->visited = 1;
       return 1;
     }
 
   for(i=0; i<path->backc; i++)
     {
-      if(tracelb_bringfwd_dft(branch, path->back[i]) != 0)
+      if((x = tracelb_bringfwd_dft(branch, path->back[i])) == 1)
 	rc = 1;
+      else if(x == -1)
+	return -1;
     }
 
   if(rc != 0)
     {
-      branch->bringfwd[branch->bringfwdc].path = path;
-      branch->bringfwd[branch->bringfwdc].k = 0;
-      branch->bringfwdc++;
-
+      if(tracelb_bringfwd_add(branch, path) != 0)
+	return -1;
       path->visited = 1;
     }
 
@@ -787,7 +809,7 @@ static int tracelb_bringfwd_dft(tracelb_branch_t *branch, tracelb_path_t *path)
 /*
  * tracelb_bringfwd_set
  *
- * 
+ *
  */
 static int tracelb_bringfwd_set(tracelb_state_t *state, tracelb_branch_t *br,
 				tracelb_link_t *tlbl, int set)
@@ -797,7 +819,7 @@ static int tracelb_bringfwd_set(tracelb_state_t *state, tracelb_branch_t *br,
 
   for(i=0; i<br->bringfwdc; i++)
     {
-      path = br->bringfwd[i].path;
+      path = br->bringfwd[i]->path;
       if(path == tlbl->path)
 	{
 	  assert(path->links[path->linkc-1] == tlbl);
@@ -805,17 +827,17 @@ static int tracelb_bringfwd_set(tracelb_state_t *state, tracelb_branch_t *br,
 
 	  if(set != 0)
 	    {
-	      br->bringfwd[i].k++;
-	      if(br->bringfwd[i].k >= k(state, n))
+	      br->bringfwd[i]->k++;
+	      if(br->bringfwd[i]->k >= k(state, n))
 		{
 		  return 1;
 		}
 	    }
 	  else
-	    br->bringfwd[i].k = 0;
+	    br->bringfwd[i]->k = 0;
 
 	  scamper_debug(__func__, "set %d i %d k %d < %d",
-			set, i, br->bringfwd[i].k, k(state, n));
+			set, i, br->bringfwd[i]->k, k(state, n));
 	  break;
 	}
     }
@@ -894,14 +916,10 @@ static tracelb_flowid_t *tracelb_link_flowid_get(tracelb_link_t *link)
  *
  * useful for providing as a sort callback method for qsort on state->links
  */
-static int tracelb_link_cmp(const void *va, const void *vb)
+static int tracelb_link_cmp(const tracelb_link_t *a, const tracelb_link_t *b)
 {
-  tracelb_link_t *a = *((tracelb_link_t **)va);
-  tracelb_link_t *b = *((tracelb_link_t **)vb);
-
   assert(a != NULL); assert(a->link != NULL);
   assert(b != NULL); assert(b->link != NULL);
-
   return scamper_tracelb_link_cmp(a->link, b->link);
 }
 
@@ -927,10 +945,9 @@ static int tracelb_cmp_node2reply(const scamper_tracelb_node_t *node,
   return scamper_tracelb_node_cmp(node, &cmp);
 }
 
-static int tracelb_newnode_cmp(const void *va, const void *vb)
+static int tracelb_newnode_cmp(const tracelb_newnode_t *a,
+			       const tracelb_newnode_t *b)
 {
-  tracelb_newnode_t *a = *((tracelb_newnode_t **)va);
-  tracelb_newnode_t *b = *((tracelb_newnode_t **)vb);
   return scamper_tracelb_node_cmp(a->node, b->node);
 }
 
@@ -952,7 +969,7 @@ static tracelb_newnode_t *tracelb_newnode_find(tracelb_branch_t *br,
   node.addr = reply->reply_from;
 
   return array_find((void **)br->newnodes, br->newnodec, &findme,
-		    tracelb_newnode_cmp);
+		    (array_cmp_t)tracelb_newnode_cmp);
 }
 
 static int tracelb_newnode_add(tracelb_branch_t *br,
@@ -982,7 +999,7 @@ static int tracelb_newnode_add(tracelb_branch_t *br,
     }
 
   if(array_insert((void ***)&br->newnodes, &br->newnodec, newnode,
-		  tracelb_newnode_cmp) != 0)
+		  (array_cmp_t)tracelb_newnode_cmp) != 0)
     {
       printerror(errno, strerror, __func__, "could not add node to branch");
       goto err;
@@ -1014,7 +1031,7 @@ static tracelb_link_t *tracelb_link_alloc(tracelb_state_t *state,
   tlbl->path = path;
 
   if(array_insert((void ***)&state->links, &state->linkc, tlbl,
-		  tracelb_link_cmp) != 0)
+		  (array_cmp_t)tracelb_link_cmp) != 0)
     {
       printerror(errno, strerror, __func__, "could not insert tlbl");
       free(tlbl);
@@ -1030,7 +1047,7 @@ static tracelb_link_t *tracelb_link_find(tracelb_state_t *state,
   tracelb_link_t findme;
   findme.link = link;
   return (tracelb_link_t *)array_find((void **)state->links, state->linkc,
-				      &findme, tracelb_link_cmp);
+				      &findme, (array_cmp_t)tracelb_link_cmp);
 }
 
 /*
@@ -1282,11 +1299,9 @@ static tracelb_path_t *tracelb_path_alloc(tracelb_state_t *state, int linkc)
  * callback sort function used to sort the paths by distance (in branches)
  * from the top of the tree.
  */
-static int tracelb_bringfwd_cmp(const void *va, const void *vb)
+static int tracelb_bringfwd_cmp(const tracelb_bringfwd_t *a,
+				const tracelb_bringfwd_t *b)
 {
-  const tracelb_bringfwd_t *a = va;
-  const tracelb_bringfwd_t *b = vb;
-
   if(a->path->distance < b->path->distance)
     return 1;
   if(a->path->distance > b->path->distance)
@@ -1300,10 +1315,9 @@ static int tracelb_bringfwd_cmp(const void *va, const void *vb)
  * this function is used to sort the state->active heap so that the branch
  * due to be probed next is at the top of the heap.
  */
-static int tracelb_branch_active_cmp(const void *va, const void *vb)
+static int tracelb_branch_active_cmp(const tracelb_branch_t *a,
+				     const tracelb_branch_t *b)
 {
-  const tracelb_branch_t *a = va;
-  const tracelb_branch_t *b = vb;
   return timeval_cmp(&b->next_tx, &a->next_tx);
 }
 
@@ -1326,10 +1340,9 @@ static int tracelb_branch_active(tracelb_state_t *state, tracelb_branch_t *br)
  * branch introduced to active probing is the one closest to the root, in
  * ttl terms.
  */
-static int tracelb_branch_waiting_cmp(const void *va, const void *vb)
+static int tracelb_branch_waiting_cmp(const tracelb_branch_t *a,
+				      const tracelb_branch_t *b)
 {
-  const tracelb_branch_t *a = va;
-  const tracelb_branch_t *b = vb;
   return tracelb_path_length(b->path) - tracelb_path_length(a->path);
 }
 
@@ -1348,7 +1361,7 @@ static int tracelb_branch_waiting(tracelb_state_t *state, tracelb_branch_t *br)
  *
  * reset probing state on the branch, but do not reset the links/nodes
  * inferred so far.  this allows us to determine per-packet load balancing
- * details for a set of 
+ * details for a set of
  */
 static void tracelb_branch_reset(tracelb_branch_t *branch)
 {
@@ -1364,9 +1377,7 @@ static void tracelb_branch_reset(tracelb_branch_t *branch)
       if(branch->probes != NULL)
 	{
 	  for(i=0; i<branch->probec; i++)
-	    {
-	      branch->probes[i]->branch = NULL;
-	    }
+	    branch->probes[i]->branch = NULL;
 	  free(branch->probes);
 	  branch->probes = NULL;
 	}
@@ -1374,12 +1385,7 @@ static void tracelb_branch_reset(tracelb_branch_t *branch)
     }
 
   /* won't need any state associated with bringing probes forward */
-  if(branch->bringfwd != NULL)
-    {
-      free(branch->bringfwd);
-      branch->bringfwd = NULL;
-    }
-  branch->bringfwdc = 0;
+  tracelb_bringfwd_free(branch);
 
   return;
 }
@@ -1391,14 +1397,11 @@ static void tracelb_branch_free(tracelb_state_t *state, tracelb_branch_t *br)
   if(br->probes != NULL)
     {
       for(i=0; i<br->probec; i++)
-	{
-	  br->probes[i]->branch = NULL;
-	}
+	br->probes[i]->branch = NULL;
       free(br->probes);
     }
 
-  if(br->bringfwd != NULL)
-    free(br->bringfwd);
+  tracelb_bringfwd_free(br);
 
   if(br->newnodes != NULL)
     free(br->newnodes);
@@ -1462,22 +1465,19 @@ static void tracelb_path_distance_1(tracelb_path_t *path, int distance)
   return;
 }
 
-static int tracelb_path_cmp(const void *va, const void *vb)
+static int tracelb_path_cmp(const tracelb_path_t *a, const tracelb_path_t *b)
 {
-  tracelb_path_t *a = *((tracelb_path_t **)va);
-  tracelb_path_t *b = *((tracelb_path_t **)vb);
-
   if(a->distance < b->distance)
     return -1;
   if(a->distance > b->distance)
     return 1;
-
   return 0;
 }
 
 static void tracelb_paths_sort(tracelb_state_t *state)
 {
-  qsort(state->paths,state->pathc,sizeof(tracelb_path_t *),tracelb_path_cmp);
+  array_qsort((void **)state->paths, state->pathc,
+	      (array_cmp_t)tracelb_path_cmp);
   return;
 }
 
@@ -1579,7 +1579,7 @@ static int tracelb_paths_splice(tracelb_state_t *state, tracelb_path_t *path0,
 /*
  * tracelb_paths_splice_bynode
  *
- * 
+ *
  */
 static int tracelb_paths_splice_bynode(tracelb_state_t *state,
 				       tracelb_path_t *path0)
@@ -2178,7 +2178,7 @@ static int tracelb_process_clump(scamper_task_t *task, tracelb_branch_t *br)
 static int tracelb_process_perpacket(scamper_task_t *task,tracelb_branch_t *br)
 {
   scamper_tracelb_t *trace = tracelb_getdata(task);
-  tracelb_state_t *state = tracelb_getstate(task);  
+  tracelb_state_t *state = tracelb_getstate(task);
 
   br->mode = MODE_PERPACKET;
   tracelb_branch_reset(br);
@@ -2421,7 +2421,7 @@ static int tracelb_probe_vals(scamper_task_t *task, tracelb_branch_t *branch,
     {
       /* this flowid has been brought all the way forward */
       for(i=0; i<branch->bringfwdc; i++)
-	branch->bringfwd[i].k = 0;
+	branch->bringfwd[i]->k = 0;
 
       if(path0->linkc > 0)
 	pr->link = path0->links[path0->linkc-1];
@@ -2452,19 +2452,14 @@ static int tracelb_probe_vals(scamper_task_t *task, tracelb_branch_t *branch,
     }
 
   /* build the set of paths leading to the current path, if necessary */
-  if(branch->bringfwd == NULL || branch->bringfwd[0].path != path0)
+  if(branch->bringfwd == NULL || branch->bringfwd[0]->path != path0)
     {
       /* make sure any existing state is removed */
-      if(branch->bringfwd != NULL)
-	{
-	  free(branch->bringfwd);
-	  branch->bringfwd  = NULL;
-	  branch->bringfwdc = 0;
-	}
+      tracelb_bringfwd_free(branch);
 
       /* allocate enough entries to record all segments, if necessary */
-      len = sizeof(tracelb_bringfwd_t) * state->pathc;
-      if((branch->bringfwd = malloc(len)) == NULL)
+      len = sizeof(tracelb_bringfwd_t *) * state->pathc;
+      if((branch->bringfwd = malloc_zero(len)) == NULL)
 	{
 	  printerror(errno, strerror, __func__, "could not malloc set");
 	  return -1;
@@ -2478,14 +2473,15 @@ static int tracelb_probe_vals(scamper_task_t *task, tracelb_branch_t *branch,
        * found at the head.
        */
       tracelb_set_visited0(state);
-      tracelb_bringfwd_dft(branch, path0);
-      qsort(branch->bringfwd, branch->bringfwdc, sizeof(tracelb_bringfwd_t),
-	    tracelb_bringfwd_cmp);
+      if(tracelb_bringfwd_dft(branch, path0) == -1)
+	return -1;
+      array_qsort((void **)branch->bringfwd, branch->bringfwdc,
+		  (array_cmp_t)tracelb_bringfwd_cmp);
 
 #ifndef NDEBUG
       for(i=branch->bringfwdc-1; i>=0; i--)
 	{
-	  path = branch->bringfwd[i].path;
+	  path = branch->bringfwd[i]->path;
 
 	  if(path->linkc == 0)
 	    continue;
@@ -2509,14 +2505,12 @@ static int tracelb_probe_vals(scamper_task_t *task, tracelb_branch_t *branch,
    * sanity check that the table starts with the current path being probed
    * and extends back to the first path segment
    */
-  assert(branch->bringfwd[0].path == path0);
-  assert(branch->bringfwd[branch->bringfwdc-1].path->backc == 0);
+  assert(branch->bringfwd[0]->path == path0);
+  assert(branch->bringfwd[branch->bringfwdc-1]->path->backc == 0);
 
   /* reset the visited members to zero */
   for(i=0; i<branch->bringfwdc; i++)
-    {
-      branch->bringfwd[i].path->visited = 0;
-    }
+    branch->bringfwd[i]->path->visited = 0;
 
   /* we now have to bring a flowid forward through the path to probe a hop */
   pr->mode = MODE_BRINGFWD;
@@ -2527,7 +2521,7 @@ static int tracelb_probe_vals(scamper_task_t *task, tracelb_branch_t *branch,
    */
   for(i=1; i<branch->bringfwdc; i++)
     {
-      path = branch->bringfwd[i].path;
+      path = branch->bringfwd[i]->path;
       if(path->visited != 0)
 	{
 	  continue;
@@ -2552,7 +2546,7 @@ static int tracelb_probe_vals(scamper_task_t *task, tracelb_branch_t *branch,
 
   if(trace->nodes[0]->linkc == 1)
     {
-      path = branch->bringfwd[branch->bringfwdc-1].path;
+      path = branch->bringfwd[branch->bringfwdc-1]->path;
       pr->link = path->links[path->linkc-1];
 
       for(i=0; i<path->linkc; i++)
@@ -2931,7 +2925,7 @@ static void handleicmp_bringfwd(scamper_task_t *task, scamper_icmp_resp_t *ir,
 
   if((tlbl = tracelb_link_find(state, &findme)) == NULL)
     {
-      scamper_debug(__func__, "no matching link in trace"); 
+      scamper_debug(__func__, "no matching link in trace");
       set = 1;
     }
   else
@@ -2941,10 +2935,10 @@ static void handleicmp_bringfwd(scamper_task_t *task, scamper_icmp_resp_t *ir,
 
       for(i=0; i<branch->bringfwdc; i++)
 	{
-	  if(branch->bringfwd[i].path->linkc == 0)
+	  if(branch->bringfwd[i]->path->linkc == 0)
 	    continue;
 
-	  if(branch->bringfwd[i].path->links[0] == tlbl)
+	  if(branch->bringfwd[i]->path->links[0] == tlbl)
 	    break;
 	}
 
@@ -3563,7 +3557,7 @@ static void tracelb_handle_dlhdr(scamper_dlhdr_t *dlhdr)
     }
 
   /* there is one head item, and it is in datalink header mode */
-  assert(heap_count(state->active) == 1);  
+  assert(heap_count(state->active) == 1);
   br = heap_head_item(state->active);
   assert(br->mode == MODE_DLHDR);
 
@@ -3826,13 +3820,13 @@ static int tracelb_state_alloc(scamper_task_t *task)
       goto err;
     }
 
-  if((state->active = heap_alloc(tracelb_branch_active_cmp)) == NULL)
+  if((state->active = heap_alloc((heap_cmp_t)tracelb_branch_active_cmp))==NULL)
     {
       printerror(errno, strerror, __func__, "could not alloc active heap");
       goto err;
     }
   heap_onremove(state->active, tracelb_branch_onremove);
-  if((state->waiting = heap_alloc(tracelb_branch_waiting_cmp)) == NULL)
+  if((state->waiting=heap_alloc((heap_cmp_t)tracelb_branch_waiting_cmp))==NULL)
     {
       printerror(errno, strerror, __func__, "could not alloc waiting heap");
       goto err;
@@ -4045,7 +4039,7 @@ static void do_tracelb_probe(scamper_task_t *task)
 
   /* default mode, can be changed to something more specific if appropriate */
   tp->mode = branch->mode;
-  
+
   if(tpl != NULL && tpl->probe->rxc == 0 &&
      tpl->probe->attempt+1 < trace->attempts)
     {
@@ -4143,30 +4137,19 @@ static void do_tracelb_probe(scamper_task_t *task)
     }
   else if(SCAMPER_TRACELB_TYPE_IS_ICMP(trace))
     {
+      probe.pr_fd = scamper_fd_fd_get(state->probe);
+      SCAMPER_PROBE_ICMP_ECHO(&probe, trace->sport, state->id_next);
+
       /* this is the flow-id to use -- the ICMP checksum */
       u16 = htons(tp->probe->flowid);
-
-      probe.pr_fd        = scamper_fd_fd_get(state->probe);
-      probe.pr_icmp_code = 0;
-      probe.pr_icmp_id   = trace->sport;
-      probe.pr_icmp_seq  = state->id_next;
-      probe.pr_icmp_sum  = u16;
+      probe.pr_icmp_sum = u16;
 
       /* fudge the checksum field so it is used as the flow id */
       memcpy(probe.pr_data, &u16, 2);
-
       if(trace->dst->type == SCAMPER_ADDR_TYPE_IPV4)
-	{
-	  probe.pr_ip_proto  = IPPROTO_ICMP;
-	  probe.pr_icmp_type = ICMP_ECHO;
-	  u16 = scamper_icmp4_cksum(&probe);
-	}
+	u16 = scamper_icmp4_cksum(&probe);
       else
-	{
-	  probe.pr_ip_proto  = IPPROTO_ICMPV6;
-	  probe.pr_icmp_type = ICMP6_ECHO_REQUEST;
-	  u16 = scamper_icmp6_cksum(&probe);
-	}
+	u16 = scamper_icmp6_cksum(&probe);
       memcpy(probe.pr_data, &u16, 2);
     }
   else
@@ -4364,7 +4347,7 @@ void *scamper_do_tracelb_alloc(char *str)
   scamper_option_out_t *opts_out = NULL, *opt;
   scamper_tracelb_t *trace = NULL;
   uint8_t  type         = SCAMPER_TRACELB_TYPE_UDP_DPORT;
-  uint16_t sport        = default_sport;
+  uint16_t sport        = scamper_sport_default();
   uint8_t  confidence   = 95;
   uint16_t dport        = SCAMPER_DO_TRACELB_DPORT_DEF;
   uint8_t  attempts     = SCAMPER_DO_TRACELB_ATTEMPTS_DEF;
@@ -4470,7 +4453,7 @@ void *scamper_do_tracelb_alloc(char *str)
   trace->tos          = tos;
   trace->firsthop     = firsthop;
   trace->wait_timeout = wait_timeout;
-  trace->wait_probe   = wait_probe; 
+  trace->wait_probe   = wait_probe;
   trace->attempts     = attempts;
   trace->confidence   = confidence;
   trace->type         = type;
@@ -4572,14 +4555,6 @@ void scamper_do_tracelb_cleanup(void)
 
 int scamper_do_tracelb_init(void)
 {
-#ifndef _WIN32
-  pid_t pid = getpid();
-#else
-  DWORD pid = GetCurrentProcessId();
-#endif
-
-  default_sport = (pid & 0x7fff) + 0x8000;
-
   funcs.probe          = do_tracelb_probe;
   funcs.handle_icmp    = do_tracelb_handle_icmp;
   funcs.handle_dl      = do_tracelb_handle_dl;

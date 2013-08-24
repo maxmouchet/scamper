@@ -30,7 +30,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_splaytree.c,v 1.25 2010/05/12 04:31:28 mjl Exp $";
+  "$Id: mjl_splaytree.c,v 1.27 2013/08/07 22:34:17 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -146,7 +146,7 @@ static void splaytree_rotate(splaytree_node_t *above, splaytree_node_t *below)
       below->left = above;
       above->right = temp;
     }
-  
+
   return;
 }
 
@@ -182,7 +182,7 @@ static void splaytree_splay2(splaytree_node_t *child,
    * case 2: zig zig - p is not the root and the child and the parent are both
    * left (right) children
    */
-  else if((parent->left  == child && grandparent->left  == parent) || 
+  else if((parent->left  == child && grandparent->left  == parent) ||
 	  (parent->right == child && grandparent->right == parent))
     {
       splaytree_rotate(grandparent, parent);
@@ -261,7 +261,7 @@ static void splaytree_splay(splaytree_t *tree)
       parent      = stack_pop(tree->stack);
       grandparent = stack_pop(tree->stack);
 
-      /* 
+      /*
        * if the child node is now at the root, break out as the splay is
        * complete
        */
@@ -272,7 +272,7 @@ static void splaytree_splay(splaytree_t *tree)
 
       assert(parent->left == keep || parent->right == keep);
 
-      /* 
+      /*
        * figure out where to relink the child to
        * (as the grandparent in keep is now down the tree)
        */
@@ -284,7 +284,7 @@ static void splaytree_splay(splaytree_t *tree)
 	{
 	  parent->right = child;
 	}
-      
+
       /* splay now */
       splaytree_splay2(child, parent, grandparent);
 
@@ -295,7 +295,7 @@ static void splaytree_splay(splaytree_t *tree)
 
       keep = grandparent;
     }
-  
+
   /* return the new root of the tree */
   tree->head = child;
   return;
@@ -373,12 +373,15 @@ static int splaytree_insert2(splaytree_t *tree, const void *item,
 
       /* insert the item into the tree here */
 #ifndef DMALLOC
-      if((node = splaytree_node_alloc(item)) == NULL ||
+      if((node = splaytree_node_alloc(item)) == NULL)
 #else
-      if((node = splaytree_node_alloc(item, file, line)) == NULL ||
+      if((node = splaytree_node_alloc(item, file, line)) == NULL)
 #endif
-	 stack_push(tree->stack, node) != 0)
+	return -1;
+
+      if(stack_push(tree->stack, node) != 0)
 	{
+	  free(node);
 	  return -1;
 	}
 
@@ -396,12 +399,15 @@ static int splaytree_insert2(splaytree_t *tree, const void *item,
 	}
 
 #ifndef DMALLOC
-      if((node = splaytree_node_alloc(item)) == NULL ||
+      if((node = splaytree_node_alloc(item)) == NULL)
 #else
-      if((node = splaytree_node_alloc(item, file, line)) == NULL ||
+      if((node = splaytree_node_alloc(item, file, line)) == NULL)
 #endif
-	 stack_push(tree->stack, node) != 0)
+	return -1;
+
+      if(stack_push(tree->stack, node) != 0)
 	{
+	  free(node);
 	  return -1;
 	}
 
@@ -412,7 +418,7 @@ static int splaytree_insert2(splaytree_t *tree, const void *item,
       /* the data already exists in the tree: do not add it */
       return -1;
     }
-  
+
   return 0;
 }
 
@@ -491,7 +497,7 @@ static splaytree_node_t *splaytree_find2(splaytree_t *tree, const void *item,
     {
       return NULL;
     }
-	
+
   /*
    * try and push the node onto the stack.
    * if we don't then we can't splay the node to the top of the tree, so
@@ -512,7 +518,7 @@ static splaytree_node_t *splaytree_find2(splaytree_t *tree, const void *item,
       /* look right */
       return splaytree_find2(tree, item, tn->right);
     }
-  
+
   /* we found it ! */
   return tn;
 }
@@ -584,7 +590,7 @@ static int splaytree_remove(splaytree_t *tree)
       splaytree_splay(tree);
 
       /*
-       * as the right most node on the left branch has no nodes on the right 
+       * as the right most node on the left branch has no nodes on the right
        * branch, we connect the right hand branch to it
        */
       tree->head->right = r;
@@ -664,7 +670,7 @@ void *splaytree_findclosest(splaytree_t *tree, const void *item,
   splaytree_node_t *ret;
   splaytree_node_t *first, *second;
   int               first_diff, second_diff;
-  
+
   if(tree == NULL || tree->head == NULL) return NULL;
 
   stack_clean(tree->stack);
@@ -682,7 +688,7 @@ void *splaytree_findclosest(splaytree_t *tree, const void *item,
    * one of the two is the closest to the one we are looking for
    */
   first  = stack_pop(tree->stack);
-  second = stack_pop(tree->stack);  
+  second = stack_pop(tree->stack);
 
   /* need at least one item in the stack if tree->head != NULL */
   assert(first != NULL);
@@ -747,7 +753,7 @@ static int splaytree_depth2(splaytree_node_t *tn)
     {
       right = splaytree_depth2(tn->right) + 1;
     }
-  
+
   return (left > right) ? left : right;
 }
 

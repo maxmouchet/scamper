@@ -1,10 +1,11 @@
 /*
  * scamper_privsep.c: code that does root-required tasks
  *
- * $Id: scamper_privsep.c,v 1.70 2011/11/10 21:37:53 mjl Exp $
+ * $Id: scamper_privsep.c,v 1.74 2013/08/07 20:33:17 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2013      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -30,7 +31,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_privsep.c,v 1.70 2011/11/10 21:37:53 mjl Exp $";
+  "$Id: scamper_privsep.c,v 1.74 2013/08/07 20:33:17 mjl Exp $";
 #endif
 
 #include "internal.h"
@@ -252,13 +253,15 @@ static int privsep_open_sock(uint16_t plen, const uint8_t *param)
   off = 0;
   memcpy(&domain,   param+off, sizeof(domain));   off += sizeof(domain);
   memcpy(&protocol, param+off, sizeof(protocol)); off += sizeof(protocol);
-  memcpy(&port,     param+off, sizeof(port));
+  memcpy(&port,     param+off, sizeof(port));     off += sizeof(port);
+
+  if(off != plen)
+    goto inval;
 
   if(port < 1 || port > 65535)
     {
       scamper_debug(__func__, "refusing to bind to port %d", port);
-      errno = EINVAL;
-      goto err;
+      goto inval;
     }
 
   if(protocol == IPPROTO_TCP)      type = SOCK_STREAM;
@@ -266,8 +269,7 @@ static int privsep_open_sock(uint16_t plen, const uint8_t *param)
   else
     {
       scamper_debug(__func__, "unhandled IPv4 protocol %d", protocol);
-      errno = EINVAL;
-      goto err;
+      goto inval;
     }
 
   if(domain == AF_INET)
@@ -306,6 +308,8 @@ static int privsep_open_sock(uint16_t plen, const uint8_t *param)
 
   return fd;
 
+ inval:
+  errno = EINVAL;
  err:
   if(fd != -1) close(fd);
   return -1;
@@ -386,7 +390,7 @@ static int privsep_open_rawip(uint16_t plen, const uint8_t *param)
 
 static int privsep_ipfw_init(uint16_t plen, const uint8_t *param)
 {
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#ifdef HAVE_IPFW
   if(plen != 0)
     {
       scamper_debug(__func__, "plen %d != 0", plen);
@@ -403,7 +407,7 @@ static int privsep_ipfw_init(uint16_t plen, const uint8_t *param)
 
 static int privsep_ipfw_cleanup(uint16_t plen, const uint8_t *param)
 {
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#ifdef HAVE_IPFW
   if(plen != 0)
     {
       scamper_debug(__func__, "plen %d != 0", plen);
@@ -421,7 +425,7 @@ static int privsep_ipfw_cleanup(uint16_t plen, const uint8_t *param)
 
 static int privsep_ipfw_add(uint16_t plen, const uint8_t *param)
 {
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#ifdef HAVE_IPFW
   int n, af, p, sp, dp;
   struct in_addr s4, d4;
   struct in6_addr s6, d6;
@@ -498,6 +502,8 @@ static int privsep_ipfw_add(uint16_t plen, const uint8_t *param)
   memcpy(&sp, param+off, sizeof(sp)); off += sizeof(sp);
   memcpy(&dp, param+off, sizeof(dp)); off += sizeof(dp);
 
+  if(off != plen)
+    goto inval;
   if(sp < 0 || sp > 65535 || dp < 0 || dp > 65535)
     goto inval;
   if(p != IPPROTO_TCP && p != IPPROTO_UDP)
@@ -517,7 +523,7 @@ static int privsep_ipfw_add(uint16_t plen, const uint8_t *param)
 
 static int privsep_ipfw_del(uint16_t plen, const uint8_t *param)
 {
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#ifdef HAVE_IPFW
   int n, af;
   uint16_t off = 0;
 
@@ -529,6 +535,8 @@ static int privsep_ipfw_del(uint16_t plen, const uint8_t *param)
 
   memcpy(&n, param+off, sizeof(n)); off += sizeof(n);
   memcpy(&af, param+off, sizeof(af)); off += sizeof(af);
+  if(off != plen)
+    goto inval;
 
   return scamper_firewall_ipfw_del(n, af);
 
@@ -613,7 +621,7 @@ static int privsep_open_file(uint16_t plen, const uint8_t *param)
   const char *file;
   uid_t       uid, euid;
   int         flags;
-  mode_t      mode;
+  mode_t      mode = 0;
   uint16_t    off;
   int         fd;
 
@@ -638,7 +646,7 @@ static int privsep_open_file(uint16_t plen, const uint8_t *param)
 	return -1;
 
       memcpy(&mode, param+off, sizeof(mode));
-      off += sizeof(mode_t);
+      off += sizeof(mode);
     }
 
   file = (const char *)(param + off);
@@ -1016,8 +1024,7 @@ static int privsep_getfd_3int(const uint16_t type,
   size_t off = 0;
   memcpy(param+off, &p1, sizeof(p1)); off += sizeof(p1);
   memcpy(param+off, &p2, sizeof(p2)); off += sizeof(p2);
-  memcpy(param+off, &p3, sizeof(p3)); off += sizeof(p3);
-  assert(off == sizeof(param));
+  memcpy(param+off, &p3, sizeof(p3));
   return privsep_getfd(type, sizeof(param), param);
 }
 
@@ -1216,7 +1223,7 @@ int scamper_privsep_init()
 	  uid = pw->pw_uid;
 	  endpwent();
 
-	  gid = 0; 
+	  gid = 0;
 
 	  /* create the directory as 555 : no one can write to it */
 	  mode = S_IRUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;

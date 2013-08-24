@@ -1,7 +1,7 @@
 /*
  * scamper_sniff_do.c
  *
- * $Id: scamper_sniff_do.c,v 1.11 2011/09/09 02:37:48 mjl Exp $
+ * $Id: scamper_sniff_do.c,v 1.12 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2011 The University of Waikato
  * Author: Matthew Luckie
@@ -18,12 +18,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sniff_do.c,v 1.11 2011/09/09 02:37:48 mjl Exp $";
+  "$Id: scamper_sniff_do.c,v 1.12 2012/04/05 18:00:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

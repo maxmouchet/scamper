@@ -1,7 +1,7 @@
 /*
  * scamper_queue.h
  *
- * $Id: scamper_queue.h,v 1.13 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_queue.h,v 1.14 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
@@ -19,7 +19,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef __SCAMPER_QUEUE_H

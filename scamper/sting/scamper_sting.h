@@ -2,9 +2,10 @@
  * scamper_sting.h
  *
  * Copyright (C) 2008 The University of Waikato
+ * Copyright (C) 2012 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_sting.h,v 1.4 2010/10/18 07:02:57 mjl Exp $
+ * $Id: scamper_sting.h,v 1.5 2012/05/04 20:13:19 mjl Exp $
  *
  * This file implements algorithms described in the sting-0.7 source code,
  * as well as the paper:
@@ -30,6 +31,9 @@
 
 #ifndef __SCAMPER_STING_H
 #define __SCAMPER_STING_H
+
+#define SCAMPER_STING_RESULT_NONE       0
+#define SCAMPER_STING_RESULT_COMPLETED  1
 
 #define SCAMPER_STING_DISTRIBUTION_EXPONENTIAL 1
 #define SCAMPER_STING_DISTRIBUTION_PERIODIC    2
@@ -88,6 +92,7 @@ typedef struct scamper_sting
   uint16_t               holec;    /* number of holes filled (fwd loss) */
   scamper_sting_pkt_t  **pkts;     /* array of packets in the test */
   uint32_t               pktc;     /* number of packets in the test */
+  uint8_t                result;   /* did sting complete? */
 
 } scamper_sting_t;
 

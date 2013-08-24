@@ -1,9 +1,11 @@
 /*
  * scamper_do_dealias.c
  *
- * $Id: scamper_dealias_do.c,v 1.100 2011/10/25 01:41:33 mjl Exp $
+ * $Id: scamper_dealias_do.c,v 1.146 2013/08/04 22:20:19 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
+ * Copyright (C) 2012-2013 The Regents of the University of California
+ * Copyright (C) 2012-2013 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This code implements alias resolution techniques published by others
@@ -22,12 +24,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_do.c,v 1.100 2011/10/25 01:41:33 mjl Exp $";
+  "$Id: scamper_dealias_do.c,v 1.146 2013/08/04 22:20:19 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -62,9 +64,6 @@ static const char rcsid[] =
 #include "utils.h"
 
 static scamper_task_funcs_t funcs;
-
-/* the default source port to use when tracerouting */
-static uint16_t             default_sport;
 
 /* packet buffer for generating the payload of each packet */
 static uint8_t             *pktbuf     = NULL;
@@ -112,14 +111,18 @@ static const int opts_cnt = SCAMPER_OPTION_COUNT(opts);
 #define DEALIAS_PROBEDEF_OPT_PROTO 4
 #define DEALIAS_PROBEDEF_OPT_SPORT 5
 #define DEALIAS_PROBEDEF_OPT_TTL   6
+#define DEALIAS_PROBEDEF_OPT_SIZE  7
+#define DEALIAS_PROBEDEF_OPT_MTU   8
 
 static const scamper_option_in_t probedef_opts[] = {
   {'c', NULL, DEALIAS_PROBEDEF_OPT_CSUM,  SCAMPER_OPTION_TYPE_STR},
   {'d', NULL, DEALIAS_PROBEDEF_OPT_DPORT, SCAMPER_OPTION_TYPE_NUM},
+  {'F', NULL, DEALIAS_PROBEDEF_OPT_SPORT, SCAMPER_OPTION_TYPE_NUM},
   {'i', NULL, DEALIAS_PROBEDEF_OPT_IP,    SCAMPER_OPTION_TYPE_STR},
   {'P', NULL, DEALIAS_PROBEDEF_OPT_PROTO, SCAMPER_OPTION_TYPE_STR},
-  {'s', NULL, DEALIAS_PROBEDEF_OPT_SPORT, SCAMPER_OPTION_TYPE_NUM},
+  {'s', NULL, DEALIAS_PROBEDEF_OPT_SIZE,  SCAMPER_OPTION_TYPE_NUM},
   {'t', NULL, DEALIAS_PROBEDEF_OPT_TTL,   SCAMPER_OPTION_TYPE_NUM},
+  {'M', NULL, DEALIAS_PROBEDEF_OPT_MTU,   SCAMPER_OPTION_TYPE_NUM},
 };
 static const int probedef_opts_cnt = SCAMPER_OPTION_COUNT(probedef_opts);
 
@@ -127,16 +130,25 @@ const char *scamper_do_dealias_usage(void)
 {
   return
     "dealias [-d dport] [-f fudge] [-m method] [-o replyc] [-O option]\n"
-    "        [-p '[-c sum] [-d dp] [-i ip] [-P meth] [-s sp] [-t ttl]']\n"
+    "        [-p '[-c sum] [-d dp] [-F sp] [-i ip] [-M mtu] [-P meth] [-s size] [-t ttl]']\n"
     "        [-q attempts] [-r wait-round] [-s sport] [-t ttl]\n"
     "        [-U userid] [-w wait-timeout] [-W wait-probe] [-x exclude]\n";
 }
 
+typedef struct dealias_target
+{
+  scamper_addr_t              *addr;
+  dlist_t                     *probes;
+  uint16_t                     tcp_sport;
+  uint16_t                     udp_dport;
+} dealias_target_t;
+
 typedef struct dealias_probe
 {
+  dealias_target_t            *target;
   scamper_dealias_probe_t     *probe;
-  struct dealias_probe        *next;
-  uint16_t                     icmpseq;
+  uint16_t                     match_field;
+  dlist_node_t                *target_node;
 } dealias_probe_t;
 
 typedef struct dealias_prefixscan
@@ -145,7 +157,7 @@ typedef struct dealias_prefixscan
   int                          probedefc;
   scamper_addr_t             **aaliases;
   int                          aaliasc;
-  int                          attempt; 
+  int                          attempt;
   int                          seq;
   int                          round0;
   int                          round;
@@ -156,6 +168,7 @@ typedef struct dealias_radargun
 {
   uint32_t                    *order; /* probedef order */
   uint32_t                     i;     /* index into order */
+  struct timeval               next_round;
 } dealias_radargun_t;
 
 typedef struct dealias_bump
@@ -186,22 +199,67 @@ typedef struct dealias_options
   int                          inseq;
 } dealias_options_t;
 
+typedef struct dealias_probedef
+{
+  scamper_dealias_probedef_t  *def;
+  dealias_target_t            *target;
+  uint32_t                     tcp_seq;
+  uint32_t                     tcp_ack;
+  uint16_t                     pktbuf_len;
+  uint8_t                      flags;
+} dealias_probedef_t;
+
+typedef struct dealias_ptb
+{
+  scamper_dealias_probedef_t  *def;
+  uint8_t                     *quote;
+  uint16_t                     quote_len;
+} dealias_ptb_t;
+
 typedef struct dealias_state
 {
-  uint8_t                      mode;
   uint8_t                      id;
+  uint8_t                      flags;
+  uint16_t                     icmpseq;
   scamper_dealias_probedef_t  *probedefs;
   uint32_t                     probedefc;
-  uint32_t                    *tcp_seqs;
-  uint32_t                    *tcp_acks;
+  dealias_probedef_t         **pds;
+  int                          pdc;
   uint32_t                     probe;
   uint32_t                     round;
   struct timeval               last_tx;
   struct timeval               next_tx;
-  struct timeval               next_round;
-  dealias_probe_t             *probes[256];
+  struct timeval               ptb_tx;
+  dealias_target_t           **targets;
+  int                          targetc;
+  dlist_t                     *recent_probes;
   void                        *methodstate;
+  slist_t                     *ptbq;
+  slist_t                     *discard;
 } dealias_state_t;
+
+#define DEALIAS_STATE_FLAG_DL 0x01
+
+#define DEALIAS_PROBEDEF_FLAG_RX_IPID 0x01
+#define DEALIAS_PROBEDEF_FLAG_TX_PTB  0x02
+
+#ifdef NDEBUG
+#define dealias_state_assert(state) ((void)0)
+#endif
+
+#ifndef NDEBUG
+static void dealias_state_assert(const dealias_state_t *state)
+				 
+{
+  int i;
+  for(i=0; i<state->pdc; i++)
+    {
+      assert(state->pds[i] != NULL);
+      assert(state->pds[i]->def->id == i);
+    }
+  return;
+}
+#endif
 
 static scamper_dealias_t *dealias_getdata(const scamper_task_t *task)
 {
@@ -210,20 +268,70 @@ static scamper_dealias_t *dealias_getdata(const scamper_task_t *task)
 
 static dealias_state_t *dealias_getstate(const scamper_task_t *task)
 {
-  return scamper_task_getstate(task);
+  dealias_state_t *state = scamper_task_getstate(task);
+  dealias_state_assert(state);
+  return state;
+}
+
+static int dealias_ally_queue(const scamper_dealias_t *dealias,
+			      dealias_state_t *state,
+			      const struct timeval *now, struct timeval *tv)
+{
+  if(state->ptb_tx.tv_sec == 0)
+    return 0;
+  timeval_add_s(tv, &state->ptb_tx, 1);
+  if(timeval_cmp(tv, now) > 0)
+    return 1;
+  memset(&state->ptb_tx, 0, sizeof(struct timeval));
+  return 0;
 }
 
 static void dealias_queue(scamper_task_t *task)
 {
+  static int (*const func[])(const scamper_dealias_t *, dealias_state_t *,
+			     const struct timeval *, struct timeval *) = {
+    NULL,
+    dealias_ally_queue,
+    NULL,
+    NULL,
+    NULL,
+  };
+  scamper_dealias_t *dealias = dealias_getdata(task);
   dealias_state_t *state = dealias_getstate(task);
-  struct timeval   tv;
+  struct timeval tv, now;
+  dealias_probe_t *p;
 
   if(scamper_task_queue_isdone(task))
     return;
 
-  gettimeofday_wrap(&tv);
+  gettimeofday_wrap(&now);
 
-  if(timeval_cmp(&state->next_tx, &tv) <= 0)
+  for(;;)
+    {
+      if((p = dlist_head_get(state->recent_probes)) == NULL)
+	break;
+      timeval_add_s(&tv, &p->probe->tx, 10);
+      if(timeval_cmp(&now, &tv) < 0)
+	break;
+      dlist_node_pop(p->target->probes, p->target_node);
+      dlist_head_pop(state->recent_probes);
+      free(p);
+    }
+
+  if(slist_count(state->ptbq) > 0)
+    {
+      scamper_task_queue_probe(task);
+      return;
+    }
+
+  if(func[dealias->method-1] != NULL &&
+     func[dealias->method-1](dealias, state, &now, &tv) != 0)
+    {
+      scamper_task_queue_wait_tv(task, &tv);
+      return;
+    }
+
+  if(timeval_cmp(&state->next_tx, &now) <= 0)
     {
       scamper_task_queue_probe(task);
       return;
@@ -242,28 +350,155 @@ static void dealias_handleerror(scamper_task_t *task, int error)
 static void dealias_result(scamper_task_t *task, uint8_t result)
 {
   scamper_dealias_t *dealias = dealias_getdata(task);
-
-  if(result == SCAMPER_DEALIAS_RESULT_NONE)
-    scamper_debug(__func__, "none");
-  else if(result == SCAMPER_DEALIAS_RESULT_ALIASES)
-    scamper_debug(__func__, "aliases");
-  else if(result == SCAMPER_DEALIAS_RESULT_NOTALIASES)
-    scamper_debug(__func__, "not aliases");
-  else if(result == SCAMPER_DEALIAS_RESULT_HALTED)
-    scamper_debug(__func__, "halted");
-  else
-    scamper_debug(__func__, "%d", result);
-
+  char buf[16];
   dealias->result = result;
+  scamper_debug(__func__, "%s",
+		scamper_dealias_result_tostr(dealias, buf, sizeof(buf)));
   scamper_task_queue_done(task, 0);
   return;
 }
 
-static int dealias_prefixscan_aalias_cmp(const void *va, const void *vb)
+static void dealias_ptb_free(dealias_ptb_t *ptb)
 {
-  const scamper_addr_t *a = *((const scamper_addr_t **)va);
-  const scamper_addr_t *b = *((const scamper_addr_t **)vb);
-  return scamper_addr_cmp(a, b);
+  if(ptb == NULL)
+    return;
+  if(ptb->quote != NULL)
+    free(ptb->quote);
+  free(ptb);
+  return;
+}
+
+static int dealias_ptb_add(dealias_state_t *state, scamper_dl_rec_t *dl,
+			   scamper_dealias_probedef_t *def)
+{
+  dealias_ptb_t *ptb;
+
+  if((ptb = malloc_zero(sizeof(dealias_ptb_t))) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not malloc ptb");
+      goto err;
+    }
+  ptb->def = def;
+  if(dl->dl_ip_size > 1280-40-8)
+    ptb->quote_len = 1280-40-8;
+  else
+    ptb->quote_len = dl->dl_ip_size;
+  if((ptb->quote = memdup(dl->dl_net_raw, ptb->quote_len)) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not dup ptb quote");
+      goto err;
+    }
+
+  if(slist_tail_push(state->ptbq, ptb) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not queue ptb");
+      goto err;
+    }
+
+  return 0;
+ err:
+  if(ptb != NULL) dealias_ptb_free(ptb);
+  return -1;
+}
+
+static int dealias_target_cmp(const dealias_target_t *a,
+			      const dealias_target_t *b)
+{
+  return scamper_addr_cmp(a->addr, b->addr);
+}
+
+static void dealias_target_free(dealias_target_t *tgt)
+{
+  dealias_probe_t *p;
+
+  if(tgt == NULL)
+    return;
+  if(tgt->probes != NULL)
+    {
+      while((p = dlist_head_pop(tgt->probes)) != NULL)
+	free(p);
+      dlist_free(tgt->probes);
+    }
+  if(tgt->addr != NULL)
+    scamper_addr_free(tgt->addr);
+  free(tgt);
+  return;
+}
+
+static dealias_target_t *dealias_target_find(dealias_state_t *s,
+					     scamper_addr_t *addr)
+{
+  dealias_target_t fm;
+  fm.addr = addr;
+  return array_find((void **)s->targets, s->targetc, &fm,
+		    (array_cmp_t)dealias_target_cmp);
+}
+
+static dealias_target_t *dealias_target_get(dealias_state_t *state,
+					    scamper_addr_t *addr)
+{
+  dealias_target_t *tgt;
+  if((tgt = dealias_target_find(state, addr)) != NULL)
+    return tgt;
+  if((tgt = malloc_zero(sizeof(dealias_target_t))) == NULL ||
+     (tgt->probes = dlist_alloc()) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not malloc tgt");
+      goto err;
+    }
+  tgt->addr = scamper_addr_use(addr);
+  if(array_insert((void ***)&state->targets, &state->targetc, tgt,
+		  (array_cmp_t)dealias_target_cmp) != 0)
+    {
+      printerror(errno, strerror, __func__, "could not add tgt to array");
+      goto err;
+    }
+  return tgt;
+
+ err:
+  dealias_target_free(tgt);
+  return NULL;
+}
+
+static int dealias_probedef_add(dealias_state_t *state,
+				scamper_dealias_probedef_t *def)
+{
+  dealias_probedef_t *pd = NULL;
+
+  if((pd = malloc_zero(sizeof(dealias_probedef_t))) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not malloc pd");
+      goto err;
+    }
+  pd->def = def;
+  if((pd->target = dealias_target_get(state, def->dst)) == NULL)
+    goto err;
+
+  if(def->size == 0)
+    pd->pktbuf_len = 2;
+  else if(def->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_ICMP_ECHO)
+    if(SCAMPER_ADDR_TYPE_IS_IPV4(def->dst))
+      pd->pktbuf_len = def->size - 28;
+    else
+      pd->pktbuf_len = def->size - 48;
+  else
+    goto err;
+
+  if(def->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_TCP_ACK &&
+     (random_u32(&pd->tcp_seq) != 0 || random_u32(&pd->tcp_ack) != 0))
+    goto err;
+
+  if(array_insert((void ***)&state->pds, &state->pdc, pd, NULL) != 0)
+    {
+      printerror(errno, strerror, __func__, "could not add pd");
+      goto err;
+    }
+
+  return 0;
+
+ err:
+  if(pd != NULL) free(pd);
+  return -1;
 }
 
 static void dealias_prefixscan_array_free(scamper_addr_t **addrs, int addrc)
@@ -418,33 +653,30 @@ static int dealias_prefixscan_array(scamper_dealias_t *dealias,
 }
 
 static scamper_dealias_probe_t *
-dealias_probe_udp_find(dealias_state_t *state, scamper_icmp_resp_t *ir)
+dealias_probe_udp_find(dealias_state_t *state, dealias_target_t *tgt,
+		       uint16_t ipid, uint16_t sport, uint16_t dport)
 {
   scamper_dealias_probedef_t *def;
   dealias_probe_t *dp;
-  scamper_addr_t addr;
+  dlist_node_t *n;
 
-  if(scamper_icmp_resp_inner_dst(ir, &addr) != 0)
-    return NULL;
-
-  for(dp = state->probes[ir->ir_inner_ip_id & 0xff]; dp != NULL; dp = dp->next)
+  for(n=dlist_head_node(tgt->probes); n != NULL; n = dlist_node_next(n))
     {
-      def = dp->probe->probedef;
+      dp = dlist_node_item(n); def = dp->probe->def;
       if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP(def) == 0 ||
-	 def->un.udp.sport != ir->ir_inner_udp_sport ||
-	 scamper_addr_cmp(def->dst, &addr) != 0)
-	{
-	  continue;
-	}
+	 def->un.udp.sport != sport)
+	continue;
+      if(SCAMPER_ADDR_TYPE_IS_IPV4(tgt->addr) && dp->probe->ipid != ipid)
+	continue;
 
       if(def->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_UDP)
 	{
-	  if(def->un.udp.dport == ir->ir_inner_udp_dport)
+	  if(def->un.udp.dport == dport)
 	    return dp->probe;
 	}
       else if(def->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_UDP_DPORT)
 	{
-	  if(def->un.udp.dport + dp->probe->seq == ir->ir_inner_udp_dport)
+	  if(dp->match_field == dport)
 	    return dp->probe;
 	}
     }
@@ -453,33 +685,28 @@ dealias_probe_udp_find(dealias_state_t *state, scamper_icmp_resp_t *ir)
 }
 
 static scamper_dealias_probe_t *
-dealias_probe_tcp_find(dealias_state_t *state, scamper_icmp_resp_t *ir)
+dealias_probe_tcp_find2(dealias_state_t *state, dealias_target_t *tgt,
+			uint16_t sport, uint16_t dport)
 {
   scamper_dealias_probedef_t *def;
   dealias_probe_t *dp;
-  scamper_addr_t addr;
+  dlist_node_t *n;
 
-  if(scamper_icmp_resp_inner_dst(ir, &addr) != 0)
-    return NULL;
-
-  for(dp = state->probes[ir->ir_inner_ip_id & 0xff]; dp != NULL; dp = dp->next)
+  for(n=dlist_head_node(tgt->probes); n != NULL; n = dlist_node_next(n))
     {
-      def = dp->probe->probedef;
+      dp = dlist_node_item(n); def = dp->probe->def;
       if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP(def) == 0 ||
-	 def->un.tcp.dport != ir->ir_inner_tcp_dport ||
-	 scamper_addr_cmp(def->dst, &addr) != 0)
-	{
-	  continue;
-	}
+	 def->un.tcp.dport != dport)
+	continue;
 
       if(def->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_TCP_ACK)
 	{
-	  if(def->un.tcp.sport == ir->ir_inner_tcp_sport)
+	  if(def->un.tcp.sport == sport)
 	    return dp->probe;
 	}
       else if(SCAMPER_DEALIAS_PROBEDEF_VARY_TCP_SPORT(def))
 	{
-	  if(def->un.tcp.sport + dp->probe->seq == ir->ir_inner_tcp_sport)
+	  if(dp->match_field == sport)
 	    return dp->probe;
 	}
     }
@@ -488,30 +715,31 @@ dealias_probe_tcp_find(dealias_state_t *state, scamper_icmp_resp_t *ir)
 }
 
 static scamper_dealias_probe_t *
-dealias_probe_icmp_find(dealias_state_t *state, scamper_icmp_resp_t *ir)
+dealias_probe_tcp_find(dealias_state_t *state, dealias_target_t *tgt,
+		       uint16_t ipid, uint16_t sport, uint16_t dport)
 {
   scamper_dealias_probedef_t *def;
   dealias_probe_t *dp;
-  scamper_addr_t addr;
+  dlist_node_t *n;
 
-  if(scamper_icmp_resp_inner_dst(ir, &addr) != 0)
-    return NULL;
-
-  for(dp = state->probes[ir->ir_inner_ip_id & 0xff]; dp != NULL; dp = dp->next)
+  for(n=dlist_head_node(tgt->probes); n != NULL; n = dlist_node_next(n))
     {
-      /*
-       * check that the icmp probe matches what we would have sent.
-       * don't check the checksum as it can be modified.
-       */
-      def = dp->probe->probedef;
-      if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(def) &&
-	 def->un.icmp.type == ir->ir_inner_icmp_type &&
-	 def->un.icmp.code == ir->ir_inner_icmp_code &&
-	 def->un.icmp.id   == ir->ir_inner_icmp_id   &&
-	 dp->icmpseq       == ir->ir_inner_icmp_seq  &&
-	 scamper_addr_cmp(def->dst, &addr) == 0)
+      dp = dlist_node_item(n); def = dp->probe->def;
+      if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP(def) == 0 ||
+	 def->un.tcp.dport != dport)
+	continue;
+      if(SCAMPER_ADDR_TYPE_IS_IPV4(tgt->addr) && dp->probe->ipid != ipid)
+	continue;
+
+      if(def->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_TCP_ACK)
 	{
-	  return dp->probe;
+	  if(def->un.tcp.sport == sport)
+	    return dp->probe;
+	}
+      else if(SCAMPER_DEALIAS_PROBEDEF_VARY_TCP_SPORT(def))
+	{
+	  if(dp->match_field == sport)
+	    return dp->probe;
 	}
     }
 
@@ -519,55 +747,78 @@ dealias_probe_icmp_find(dealias_state_t *state, scamper_icmp_resp_t *ir)
 }
 
 static scamper_dealias_probe_t *
-dealias_probe_echoreq_find(scamper_dealias_t *dealias, scamper_icmp_resp_t *ir)
+dealias_probe_icmp_find(dealias_state_t *state, dealias_target_t *tgt,
+			uint16_t ipid, uint8_t type, uint8_t code,
+			uint16_t id, uint16_t seq)
 {
-  scamper_dealias_probedef_t *probedef;
-  scamper_dealias_probe_t *probe;
-  scamper_addr_t addr;
-  uint32_t p, i;
+  scamper_dealias_probedef_t *def;
+  dealias_probe_t *dp;
+  dlist_node_t *n;
+  uint8_t method;
 
-  if(ir->ir_icmp_seq >= dealias->probec)
-    return NULL;
-
-  p = dealias->probec / 65536;
-
-  if((dealias->probec % 65536) > ir->ir_icmp_seq)
-    i = (p * 65536) + ir->ir_icmp_seq;
+  if((SCAMPER_ADDR_TYPE_IS_IPV4(tgt->addr) &&
+      type == ICMP_ECHO && code == 0) ||
+     (SCAMPER_ADDR_TYPE_IS_IPV6(tgt->addr) &&
+      type == ICMP6_ECHO_REQUEST && code == 0))
+    method = SCAMPER_DEALIAS_PROBEDEF_METHOD_ICMP_ECHO;
   else
-    i = ((p-1) * 65536) + ir->ir_icmp_seq;
-
-  if(scamper_icmp_resp_src(ir, &addr) != 0)
     return NULL;
 
-  for(;;)
+  for(n=dlist_head_node(tgt->probes); n != NULL; n = dlist_node_next(n))
     {
-      probe    = dealias->probes[i];
-      probedef = probe->probedef;
-
-      if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(probedef) &&
-	 probedef->un.icmp.type == ICMP_ECHO &&
-	 probedef->un.icmp.code == 0 &&
-	 probedef->un.icmp.id   == ir->ir_icmp_id &&
-	 scamper_addr_cmp(&addr, probedef->dst) == 0)
-	{
-	  return probe;
-	}
-
-      if(i >= 65536)
-	i -= 65536;
-      else
-	break;
+      dp = dlist_node_item(n); def = dp->probe->def;
+      if(SCAMPER_ADDR_TYPE_IS_IPV4(tgt->addr) && dp->probe->ipid != ipid)
+	continue;
+      if(def->method == method &&
+	 def->un.icmp.id == id && dp->match_field == seq)
+	return dp->probe;
     }
 
   return NULL;
 }
 
+static scamper_dealias_probe_t *
+dealias_probe_echoreq_find(dealias_state_t *state, dealias_target_t *tgt,
+			   uint16_t id, uint16_t seq)
+{
+  scamper_dealias_probedef_t *def;
+  dealias_probe_t *dp;
+  dlist_node_t *n;
+
+  for(n=dlist_head_node(tgt->probes); n != NULL; n = dlist_node_next(n))
+    {
+      dp = dlist_node_item(n); def = dp->probe->def;
+      if(def->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_ICMP_ECHO &&
+	 def->un.icmp.id == id && dp->match_field == seq)
+	return dp->probe;
+    }
+
+  return NULL;
+}
+
+static dealias_probedef_t *
+dealias_mercator_def(scamper_dealias_t *dealias, dealias_state_t *state)
+{
+  return state->pds[state->probe];
+}
+
+static int dealias_mercator_postprobe(scamper_dealias_t *dealias,
+				      dealias_state_t *state)
+{
+  /* we just wait the specified number of seconds with mercator probes */
+  scamper_dealias_mercator_t *mercator = dealias->data;
+  timeval_add_s(&state->next_tx, &state->last_tx, mercator->wait_timeout);
+  state->round++;
+  return 0;
+}
+
 static void dealias_mercator_handlereply(scamper_task_t *task,
 					 scamper_dealias_probe_t *probe,
-					 scamper_dealias_reply_t *reply)
+					 scamper_dealias_reply_t *reply,
+					 scamper_dl_rec_t *dl)
 {
   if(SCAMPER_DEALIAS_REPLY_IS_ICMP_UNREACH_PORT(reply) &&
-     scamper_addr_cmp(probe->probedef->dst, reply->src) != 0)
+     scamper_addr_cmp(probe->def->dst, reply->src) != 0)
     {
       dealias_result(task, SCAMPER_DEALIAS_RESULT_ALIASES);
     }
@@ -591,11 +842,42 @@ static void dealias_mercator_handletimeout(scamper_task_t *task)
   return;
 }
 
-static int dealias_ally_allzero(scamper_dealias_t *dealias,
-				scamper_dealias_ally_t *ally)
+static dealias_probedef_t *
+dealias_ally_def(scamper_dealias_t *dealias, dealias_state_t *state)
+{
+  return state->pds[state->probe];
+}
+
+static int dealias_ally_postprobe(scamper_dealias_t *dealias,
+				  dealias_state_t *state)
+{
+  /*
+   * we wait a fixed amount of time before we send the next probe with
+   * ally.  except when the last probe has been sent, where we wait for
+   * some other length of time for any final replies to come in
+   */
+  scamper_dealias_ally_t *ally = dealias->data;
+  if(dealias->probec != ally->attempts)
+    timeval_add_ms(&state->next_tx, &state->last_tx, ally->wait_probe);
+  else
+    timeval_add_s(&state->next_tx, &state->last_tx, ally->wait_timeout);
+  if(++state->probe == 2)
+    {
+      state->probe = 0;
+      state->round++;
+    }
+  return 0;
+}
+
+static int dealias_ally_allzero(scamper_dealias_t *dealias)
 {
   uint32_t i;
   uint16_t j;
+
+  if(dealias->probec == 0)
+    return 0;
+  if(SCAMPER_ADDR_TYPE_IS_IPV4(dealias->probes[0]->def->dst) == 0)
+    return 0;
 
   for(i=0; i<dealias->probec; i++)
     {
@@ -611,89 +893,147 @@ static int dealias_ally_allzero(scamper_dealias_t *dealias,
   return 1;
 }
 
+/*
+ * dealias_ally_handlereply_v6
+ *
+ * process the IPv6 response and signal to the caller what to do next.
+ *
+ * -1: error, stop probing now.
+ *  0: response is not useful, don't process the packet.
+ *  1: useful response, continue processing.
+ */
+static int dealias_ally_handlereply_v6(scamper_task_t *task,
+				       scamper_dealias_probe_t *probe,
+				       scamper_dealias_reply_t *reply,
+				       scamper_dl_rec_t *dl)
+{
+  scamper_dealias_t *dealias = dealias_getdata(task);
+  dealias_state_t *state = dealias_getstate(task);
+  dealias_probedef_t *pd = state->pds[probe->def->id];
+  slist_node_t *sn;
+  int ptb = 0, discard = 0;
+  uint32_t i;
+
+  /* are we in a period where we're waiting for the receiver to get the PTB? */
+  if(state->ptb_tx.tv_sec != 0 || slist_count(state->ptbq) > 0)
+    ptb = 1;
+
+  /* is the probe going to be discarded? */
+  for(sn=slist_head_node(state->discard); sn != NULL; sn=slist_node_next(sn))
+    {
+      if(slist_node_item(sn) == probe)
+	{
+	  discard = 1;
+	  break;
+	}
+    }
+
+  /* if the response contains an IP-ID, then we're good for this def */  
+  if((reply->flags & SCAMPER_DEALIAS_REPLY_FLAG_IPID32) != 0)
+    {
+      pd->flags |= DEALIAS_PROBEDEF_FLAG_RX_IPID;
+      return (discard == 0 && ptb == 0) ? 1 : 0;
+    }
+
+  /* should we send a packet too big for this packet? */
+  if(probe->def->mtu != 0 && probe->def->mtu < dl->dl_ip_size &&
+     (pd->flags & DEALIAS_PROBEDEF_FLAG_TX_PTB) == 0 &&
+     (pd->flags & DEALIAS_PROBEDEF_FLAG_RX_IPID) == 0)
+    {
+      /* all prior probes are going to be discarded, so put them in the list */
+      for(i=0; i<dealias->probec; i++)
+	{
+	  if(slist_head_push(state->discard, dealias->probes[i]) == NULL)
+	    return -1;
+	  dealias->probes[i] = NULL;
+	}
+      dealias->probec = 0;
+      state->round = 0;
+
+      /* send a PTB */
+      pd->flags |= DEALIAS_PROBEDEF_FLAG_TX_PTB;
+      if(dealias_ptb_add(state, dl, probe->def) != 0)
+	return -1;
+      dealias_queue(task);
+      return 0;
+    }
+
+  /* if we're probing for real and the response is not useful, halt */
+  if(ptb == 0 && discard == 0)
+    dealias_result(task, SCAMPER_DEALIAS_RESULT_NONE);
+
+  return 0;
+}
+
 static void dealias_ally_handlereply(scamper_task_t *task,
 				     scamper_dealias_probe_t *probe,
-				     scamper_dealias_reply_t *reply)
+				     scamper_dealias_reply_t *reply,
+				     scamper_dl_rec_t *dl)
 {
   scamper_dealias_t       *dealias = dealias_getdata(task);
   scamper_dealias_ally_t  *ally    = dealias->data;
   scamper_dealias_probe_t *probes[5];
   uint32_t k;
-  int rc, probec = 0, useful = 0;
+  int rc, probec = 0;
 
-  if(probe->replyc != 1)
+  /* check to see if the response could be useful for alias resolution */
+  if(probe->replyc != 1 ||
+     !(SCAMPER_DEALIAS_REPLY_FROM_TARGET(probe, reply) ||
+       (SCAMPER_DEALIAS_REPLY_IS_ICMP_TTL_EXP(reply) &&
+	probe->def->ttl != 255)))
     {
       dealias_result(task, SCAMPER_DEALIAS_RESULT_NONE);
       return;
     }
 
-  /* check to see if the response could be useful for alias resolution */
-  if(SCAMPER_DEALIAS_REPLY_FROM_TARGET(probe, reply))
-    useful = 1;
-  else if(SCAMPER_DEALIAS_REPLY_IS_ICMP_TTL_EXP(reply) &&
-	  probe->probedef->ttl != 255)
-    useful = 1;
-
-  if(useful == 0)
+  if(SCAMPER_ADDR_TYPE_IS_IPV6(reply->src))
     {
-      dealias_result(task, SCAMPER_DEALIAS_RESULT_NONE);
-      return;
+      rc = dealias_ally_handlereply_v6(task, probe, reply, dl);
+      if(rc == -1) goto err;
+      if(rc == 0) return;
     }
 
   /* can't make any decision unless at least two probes have been sent */
   if(dealias->probec < 2)
     return;
 
-  /*
-   * try and make a decision about whether or not probing should continue
-   * based on the responses we have (even if not all probes have been sent)
-   * note that we check the responses of up to 5 adjacent probes, rather
-   * than the entire complement.
-   */
-  k = (probe->seq * 2) + probe->probedef->id;
+  /* find the probe in its place */
+  for(k=0; k<dealias->probec; k++)
+    if(probe == dealias->probes[k])
+      break;
+  if(k == dealias->probec)
+    return;
 
-  if(k >= 2)
+  if(k >= 1 && dealias->probes[k-1]->replyc == 1)
     {
-      if(dealias->probes[k-2]->replyc == 1)
+      if(k >= 2 && dealias->probes[k-2]->replyc == 1)
 	probes[probec++] = dealias->probes[k-2];
-
-      if(dealias->probes[k-1]->replyc == 1)
-	probes[probec++] = dealias->probes[k-1];
-      else
-	probec = 0;
+      probes[probec++] = dealias->probes[k-1];
     }
-  else if(k >= 1)
+  probes[probec++] = dealias->probes[k];
+  if(k+1 < dealias->probec && dealias->probes[k+1]->replyc == 1)
     {
-      if(dealias->probes[k-1]->replyc == 1)
-	probes[probec++] = dealias->probes[k-1];
-    }
-  probes[probec++] = probe;
-  if(k+2 < dealias->probec)
-    {
-      if(dealias->probes[k+1]->replyc == 1)
-	probes[probec++] = dealias->probes[k+1];
-      if(dealias->probes[k+2]->replyc == 1)
+      probes[probec++] = dealias->probes[k+1];
+      if(k+2 < dealias->probec && dealias->probes[k+2]->replyc == 1)
 	probes[probec++] = dealias->probes[k+2];
-    }
-  else if(k+1 < dealias->probec)
-    {
-      if(dealias->probes[k+1]->replyc == 1)
-	probes[probec++] = dealias->probes[k+1];
     }
 
   /* not enough adjacent responses to make a classification */
   if(probec < 2)
     return;
 
-  if(SCAMPER_DEALIAS_ALLY_IS_NOBS(dealias) == 0)
-    rc = scamper_dealias_ipid_inseq(probes, probec, ally->fudge);
-  else
-    rc = scamper_dealias_ipid_inseqbs(probes, probec, ally->fudge);
-
   /* check if the replies are in sequence */
+  if(SCAMPER_DEALIAS_ALLY_IS_NOBS(dealias))
+    rc = scamper_dealias_ipid_inseq(probes, probec, ally->fudge, 0);
+  else
+    rc = scamper_dealias_ipid_inseq(probes, probec, ally->fudge, 2);
   if(rc == 0)
     dealias_result(task, SCAMPER_DEALIAS_RESULT_NOTALIASES);
 
+  return;
+
+ err:
+  dealias_handleerror(task, errno);
   return;
 }
 
@@ -717,21 +1057,80 @@ static void dealias_ally_handletimeout(scamper_task_t *task)
 	  return;
 	}
 
-      if(SCAMPER_DEALIAS_ALLY_IS_NOBS(dealias) == 0)
-	rc = scamper_dealias_ally_inseq(dealias, ally->fudge);
+      if(SCAMPER_DEALIAS_ALLY_IS_NOBS(dealias))
+	rc = scamper_dealias_ipid_inseq(dealias->probes, k, ally->fudge, 0);
       else
-	rc = scamper_dealias_ally_inseqbs(dealias, ally->fudge);
+	rc = scamper_dealias_ipid_inseq(dealias->probes, k, ally->fudge, 3);
 
       /* check if the replies are in sequence */
       if(rc == 1)
 	dealias_result(task, SCAMPER_DEALIAS_RESULT_ALIASES);
-      else if(dealias_ally_allzero(dealias, ally) != 0)
+      else if(dealias_ally_allzero(dealias) != 0)
 	dealias_result(task, SCAMPER_DEALIAS_RESULT_NONE);
       else
 	dealias_result(task, SCAMPER_DEALIAS_RESULT_NOTALIASES);
     }
 
   return;
+}
+
+static dealias_probedef_t *
+dealias_radargun_def(scamper_dealias_t *dealias, dealias_state_t *state)
+{
+  scamper_dealias_radargun_t *rg = dealias->data;
+  dealias_radargun_t *rgstate = state->methodstate; 
+  if((rg->flags & SCAMPER_DEALIAS_RADARGUN_FLAG_SHUFFLE) == 0)
+    return state->pds[state->probe];
+  return state->pds[rgstate->order[rgstate->i++]];
+}
+
+static int dealias_radargun_postprobe(scamper_dealias_t *dealias,
+				      dealias_state_t *state)
+{
+  scamper_dealias_radargun_t *rg = dealias->data;
+  dealias_radargun_t *rgstate = state->methodstate;
+  struct timeval *tv = &state->last_tx;
+
+  if(state->probe == 0)
+    timeval_add_ms(&rgstate->next_round, tv, rg->wait_round);
+
+  state->probe++;
+
+  if(state->probe < rg->probedefc)
+    {
+      timeval_add_ms(&state->next_tx, tv, rg->wait_probe);
+    }
+  else
+    {
+      state->probe = 0;
+      state->round++;
+
+      if(state->round < rg->attempts)
+	{
+	  if(timeval_cmp(tv, &rgstate->next_round) >= 0 ||
+	     timeval_diff_ms(&rgstate->next_round, tv) < rg->wait_probe)
+	    {
+	      timeval_add_ms(&state->next_tx, tv, rg->wait_probe);
+	    }
+	  else
+	    {
+	      timeval_cpy(&state->next_tx, &rgstate->next_round);
+	    }
+
+	  if((rg->flags & SCAMPER_DEALIAS_RADARGUN_FLAG_SHUFFLE) != 0)
+	    {
+	      if(shuffle32(rgstate->order, rg->probedefc) != 0)
+		return -1;
+	      rgstate->i = 0;
+	    }
+	}
+      else
+	{
+	  /* we're all finished */
+	  timeval_add_s(&state->next_tx, tv, rg->wait_timeout);
+	}
+    }
+  return 0;
 }
 
 static void dealias_radargun_handletimeout(scamper_task_t *task)
@@ -749,6 +1148,48 @@ static void dealias_radargun_handletimeout(scamper_task_t *task)
   return;
 }
 
+static void dealias_radargun_handlereply(scamper_task_t *task,
+					 scamper_dealias_probe_t *probe,
+					 scamper_dealias_reply_t *reply,
+					 scamper_dl_rec_t *dl)
+{
+  dealias_state_t *state = dealias_getstate(task);
+  if(SCAMPER_ADDR_TYPE_IS_IPV6(probe->def->dst) &&
+     (reply->flags & SCAMPER_DEALIAS_REPLY_FLAG_IPID32) == 0 &&
+     probe->def->mtu != 0 && probe->def->mtu < dl->dl_ip_size)
+    {
+      if(dealias_ptb_add(state, dl, probe->def) != 0)
+	dealias_handleerror(task, errno);
+      else
+	dealias_queue(task);
+    }
+  return;
+}
+
+static dealias_probedef_t *
+dealias_prefixscan_def(scamper_dealias_t *dealias, dealias_state_t *state)
+{
+  return state->pds[state->probe];
+}
+
+static int dealias_prefixscan_postprobe(scamper_dealias_t *dealias,
+					dealias_state_t *state)
+{
+  scamper_dealias_prefixscan_t *prefixscan = dealias->data;
+  dealias_prefixscan_t *pfstate = state->methodstate;
+  scamper_dealias_probedef_t *def = &state->probedefs[state->probe];
+
+  if(def->id == 0)
+    pfstate->round0++;
+  else
+    pfstate->round++;
+  pfstate->attempt++;
+  pfstate->replyc = 0;
+  timeval_add_ms(&state->next_tx, &state->last_tx, prefixscan->wait_probe);
+
+  return 0;
+}
+
 static int dealias_prefixscan_next(scamper_task_t *task)
 {
   scamper_dealias_t *dealias = dealias_getdata(task);
@@ -763,7 +1204,7 @@ static int dealias_prefixscan_next(scamper_task_t *task)
    * prefixscan->a, then we don't need to bother probing it.
    */
   if(array_find((void **)pfstate->aaliases, pfstate->aaliasc, def->dst,
-		dealias_prefixscan_aalias_cmp) != NULL)
+		(array_cmp_t)scamper_addr_cmp) != NULL)
     {
       prefixscan->ab = scamper_addr_use(def->dst);
       dealias_result(task, SCAMPER_DEALIAS_RESULT_ALIASES);
@@ -777,7 +1218,7 @@ static int dealias_prefixscan_next(scamper_task_t *task)
       goto err;
     }
   for(p=0; p<dealias->probec; p++)
-    defids[p] = dealias->probes[p]->probedef->id;
+    defids[p] = dealias->probes[p]->def->id;
 
   /* add the probedef */
   if(scamper_dealias_prefixscan_probedef_add(dealias, def) != 0)
@@ -787,9 +1228,15 @@ static int dealias_prefixscan_next(scamper_task_t *task)
     }
 
   /* re-set the pointers to the probedefs */
+  for(p=0; p<state->pdc; p++)
+    state->pds[p]->def = &prefixscan->probedefs[p];
   for(p=0; p<dealias->probec; p++)
-    dealias->probes[p]->probedef = &prefixscan->probedefs[defids[p]];
+    dealias->probes[p]->def = &prefixscan->probedefs[defids[p]];
   free(defids); defids = NULL;
+
+  def = &prefixscan->probedefs[prefixscan->probedefc-1];
+  if(dealias_probedef_add(state, def) != 0)
+    goto err;
 
   state->probedefs = prefixscan->probedefs;
   state->probedefc = prefixscan->probedefc;
@@ -803,7 +1250,8 @@ static int dealias_prefixscan_next(scamper_task_t *task)
 
 static void dealias_prefixscan_handlereply(scamper_task_t *task,
 					   scamper_dealias_probe_t *probe,
-					   scamper_dealias_reply_t *reply)
+					   scamper_dealias_reply_t *reply,
+					   scamper_dl_rec_t *dl)
 {
   scamper_dealias_t *dealias = dealias_getdata(task);
   dealias_state_t *state = dealias_getstate(task);
@@ -839,21 +1287,21 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
    * different interface, then we might be able to use that for alias
    * resolution.
    */
-  if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP(probe->probedef) &&
+  if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP(probe->def) &&
      SCAMPER_DEALIAS_REPLY_IS_ICMP_UNREACH_PORT(reply) &&
-     scamper_addr_cmp(probe->probedef->dst, reply->src) != 0)
+     scamper_addr_cmp(probe->def->dst, reply->src) != 0)
     {
-      if(probe->probedef->id == 0)
+      if(probe->def->id == 0)
 	{
 	  /*
 	   * if the reply is for prefixscan->a, then keep a record of the
 	   * address of the interface used in the response.
 	   */
 	  if(array_find((void **)pfstate->aaliases, pfstate->aaliasc,
-			reply->src, dealias_prefixscan_aalias_cmp) == NULL)
+			reply->src, (array_cmp_t)scamper_addr_cmp) == NULL)
 	    {
 	      if(array_insert((void ***)&pfstate->aaliases, &pfstate->aaliasc,
-			      reply->src, dealias_prefixscan_aalias_cmp) != 0)
+			      reply->src, (array_cmp_t)scamper_addr_cmp) != 0)
 		{
 		  printerror(errno, strerror, __func__,
 			     "could not add to aaliases");
@@ -870,9 +1318,9 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
 	   */
 	  if(scamper_addr_cmp(reply->src, prefixscan->a) == 0 ||
 	     array_find((void **)pfstate->aaliases, pfstate->aaliasc,
-			reply->src, dealias_prefixscan_aalias_cmp) != NULL)
+			reply->src, (array_cmp_t)scamper_addr_cmp) != NULL)
 	    {
-	      prefixscan->ab = scamper_addr_use(probe->probedef->dst);
+	      prefixscan->ab = scamper_addr_use(probe->def->dst);
 	      dealias_result(task, SCAMPER_DEALIAS_RESULT_ALIASES);
 	      return;
 	    }
@@ -926,15 +1374,15 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
   probes[seq-1] = probe;
 
   /* if the reply was not for the first probe, then skip over earlier probes */
-  p = dealias->probec-2; defid = probes[seq-1]->probedef->id;
-  while(p >= 0 && dealias->probes[p]->probedef->id == defid)
+  p = dealias->probec-2; defid = probes[seq-1]->def->id;
+  while(p >= 0 && dealias->probes[p]->def->id == defid)
     p--;
   if(p<0)
     goto err;
 
   for(s=seq-1; s>0; s--)
     {
-      if(probes[s]->probedef->id == 0)
+      if(probes[s]->def->id == 0)
 	defid = state->probedefc - 1;
       else
 	defid = 0;
@@ -944,7 +1392,7 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
 
       while(p >= 0)
 	{
-	  assert(defid == dealias->probes[p]->probedef->id);
+	  assert(defid == dealias->probes[p]->def->id);
 
 	  /* skip over any unresponded to probes */
 	  if(dealias->probes[p]->replyc == 0)
@@ -957,7 +1405,7 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
 	  probes[s-1] = dealias->probes[p];
 
 	  /* skip over any probes that proceeded this one with same defid */
-	  while(p >= 0 && dealias->probes[p]->probedef->id == defid)
+	  while(p >= 0 && dealias->probes[p]->def->id == defid)
 	    p--;
 
 	  break;
@@ -968,13 +1416,16 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
    * check to see if the sequence of replies indicates an alias.  free
    * the probes array before we check the result, as it is easiest here.
    */
-  if(SCAMPER_DEALIAS_PREFIXSCAN_IS_NOBS(dealias) == 0)
-    p = scamper_dealias_ipid_inseq(probes, seq, prefixscan->fudge);
+  if(SCAMPER_DEALIAS_PREFIXSCAN_IS_NOBS(dealias))
+    p = scamper_dealias_ipid_inseq(probes, seq, prefixscan->fudge, 0);
   else
-    p = scamper_dealias_ipid_inseqbs(probes, seq, prefixscan->fudge);
+    p = scamper_dealias_ipid_inseq(probes, seq, prefixscan->fudge,
+				   seq < prefixscan->replyc ? 2 : 3);
   free(probes); probes = NULL;
+  if(p == -1)
+    goto err;
 
-  if(p != 0)
+  if(p == 1)
     {
       if(seq == prefixscan->replyc)
 	{
@@ -988,7 +1439,7 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
 	state->probe = state->probedefc - 1;
       else
 	state->probe = 0;
-	
+
       return;
     }
 
@@ -1008,7 +1459,7 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
   pfstate->attempt = 0;
   state->probe     = state->probedefc-1;
 
-  if(dealias->probes[dealias->probec-1]->probedef->id == 0)
+  if(dealias->probes[dealias->probec-1]->def->id == 0)
     pfstate->seq = 1;
   else
     pfstate->seq = 0;
@@ -1033,7 +1484,7 @@ static void dealias_prefixscan_handletimeout(scamper_task_t *task)
 
   prefixscan = dealias->data;
   probe = dealias->probes[dealias->probec-1];
-  def = probe->probedef;
+  def = probe->def;
 
   if(pfstate->replyc == 0)
     {
@@ -1082,6 +1533,20 @@ static void dealias_prefixscan_handletimeout(scamper_task_t *task)
   return;
 }
 
+static dealias_probedef_t *
+dealias_bump_def(scamper_dealias_t *dealias, dealias_state_t *state)
+{
+  return state->pds[state->probe];
+}
+
+static int dealias_bump_postprobe(scamper_dealias_t *dealias,
+				  dealias_state_t *state)
+{
+  scamper_dealias_bump_t *bump = dealias->data;
+  timeval_add_ms(&state->next_tx, &state->last_tx, bump->wait_probe);
+  return 0;
+}
+
 static void dealias_bump_handletimeout(scamper_task_t *task)
 {
   scamper_dealias_t       *dealias = dealias_getdata(task);
@@ -1107,7 +1572,7 @@ static void dealias_bump_handletimeout(scamper_task_t *task)
       if(i != 3)
 	goto none;
 
-      if(scamper_dealias_ipid_inseq(probes, 3, 0) != 1)
+      if(scamper_dealias_ipid_inseq(probes, 3, 0, 0) != 1)
 	{
 	  dealias_result(task, SCAMPER_DEALIAS_RESULT_NOTALIASES);
 	  return;
@@ -1164,7 +1629,8 @@ static void dealias_bump_handletimeout(scamper_task_t *task)
 
 static void dealias_bump_handlereply(scamper_task_t *task,
 				     scamper_dealias_probe_t *probe,
-				     scamper_dealias_reply_t *reply)
+				     scamper_dealias_reply_t *reply,
+				     scamper_dl_rec_t *dl)
 {
   /* check to see if the response could be useful for alias resolution */
   if(SCAMPER_DEALIAS_REPLY_FROM_TARGET(probe,reply) == 0 || probe->replyc != 1)
@@ -1179,77 +1645,122 @@ static void dealias_bump_handlereply(scamper_task_t *task,
 static void do_dealias_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
 {
   static void (*const func[])(scamper_task_t *, scamper_dealias_probe_t *,
-			      scamper_dealias_reply_t *) = {
+			      scamper_dealias_reply_t *,
+			      scamper_dl_rec_t *) = {
     dealias_mercator_handlereply,
     dealias_ally_handlereply,
-    NULL, /* radargun */
+    dealias_radargun_handlereply,
     dealias_prefixscan_handlereply,
     dealias_bump_handlereply,
   };
-  scamper_dealias_probedef_t *def;
-  scamper_dealias_probe_t *probe;
+  scamper_dealias_probe_t *probe = NULL;
   scamper_dealias_reply_t *reply = NULL;
-  scamper_dealias_t *dealias  = dealias_getdata(task);
-  scamper_addr_t addr;
-  uint32_t i;
-  int type;
+  scamper_dealias_t *dealias = dealias_getdata(task);
+  dealias_state_t *state = dealias_getstate(task);
+  dealias_target_t *tgt;
+  scamper_addr_t a;
+  int v4 = 0;
 
   /* if we haven't sent a probe yet, then we have nothing to match */
   if(dealias->probec == 0)
     return;
 
-  if(SCAMPER_DL_IS_TCP(dl) == 0 || dl->dl_af != AF_INET)
+  if(dl->dl_af == AF_INET)
+    v4 = 1;
+  else if(dl->dl_af != AF_INET6)
     return;
 
-  addr.type = SCAMPER_ADDR_TYPE_IPV4;
-  addr.addr = dl->dl_ip_src;
-
-  i = dealias->probec - 1;
-  for(;;)
+  if(v4 && SCAMPER_DL_IS_TCP(dl))
     {
-      probe = dealias->probes[i];
-      def   = probe->probedef;
-
-      if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP(def) &&
-	 def->un.tcp.dport == dl->dl_tcp_sport &&
-	 scamper_addr_cmp(def->dst, &addr) == 0)
-	{
-	  if(def->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_TCP_ACK)
-	    {
-	      if(def->un.tcp.sport == dl->dl_tcp_dport)
-		break;
-	    }
-	  else if(SCAMPER_DEALIAS_PROBEDEF_VARY_TCP_SPORT(def))
-	    {
-	      if(def->un.tcp.sport + probe->seq == dl->dl_tcp_dport)
-		break;
-	    }
-	}
-
-      if(i == 0)
+      if(scamper_dl_rec_src(dl, &a) != 0 ||
+	 (tgt = dealias_target_find(state, &a)) == NULL)
 	return;
+      probe = dealias_probe_tcp_find2(state, tgt, dl->dl_tcp_dport,
+				      dl->dl_tcp_sport);
+      scamper_dl_rec_tcp_print(dl);
+    }
+  else if(state->flags & DEALIAS_STATE_FLAG_DL && SCAMPER_DL_IS_ICMP(dl))
+    {
+      /* if the ICMP type is not something that we care for, then drop it */
+      if(SCAMPER_DL_IS_ICMP_TTL_EXP(dl) ||
+	 SCAMPER_DL_IS_ICMP_UNREACH(dl) ||
+	 SCAMPER_DL_IS_ICMP_PACKET_TOO_BIG(dl))
+	{
+	  /* the IPID value used is expected to be of the form 0xabab */
+	  if(v4 && (dl->dl_icmp_ip_id & 0xff) != (dl->dl_icmp_ip_id >> 8))
+	    return;
+	  /* get the address to match with */
+	  if(scamper_dl_rec_icmp_ip_dst(dl, &a) != 0 ||
+	     (tgt = dealias_target_find(state, &a)) == NULL)
+	    return;
 
-      i--;
+	  if(dl->dl_icmp_ip_proto == IPPROTO_UDP)
+	    probe = dealias_probe_udp_find(state, tgt, dl->dl_icmp_ip_id,
+					   dl->dl_icmp_udp_sport,
+					   dl->dl_icmp_udp_dport);
+	  else if(dl->dl_icmp_ip_proto == IPPROTO_ICMP ||
+		  dl->dl_icmp_ip_proto == IPPROTO_ICMPV6)
+	    probe = dealias_probe_icmp_find(state, tgt, dl->dl_icmp_ip_id,
+					    dl->dl_icmp_icmp_type,
+					    dl->dl_icmp_icmp_code,
+					    dl->dl_icmp_icmp_id,
+					    dl->dl_icmp_icmp_seq);
+	  else if(dl->dl_icmp_ip_proto == IPPROTO_TCP)
+	    probe = dealias_probe_tcp_find(state, tgt, dl->dl_icmp_ip_id,
+					   dl->dl_icmp_tcp_sport,
+					   dl->dl_icmp_tcp_dport);
+	}
+      else if(SCAMPER_DL_IS_ICMP_ECHO_REPLY(dl) != 0)
+	{
+	  if(scamper_dl_rec_src(dl, &a) != 0 ||
+	     (tgt = dealias_target_find(state, &a)) == NULL)
+	    return;
+	  probe = dealias_probe_echoreq_find(state, tgt,
+					     dl->dl_icmp_id, dl->dl_icmp_seq);
+	}
+      else return;
+
+      scamper_dl_rec_icmp_print(dl);
     }
 
-  scamper_dl_rec_tcp_print(dl);
+  if(probe == NULL || scamper_dl_rec_src(dl, &a) != 0)
+    return;
 
   if((reply = scamper_dealias_reply_alloc()) == NULL)
     {
       scamper_debug(__func__, "could not alloc reply");
       goto err;
     }
-  type = SCAMPER_ADDR_TYPE_IPV4;
-  if((reply->src = scamper_addrcache_get(addrcache, type, addr.addr)) == NULL)
+  if((reply->src = scamper_addrcache_get(addrcache, a.type, a.addr)) == NULL)
     {
       scamper_debug(__func__, "could not get address from cache");
       goto err;
     }
   timeval_cpy(&reply->rx, &dl->dl_tv);
   reply->ttl       = dl->dl_ip_ttl;
-  reply->ipid      = dl->dl_ip_id;
-  reply->proto     = IPPROTO_TCP;
-  reply->tcp_flags = dl->dl_tcp_flags;
+  reply->proto     = dl->dl_ip_proto;
+
+  if(v4)
+    {
+      reply->ipid = dl->dl_ip_id;
+    }
+  else if(SCAMPER_DL_IS_IP_FRAG(dl))
+    {
+      reply->flags |= SCAMPER_DEALIAS_REPLY_FLAG_IPID32;
+      reply->ipid32 = dl->dl_ip6_id;
+    }
+
+  if(SCAMPER_DL_IS_TCP(dl))
+    {
+      reply->tcp_flags = dl->dl_tcp_flags;
+    }
+  else
+    {
+      reply->icmp_type = dl->dl_icmp_type;
+      reply->icmp_code = dl->dl_icmp_code;
+      reply->icmp_q_ip_ttl = dl->dl_icmp_ip_ttl;
+    }
+
   if(scamper_dealias_reply_add(probe, reply) != 0)
     {
       scamper_debug(__func__, "could not add reply to probe");
@@ -1257,7 +1768,8 @@ static void do_dealias_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
     }
 
   if(func[dealias->method-1] != NULL)
-    func[dealias->method-1](task, probe, reply);
+    func[dealias->method-1](task, probe, reply, dl);
+
   return;
 
  err:
@@ -1269,25 +1781,27 @@ static void do_dealias_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
 static void do_dealias_handle_icmp(scamper_task_t *task,scamper_icmp_resp_t *ir)
 {
   static void (*const func[])(scamper_task_t *, scamper_dealias_probe_t *,
-			      scamper_dealias_reply_t *) = {
+			      scamper_dealias_reply_t *,
+			      scamper_dl_rec_t *) = {
     dealias_mercator_handlereply,
     dealias_ally_handlereply,
     NULL, /* radargun */
     dealias_prefixscan_handlereply,
     dealias_bump_handlereply,
   };
-  scamper_dealias_probe_t *probe;
+  scamper_dealias_probe_t *probe = NULL;
   scamper_dealias_reply_t *reply = NULL;
   scamper_dealias_t *dealias = dealias_getdata(task);
   dealias_state_t *state = dealias_getstate(task);
-  void *addr;
-  int type;
+  dealias_target_t *tgt;
+  scamper_addr_t a;
 
   /* if we haven't sent a probe yet, then we have nothing to match */
   if(dealias->probec == 0)
     return;
 
-  if(ir->ir_af != AF_INET)
+  /* are we handling all responses using datalink sockets? */
+  if((state->flags & DEALIAS_STATE_FLAG_DL) != 0)
     return;
 
   /* if the ICMP type is not something that we care for, then drop it */
@@ -1295,31 +1809,44 @@ static void do_dealias_handle_icmp(scamper_task_t *task,scamper_icmp_resp_t *ir)
      SCAMPER_ICMP_RESP_IS_UNREACH(ir) ||
      SCAMPER_ICMP_RESP_IS_PACKET_TOO_BIG(ir))
     {
-      if(SCAMPER_ICMP_RESP_INNER_IS_SET(ir) == 0 ||
-	 ir->ir_inner_ip_off != 0)
-	{
-	  return;
-	}
+      if(SCAMPER_ICMP_RESP_INNER_IS_SET(ir) == 0 || ir->ir_inner_ip_off != 0)
+	return;
 
       /* the IPID value used is expected to be of the form 0xabab */
-      if((ir->ir_inner_ip_id & 0xff) != (ir->ir_inner_ip_id >> 8))
+      if(ir->ir_af == AF_INET &&
+	 (ir->ir_inner_ip_id & 0xff) != (ir->ir_inner_ip_id >> 8))
+	return;
+
+      if(scamper_icmp_resp_inner_dst(ir, &a) != 0 ||
+	 (tgt = dealias_target_find(state, &a)) == NULL)
 	return;
 
       if(ir->ir_inner_ip_proto == IPPROTO_UDP)
-	probe = dealias_probe_udp_find(state, ir);
-      else if(ir->ir_inner_ip_proto == IPPROTO_ICMP)
-	probe = dealias_probe_icmp_find(state, ir);
+	probe = dealias_probe_udp_find(state, tgt, ir->ir_inner_ip_id,
+				       ir->ir_inner_udp_sport,
+				       ir->ir_inner_udp_dport);
+      else if(ir->ir_inner_ip_proto == IPPROTO_ICMP ||
+	      ir->ir_inner_ip_proto == IPPROTO_ICMPV6)
+	probe = dealias_probe_icmp_find(state, tgt, ir->ir_inner_ip_id,
+					ir->ir_inner_icmp_type,
+					ir->ir_inner_icmp_code,
+					ir->ir_inner_icmp_id,
+					ir->ir_inner_icmp_seq);
       else if(ir->ir_inner_ip_proto == IPPROTO_TCP)
-	probe = dealias_probe_tcp_find(state, ir);
-      else return;
+	probe = dealias_probe_tcp_find(state, tgt, ir->ir_inner_ip_id,
+				       ir->ir_inner_tcp_sport,
+				       ir->ir_inner_tcp_dport);
+
+      if(scamper_icmp_resp_src(ir, &a) != 0)
+	return;
     }
   else if(SCAMPER_ICMP_RESP_IS_ECHO_REPLY(ir) != 0)
     {
-      probe = dealias_probe_echoreq_find(dealias, ir);
-    }
-  else
-    {
-      return;
+      if(scamper_icmp_resp_src(ir, &a) != 0 ||
+	 (tgt = dealias_target_find(state, &a)) == NULL)
+	return;
+      probe = dealias_probe_echoreq_find(state, tgt,
+					 ir->ir_icmp_id, ir->ir_icmp_seq);
     }
 
   if(probe == NULL)
@@ -1327,26 +1854,32 @@ static void do_dealias_handle_icmp(scamper_task_t *task,scamper_icmp_resp_t *ir)
 
   scamper_icmp_resp_print(ir);
 
-  type = SCAMPER_ADDR_TYPE_IPV4;
-  addr = &ir->ir_ip_src.v4;
-
   if((reply = scamper_dealias_reply_alloc()) == NULL)
     {
       scamper_debug(__func__, "could not alloc reply");
       goto err;
     }
-  if((reply->src = scamper_addrcache_get(addrcache, type, addr)) == NULL)
+  if((reply->src = scamper_addrcache_get(addrcache, a.type, a.addr)) == NULL)
     {
       scamper_debug(__func__, "could not get address from cache");
       goto err;
     }
   timeval_cpy(&reply->rx, &ir->ir_rx);
   reply->ttl           = (uint8_t)ir->ir_ip_ttl;
-  reply->ipid          = ir->ir_ip_id;
-  reply->proto         = IPPROTO_ICMP;
   reply->icmp_type     = ir->ir_icmp_type;
   reply->icmp_code     = ir->ir_icmp_code;
   reply->icmp_q_ip_ttl = ir->ir_inner_ip_ttl;
+
+  if(ir->ir_af == AF_INET)
+    {
+      reply->ipid  = ir->ir_ip_id;
+      reply->proto = IPPROTO_ICMP;
+    }
+  else
+    {
+      reply->proto = IPPROTO_ICMPV6;
+    }
+
   if(scamper_dealias_reply_add(probe, reply) != 0)
     {
       scamper_debug(__func__, "could not add reply to probe");
@@ -1354,7 +1887,7 @@ static void do_dealias_handle_icmp(scamper_task_t *task,scamper_icmp_resp_t *ir)
     }
 
   if(func[dealias->method-1] != NULL)
-    func[dealias->method-1](task, probe, reply);
+    func[dealias->method-1](task, probe, reply, NULL);
   return;
 
  err:
@@ -1380,38 +1913,43 @@ static void do_dealias_handle_timeout(scamper_task_t *task)
 /*
  * dealias_state_probe
  *
- * record the fact that a probe was sent with a particular IP-ID value.
+ * record the fact that a probe was sent
  */
 static int dealias_state_probe(dealias_state_t *state,
-			       scamper_dealias_probe_t *probe, uint16_t seq)
+			       dealias_probedef_t *pdef,
+			       scamper_dealias_probe_t *probe,
+			       scamper_probe_t *pr)
 {
   dealias_probe_t *dp = NULL;
 
   /* allocate a structure to record this probe's details */
-  if((dp = malloc(sizeof(dealias_probe_t))) == NULL)
+  if((dp = malloc_zero(sizeof(dealias_probe_t))) == NULL)
     {
-      printerror(errno,strerror,__func__, "could not malloc dealias_probe_t");
-      return -1;
+      printerror(errno, strerror, __func__, "could not malloc dealias_probe_t");
+      goto err;
     }
-  dp->icmpseq = seq;
-  dp->probe = probe;
+  if(pdef->def->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_UDP_DPORT)
+    dp->match_field = pr->pr_udp_dport;
+  else if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(pdef->def))
+    dp->match_field = pr->pr_icmp_seq;
+  else if(SCAMPER_DEALIAS_PROBEDEF_VARY_TCP_SPORT(pdef->def))
+    dp->match_field = pr->pr_tcp_sport;
 
-  dp->next = state->probes[probe->ipid & 0xff];
-  state->probes[probe->ipid & 0xff] = dp;
+  dp->probe = probe;
+  dp->target = pdef->target;
+
+  if((dp->target_node = dlist_head_push(dp->target->probes, dp)) == NULL ||
+     dlist_tail_push(state->recent_probes, dp) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not push to lists");
+      goto err;
+    }
 
   return 0;
-}
 
-static void dealias_probe_free(void *item)
-{
-  dealias_probe_t *probe = item, *next;
-  while(probe != NULL)
-    {
-      next = probe->next;
-      free(probe);
-      probe = next;
-    }
-  return;
+ err:
+  if(dp != NULL) free(dp);
+  return -1;
 }
 
 static void dealias_prefixscan_free(void *data)
@@ -1501,10 +2039,6 @@ static int dealias_radargun_alloc(scamper_dealias_radargun_t *rg,
   dealias_radargun_t *rgstate = NULL;
   uint32_t i;
 
-  /* if the probe order is to be shuffled, then shuffle it */
-  if((rg->flags & SCAMPER_DEALIAS_RADARGUN_FLAG_SHUFFLE) == 0)
-    return 0;
-
   if((rgstate = malloc_zero(sizeof(dealias_radargun_t))) == NULL)
     {
       printerror(errno,strerror,__func__, "could not malloc rgstate");
@@ -1512,15 +2046,19 @@ static int dealias_radargun_alloc(scamper_dealias_radargun_t *rg,
     }
   state->methodstate = rgstate;
 
-  if((rgstate->order = malloc(sizeof(uint32_t) * rg->probedefc)) == NULL)
+  /* if the probe order is to be shuffled, then shuffle it */
+  if((rg->flags & SCAMPER_DEALIAS_RADARGUN_FLAG_SHUFFLE))
     {
-      printerror(errno, strerror, __func__, "could not malloc order");
-      return -1;
+      if((rgstate->order = malloc(sizeof(uint32_t) * rg->probedefc)) == NULL)
+	{
+	  printerror(errno, strerror, __func__, "could not malloc order");
+	  return -1;
+	}
+      for(i=0; i<rg->probedefc; i++)
+	rgstate->order[i] = i;
+      if(shuffle32(rgstate->order, rg->probedefc) != 0)
+	return -1;
     }
-  for(i=0; i<rg->probedefc; i++)
-    rgstate->order[i] = i;
-  if(shuffle32(rgstate->order, rg->probedefc) != 0)
-    return -1;
 
   return 0;
 }
@@ -1546,10 +2084,15 @@ static void dealias_bump_free(void *data)
 static void dealias_state_free(scamper_dealias_t *dealias,
 			       dealias_state_t *state)
 {
+  scamper_dealias_probe_t *probe;
+  dealias_ptb_t *ptb;
   int j;
 
   if(state == NULL)
     return;
+
+  if(state->recent_probes != NULL)
+    dlist_free(state->recent_probes);
 
   if(state->methodstate != NULL)
     {
@@ -1561,20 +2104,35 @@ static void dealias_state_free(scamper_dealias_t *dealias,
 	dealias_bump_free(state->methodstate);
     }
 
-  if(state->probes != NULL)
+  if(state->targets != NULL)
     {
-      for(j=255; j>=0; j--)
-	{
-	  if(state->probes[j] == NULL)
-	    break;
-	  dealias_probe_free(state->probes[j]);
-	}
+      for(j=0; j<state->targetc; j++)
+	if(state->targets[j] != NULL)
+	  dealias_target_free(state->targets[j]);
+      free(state->targets);
     }
 
-  if(state->tcp_seqs != NULL)
-    free(state->tcp_seqs);
-  if(state->tcp_acks != NULL)
-    free(state->tcp_acks);
+  if(state->pds != NULL)
+    {
+      for(j=0; j<state->pdc; j++)
+	if(state->pds[j] != NULL)
+	  free(state->pds[j]);
+      free(state->pds);
+    }
+
+  if(state->ptbq != NULL)
+    {
+      while((ptb = slist_head_pop(state->ptbq)) != NULL)
+	dealias_ptb_free(ptb);
+      slist_free(state->ptbq);
+    }
+
+  if(state->discard != NULL)
+    {
+      while((probe = slist_head_pop(state->discard)) != NULL)
+	scamper_dealias_probe_free(probe);
+      slist_free(state->discard);
+    }
 
   free(state);
   return;
@@ -1582,84 +2140,85 @@ static void dealias_state_free(scamper_dealias_t *dealias,
 
 static void do_dealias_probe(scamper_task_t *task)
 {
-  scamper_dealias_t            *dealias    = dealias_getdata(task);
-  dealias_state_t              *state      = dealias_getstate(task);
-  scamper_dealias_mercator_t   *mercator   = dealias->data;
-  scamper_dealias_radargun_t   *rg         = dealias->data;
-  scamper_dealias_prefixscan_t *prefixscan = dealias->data;
-  scamper_dealias_ally_t       *ally       = dealias->data;
-  scamper_dealias_bump_t       *bump       = dealias->data;
-  dealias_prefixscan_t         *pfstate    = state->methodstate;
-  dealias_radargun_t           *rgstate    = state->methodstate;
+  static int (*const postprobe_func[])(scamper_dealias_t *,
+				       dealias_state_t *) = {
+    dealias_mercator_postprobe,
+    dealias_ally_postprobe,
+    dealias_radargun_postprobe,
+    dealias_prefixscan_postprobe,
+    dealias_bump_postprobe,
+  };
+  static dealias_probedef_t *(*const def_func[])(scamper_dealias_t *,
+						 dealias_state_t *) = {
+    dealias_mercator_def,
+    dealias_ally_def,
+    dealias_radargun_def,
+    dealias_prefixscan_def,
+    dealias_bump_def,
+  };
+  scamper_dealias_t *dealias = dealias_getdata(task);
+  dealias_state_t *state = dealias_getstate(task);
+  dealias_probedef_t *pdef;
   scamper_dealias_probedef_t *def;
   scamper_dealias_probe_t *dp = NULL;
   scamper_probe_t probe;
-  struct timeval tv;
+  dealias_ptb_t *ptb = NULL;
   uint16_t u16;
-  uint32_t u32;
-  size_t size;
 
   if(dealias->probec == 0)
+    gettimeofday_wrap(&dealias->start);
+ 
+  memset(&probe, 0, sizeof(probe));
+  if((state->flags & DEALIAS_STATE_FLAG_DL) != 0)
+    probe.pr_flags |= SCAMPER_PROBE_FLAG_DL;
+
+  if(slist_count(state->ptbq) > 0)
     {
-      gettimeofday_wrap(&dealias->start);
-
-      /* check if we need to keep tcp state */
-      for(u32=0; u32<state->probedefc; u32++)
+      ptb = slist_head_pop(state->ptbq); def = ptb->def;
+      probe.pr_ip_src = def->src;
+      probe.pr_ip_dst = def->dst;      
+      probe.pr_ip_ttl = 255;
+      SCAMPER_PROBE_ICMP_PTB(&probe, def->mtu);
+      probe.pr_data   = ptb->quote;
+      probe.pr_len    = ptb->quote_len;
+      if(scamper_probe_task(&probe, task) != 0)
 	{
-	  def = &state->probedefs[u32];
-	  if(def->method != SCAMPER_DEALIAS_PROBEDEF_METHOD_TCP_ACK)
-	    continue;
-
-	  if(state->tcp_acks == NULL)
-	    {
-	      size = sizeof(uint32_t) * state->probedefc;
-	      if((state->tcp_acks = malloc_zero(size)) == NULL ||
-		 (state->tcp_seqs = malloc_zero(size)) == NULL)
-		{
-		  printerror(errno, strerror, __func__,
-			     "could not malloc tcp state");
-		  goto err;
-		}
-	    }
-
-	  if(random_u32(&state->tcp_seqs[u32]) != 0 ||
-	     random_u32(&state->tcp_acks[u32]) != 0)
-	    {
-	      goto err;
-	    }
+	  errno = probe.pr_errno;
+	  goto err;
 	}
+      timeval_cpy(&state->ptb_tx, &probe.pr_tx);
+      dealias_ptb_free(ptb);
+      dealias_queue(task);
+      return;
     }
 
-  if(pktbuf_len < 2)
+  if((pdef = def_func[dealias->method-1](dealias, state)) == NULL)
+    goto err;
+  def = pdef->def;
+
+  if(pktbuf_len < state->pds[def->id]->pktbuf_len)
     {
-      if(realloc_wrap((void **)&pktbuf, 2) != 0)
+      if(realloc_wrap((void **)&pktbuf, state->pds[def->id]->pktbuf_len) != 0)
 	{
 	  printerror(errno, strerror, __func__, "could not realloc pktbuf");
 	  goto err;
 	}
-      pktbuf_len = 2;
+      pktbuf_len = state->pds[def->id]->pktbuf_len;
     }
 
-  if(SCAMPER_DEALIAS_METHOD_IS_RADARGUN(dealias) == 0 ||
-     (rg->flags & SCAMPER_DEALIAS_RADARGUN_FLAG_SHUFFLE) == 0)
-    {
-      def = &state->probedefs[state->probe];
-    }
-  else
-    {
-      def = &state->probedefs[rgstate->order[rgstate->i++]];
-    }
-
-  memset(&probe, 0, sizeof(probe));
   probe.pr_ip_src    = def->src;
   probe.pr_ip_dst    = def->dst;
   probe.pr_ip_ttl    = def->ttl;
   probe.pr_ip_tos    = def->tos;
-  probe.pr_flags     = SCAMPER_PROBE_FLAG_IPID;
-  probe.pr_ip_id     = state->id << 8 | state->id;
-  probe.pr_ip_off    = IP_DF;
   probe.pr_data      = pktbuf;
-  probe.pr_len       = 2;
+  probe.pr_len       = state->pds[def->id]->pktbuf_len;
+
+  if(SCAMPER_ADDR_TYPE_IS_IPV4(def->dst))
+    {
+      probe.pr_flags |= SCAMPER_PROBE_FLAG_IPID;
+      probe.pr_ip_id  = state->id << 8 | state->id;
+      probe.pr_ip_off = IP_DF;
+    }
 
   if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP(def))
     {
@@ -1669,7 +2228,7 @@ static void do_dealias_probe(scamper_task_t *task)
       if(def->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_UDP)
 	probe.pr_udp_dport = def->un.udp.dport;
       else if(def->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_UDP_DPORT)
-	probe.pr_udp_dport = def->un.udp.dport + state->round;
+	probe.pr_udp_dport = def->un.udp.dport + pdef->target->udp_dport++;
       else
 	goto err;
 
@@ -1681,11 +2240,7 @@ static void do_dealias_probe(scamper_task_t *task)
     }
   else if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(def))
     {
-      probe.pr_ip_proto  = IPPROTO_ICMP;
-      probe.pr_icmp_type = ICMP_ECHO;
-      probe.pr_icmp_code = 0;
-      probe.pr_icmp_id   = def->un.icmp.id;
-      probe.pr_icmp_seq  = dealias->probec & 0xffff;
+      SCAMPER_PROBE_ICMP_ECHO(&probe, def->un.icmp.id, state->icmpseq++);
 
       /* hack to get the icmp csum to be a particular value, and be valid */
       u16 = htons(def->un.icmp.csum);
@@ -1702,12 +2257,12 @@ static void do_dealias_probe(scamper_task_t *task)
       if(def->method == SCAMPER_DEALIAS_PROBEDEF_METHOD_TCP_ACK)
 	{
 	  probe.pr_tcp_sport = def->un.tcp.sport;
-	  probe.pr_tcp_seq   = state->tcp_seqs[def->id];
-	  probe.pr_tcp_ack   = state->tcp_acks[def->id];
+	  probe.pr_tcp_seq   = state->pds[def->id]->tcp_seq;
+	  probe.pr_tcp_ack   = state->pds[def->id]->tcp_ack;
 	}
       else if(SCAMPER_DEALIAS_PROBEDEF_VARY_TCP_SPORT(def))
 	{
-	  probe.pr_tcp_sport = def->un.tcp.sport + state->round;
+	  probe.pr_tcp_sport = def->un.tcp.sport + pdef->target->tcp_sport++;
 	  if(random_u32(&probe.pr_tcp_seq) != 0 ||
 	     random_u32(&probe.pr_tcp_ack) != 0)
 	    goto err;
@@ -1724,14 +2279,12 @@ static void do_dealias_probe(scamper_task_t *task)
       printerror(errno, strerror, __func__, "could not alloc probe");
       goto err;
     }
-  dp->probedef = def;
+  dp->def = def;
   dp->ipid = probe.pr_ip_id;
   dp->seq = state->round;
 
-  if(dealias_state_probe(state, dp, dealias->probec & 0xffff) != 0)
-    {
-      goto err;
-    }
+  if(dealias_state_probe(state, pdef, dp, &probe) != 0)
+    goto err;
 
   /* send the probe */
   if(scamper_probe_task(&probe, task) != 0)
@@ -1739,11 +2292,9 @@ static void do_dealias_probe(scamper_task_t *task)
       errno = probe.pr_errno;
       goto err;
     }
-  timeval_cpy(&tv, &probe.pr_tx);
-  timeval_cpy(&state->last_tx, &tv);
 
   /* record details of the probe in the scamper_dealias_t data structures */
-  timeval_cpy(&dp->tx, &tv);
+  timeval_cpy(&dp->tx, &probe.pr_tx);
   if(scamper_dealias_probe_add(dealias, dp) != 0)
     {
       scamper_debug(__func__, "could not add probe to dealias data");
@@ -1751,93 +2302,9 @@ static void do_dealias_probe(scamper_task_t *task)
     }
 
   /* figure out how long to wait until sending the next probe */
-  if(dealias->method == SCAMPER_DEALIAS_METHOD_MERCATOR)
-    {
-      /* we just wait the specified number of seconds with mercator probes */
-      timeval_add_s(&state->next_tx, &tv, mercator->wait_timeout);
-      state->round++;
-    }
-  else if(dealias->method == SCAMPER_DEALIAS_METHOD_ALLY)
-    {
-      /*
-       * we wait a fixed amount of time before we send the next probe with
-       * ally.  except when the last probe has been sent, where we wait for
-       * some other length of time for any final replies to come in
-       */
-      if(dealias->probec != ally->attempts)
-	timeval_add_ms(&state->next_tx, &tv, ally->wait_probe);
-      else
-	timeval_add_s(&state->next_tx, &tv, ally->wait_timeout);
-
-      if(++state->probe == 2)
-	{
-	  state->probe = 0;
-	  state->round++;
-	}
-    }
-  else if(dealias->method == SCAMPER_DEALIAS_METHOD_RADARGUN)
-    {
-      if(state->probe == 0)
-	timeval_add_ms(&state->next_round, &tv, rg->wait_round);
-
-      state->probe++;
-
-      if(state->probe < rg->probedefc)
-	{
-	  timeval_add_ms(&state->next_tx, &tv, rg->wait_probe);
-	}
-      else
-	{
-	  state->probe = 0;
-	  state->round++;
-
-	  if(state->round < rg->attempts)
-	    {
-	      if(timeval_cmp(&tv, &state->next_round) >= 0 ||
-		 timeval_diff_ms(&state->next_round, &tv) < rg->wait_probe)
-		{
-		  timeval_add_ms(&state->next_tx, &tv, rg->wait_probe);
-		}
-	      else
-		{
-		  timeval_cpy(&state->next_tx, &state->next_round);
-		}
-
-	      if((rg->flags & SCAMPER_DEALIAS_RADARGUN_FLAG_SHUFFLE) != 0)
-		{
-		  if(shuffle32(rgstate->order, rg->probedefc) != 0)
-		    goto err;
-		  rgstate->i = 0;
-		}
-	    }
-	  else
-	    {
-	      /* we're all finished */
-	      timeval_add_s(&state->next_tx, &tv, rg->wait_timeout);
-	    }
-	}
-    }
-  else if(dealias->method == SCAMPER_DEALIAS_METHOD_PREFIXSCAN)
-    {
-      if(def->id == 0)
-	pfstate->round0++;
-      else
-	pfstate->round++;
-
-      pfstate->attempt++;
-      pfstate->replyc = 0;
-
-      timeval_add_ms(&state->next_tx, &tv, prefixscan->wait_probe);
-    }
-  else if(dealias->method == SCAMPER_DEALIAS_METHOD_BUMP)
-    {
-      timeval_add_ms(&state->next_tx, &tv, bump->wait_probe);
-    }
-  else
-    {
-      scamper_debug(__func__, "unhandled method %d", dealias->method);
-      goto err;
-    }
+  timeval_cpy(&state->last_tx, &probe.pr_tx);
+  if(postprobe_func[dealias->method-1](dealias, state) != 0)
+    goto err;
 
   assert(state->id != 0);
   if(--state->id == 0)
@@ -1847,6 +2314,7 @@ static void do_dealias_probe(scamper_task_t *task)
   return;
 
  err:
+  if(ptb != NULL) dealias_ptb_free(ptb);
   dealias_handleerror(task, errno);
   return;
 }
@@ -1968,11 +2436,13 @@ static int dealias_probedef_args(scamper_dealias_probedef_t *def, char *str)
 {
   scamper_option_out_t *opts_out = NULL, *opt;
   uint16_t dport = 33435;
-  uint16_t sport = default_sport;
+  uint16_t sport = scamper_sport_default();
   uint16_t csum  = 0;
   uint16_t opts  = 0;
   uint8_t  ttl   = 255;
   uint8_t  tos   = 0;
+  uint16_t size  = 0;
+  uint16_t mtu   = 0;
   char *end;
   long tmp;
 
@@ -2024,6 +2494,15 @@ static int dealias_probedef_args(scamper_dealias_probedef_t *def, char *str)
 	    }
 	  break;
 
+	case DEALIAS_PROBEDEF_OPT_MTU:
+	  if(string_tolong(opt->str, &tmp) != 0 || tmp < 100 || tmp > 65535)
+	    {
+	      scamper_debug(__func__, "invalid mtu size %s", opt->str);
+	      goto err;
+	    }
+	  mtu = (uint16_t)tmp;
+	  break;
+
 	case DEALIAS_PROBEDEF_OPT_PROTO:
 	  if(strcasecmp(opt->str, "udp") == 0)
 	    def->method = SCAMPER_DEALIAS_PROBEDEF_METHOD_UDP;
@@ -2042,6 +2521,15 @@ static int dealias_probedef_args(scamper_dealias_probedef_t *def, char *str)
 	      scamper_debug(__func__, "invalid probe type %s", opt->str);
 	      goto err;
 	    }
+	  break;
+
+	case DEALIAS_PROBEDEF_OPT_SIZE:
+	  if(string_tolong(opt->str, &tmp) != 0 || tmp < 100 || tmp > 65535)
+	    {
+	      scamper_debug(__func__, "invalid probe size %s", opt->str);
+	      goto err;
+	    }
+	  size = (uint16_t)tmp;
 	  break;
 
 	case DEALIAS_PROBEDEF_OPT_SPORT:
@@ -2080,9 +2568,11 @@ static int dealias_probedef_args(scamper_dealias_probedef_t *def, char *str)
       goto err;
     }
 
-  /* record the ttl, tos */
-  def->ttl = ttl;
-  def->tos = tos;
+  /* record the ttl, tos, size */
+  def->ttl  = ttl;
+  def->tos  = tos;
+  def->size = size;
+  def->mtu  = mtu;
 
   /* if no protocol type is defined, choose UDP */
   if((opts & (1<<(DEALIAS_PROBEDEF_OPT_PROTO-1))) == 0)
@@ -2113,11 +2603,8 @@ static int dealias_probedef_args(scamper_dealias_probedef_t *def, char *str)
 	  scamper_debug(__func__, "dport option not permitted for icmp");
 	  goto err;
 	}
-
-      def->un.icmp.type = ICMP_ECHO;
-      def->un.icmp.code = 0;
       def->un.icmp.csum = csum;
-      def->un.icmp.id   = default_sport;
+      def->un.icmp.id   = scamper_sport_default();
     }
   else if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP(def))
     {
@@ -2179,7 +2666,7 @@ static int dealias_alloc_mercator(scamper_dealias_t *d, dealias_options_t *o)
     }
   if(o->attempts == 0) o->attempts = 3;
   if(o->dport == 0)    o->dport    = 33435;
-  if(o->sport == 0)    o->sport    = default_sport;
+  if(o->sport == 0)    o->sport    = scamper_sport_default();
   if(o->ttl == 0)      o->ttl      = 255;
 
   if(scamper_dealias_mercator_alloc(d) != 0)
@@ -2225,9 +2712,6 @@ static int dealias_alloc_ally(scamper_dealias_t *d, dealias_options_t *o)
   if(o->wait_probe == 0) o->wait_probe = 150;
   if(o->attempts == 0)   o->attempts   = 5;
 
-  if(o->nobs != 0)
-    flags |= SCAMPER_DEALIAS_ALLY_FLAG_NOBS;
-
   if(o->fudge == 0 && o->inseq == 0)
     o->fudge = 200;
 
@@ -2246,7 +2730,7 @@ static int dealias_alloc_ally(scamper_dealias_t *d, dealias_options_t *o)
 	{
 	  pd[i].ttl          = 255;
 	  pd[i].method       = SCAMPER_DEALIAS_PROBEDEF_METHOD_UDP;
-	  pd[i].un.udp.sport = default_sport;
+	  pd[i].un.udp.sport = scamper_sport_default();
 	  pd[i].un.udp.dport = 33435;
 	}
     }
@@ -2298,12 +2782,16 @@ static int dealias_alloc_ally(scamper_dealias_t *d, dealias_options_t *o)
 	}
     }
 
-  if(pd[0].dst->type != SCAMPER_ADDR_TYPE_IPV4 ||
-     pd[1].dst->type != SCAMPER_ADDR_TYPE_IPV4)
+  if(pd[0].dst->type != pd[1].dst->type ||
+     SCAMPER_ADDR_TYPE_IS_IP(pd[0].dst) == 0 ||
+     SCAMPER_ADDR_TYPE_IS_IP(pd[1].dst) == 0)
     {
-      scamper_debug(__func__, "destination IP address not IPv4");
+      scamper_debug(__func__, "dst IP specified incorrectly");
       goto err;
     }
+
+  if(o->nobs != 0 || SCAMPER_ADDR_TYPE_IS_IPV6(pd[0].dst))
+    flags |= SCAMPER_DEALIAS_ALLY_FLAG_NOBS;
 
   if(scamper_dealias_ally_alloc(d) != 0)
     {
@@ -2334,13 +2822,16 @@ static int dealias_alloc_ally(scamper_dealias_t *d, dealias_options_t *o)
 static int dealias_alloc_radargun(scamper_dealias_t *d, dealias_options_t *o)
 {
   scamper_dealias_radargun_t *rg;
-  scamper_dealias_probedef_t *pd = NULL;
-  scamper_addr_t *dst = NULL;
-  uint32_t i;
+  scamper_dealias_probedef_t *pd = NULL, pd0;
+  slist_t *pd_list = NULL;
+  uint32_t i, probedefc;
   uint8_t flags = 0;
   size_t len;
+  char *a1, *a2;
 
-  if(o->probedefc == 0 || o->xc != 0 || o->dport != 0 || o->sport != 0 ||
+  memset(&pd0, 0, sizeof(pd0));
+
+  if(o->xc != 0 || o->dport != 0 || o->sport != 0 ||
      o->ttl != 0 || o->nobs != 0 || o->replyc != 0 || o->inseq != 0)
     {
       scamper_debug(__func__, "invalid parameters for radargun");
@@ -2354,55 +2845,79 @@ static int dealias_alloc_radargun(scamper_dealias_t *d, dealias_options_t *o)
   if(o->shuffle != 0)
     flags |= SCAMPER_DEALIAS_RADARGUN_FLAG_SHUFFLE;
 
-  len = o->probedefc * sizeof(scamper_dealias_probedef_t);
-  if((pd = malloc_zero(len)) == NULL)
+  if(o->probedefc == 0)
     {
-      scamper_debug(__func__, "could not malloc radargun pd");
-      goto err;
+      pd0.ttl          = 255;
+      pd0.method       = SCAMPER_DEALIAS_PROBEDEF_METHOD_UDP;
+      pd0.un.udp.sport = scamper_sport_default();
+      pd0.un.udp.dport = 33435;
+    }
+  else if(o->probedefc == 1)
+    {
+      if(dealias_probedef_args(&pd0, o->probedefs[0]) != 0)
+	{
+	  scamper_debug(__func__, "could not parse radargun probedef 0");
+	  goto err;
+	}
+      if(pd0.dst != NULL || o->addr == NULL)
+	{
+	  scamper_debug(__func__, "dst addrs are specified after def");
+	  goto err;
+	}
     }
 
-  for(i=0; i<o->probedefc; i++)
+  if(o->probedefc >= 2 && o->addr == NULL)
     {
-      if(dealias_probedef_args(&pd[i], o->probedefs[i]) != 0)
+      len = o->probedefc * sizeof(scamper_dealias_probedef_t);
+      if((pd = malloc_zero(len)) == NULL)
 	{
-	  scamper_debug(__func__,"could not parse radargun probedef %d",i);
-	  goto err;
-	}
-
-      if((pd[0].dst == NULL && pd[i].dst != NULL) ||
-	 (pd[0].dst != NULL && pd[i].dst == NULL))
-	{
-	  scamper_debug(__func__, "inconsistent dst IP addresses");
-	  goto err;
-	}
-
-      pd[i].id = i;
-    }
-
-  if(pd[0].dst == NULL)
-    {
-      if(o->addr == NULL)
-	{
-	  scamper_debug(__func__, "required dst IP address missing");
-	  goto err;
-	}
-
-      if((dst = scamper_addrcache_resolve(addrcache,AF_UNSPEC,o->addr))==NULL)
-	{
-	  scamper_debug(__func__, "could not resolve %s", o->addr);
+	  scamper_debug(__func__, "could not malloc radargun pd");
 	  goto err;
 	}
 
       for(i=0; i<o->probedefc; i++)
-	pd[i].dst = scamper_addr_use(dst);
-
-      scamper_addr_free(dst); dst = NULL;
+	{
+	  if(dealias_probedef_args(&pd[i], o->probedefs[i]) != 0 ||
+	     pd[i].dst == NULL)
+	    {
+	      scamper_debug(__func__, "could not parse radargun def %d", i);
+	      goto err;
+	    }
+	  if(i != 0 && pd[0].dst->type != pd[i].dst->type)
+	    {
+	      scamper_debug(__func__, "mixed address familys");
+	      goto err;
+	    }
+	  pd0.id = i;
+	}
+      probedefc = o->probedefc;
     }
-  else if(o->addr != NULL)
+  else if(o->probedefc < 2 && o->addr != NULL)
     {
-      scamper_debug(__func__, "destination IP address specified twice");
-      goto err;
+      if((pd_list = slist_alloc()) == NULL)
+	{
+	  printerror(errno, strerror, __func__, "could not alloc pd_list");
+	  goto err;
+	}
+      a1 = o->addr; i = 0;
+      for(;;)
+	{
+	  a2 = string_nextword(a1);
+	  pd0.dst = scamper_addrcache_resolve(addrcache, AF_UNSPEC, a1);
+	  if(pd0.dst == NULL)
+	    goto err;
+	  pd0.id = i++;
+	  if((pd = memdup(&pd0, sizeof(pd0))) == NULL ||
+	     slist_tail_push(pd_list, pd) == NULL)
+	    goto err;
+	  pd0.dst = NULL;
+	  if(a2 == NULL)
+	    break;
+	  a1 = a2;
+	}
+      probedefc = slist_count(pd_list);
     }
+  else goto err;
 
   if(scamper_dealias_radargun_alloc(d) != 0)
     {
@@ -2411,7 +2926,7 @@ static int dealias_alloc_radargun(scamper_dealias_t *d, dealias_options_t *o)
     }
   rg = d->data;
 
-  if(scamper_dealias_radargun_probedefs_alloc(rg, o->probedefc) != 0)
+  if(scamper_dealias_radargun_probedefs_alloc(rg, probedefc) != 0)
     {
       scamper_debug(__func__, "could not alloc radargun probedefs");
       goto err;
@@ -2421,11 +2936,25 @@ static int dealias_alloc_radargun(scamper_dealias_t *d, dealias_options_t *o)
   rg->wait_probe   = o->wait_probe;
   rg->wait_timeout = o->wait_timeout;
   rg->wait_round   = o->wait_round;
-  rg->probedefc    = o->probedefc;
+  rg->probedefc    = probedefc;
   rg->flags        = flags;
 
-  for(i=0; i<o->probedefc; i++)
-    memcpy(&rg->probedefs[i], &pd[i], sizeof(scamper_dealias_probedef_t));
+  if(pd_list == NULL)
+    {
+      for(i=0; i<o->probedefc; i++)
+	memcpy(&rg->probedefs[i], &pd[i], sizeof(scamper_dealias_probedef_t));
+    }
+  else
+    {
+      i=0;
+      while((pd = slist_head_pop(pd_list)) != NULL)
+	{
+	  memcpy(&rg->probedefs[i], pd, sizeof(scamper_dealias_probedef_t));
+	  free(pd);
+	  i++;
+	}
+      slist_free(pd_list); pd_list = NULL;
+    }
 
   return 0;
 
@@ -2437,6 +2966,17 @@ static int dealias_alloc_radargun(scamper_dealias_t *d, dealias_options_t *o)
 	  scamper_addr_free(pd[i].dst);
       free(pd);
     }
+  if(pd_list != NULL)
+    {
+      while((pd = slist_head_pop(pd_list)) != NULL)
+	{
+	  scamper_addr_free(pd->dst);
+	  free(pd);
+	}
+      slist_free(pd_list);
+    }
+  if(pd0.dst != NULL)
+    scamper_addr_free(pd0.dst);
   return -1;
 }
 
@@ -2482,7 +3022,8 @@ static int dealias_alloc_prefixscan(scamper_dealias_t *d, dealias_options_t *o)
       goto err;
     }
 
-  if(string_nullterm_char(addr2, '/', &pfxstr) == NULL)
+  string_nullterm_char(addr2, '/', &pfxstr);
+  if(pfxstr == NULL)
     {
       scamper_debug(__func__, "missing prefix");
       goto err;
@@ -2642,6 +3183,13 @@ static int dealias_alloc_bump(scamper_dealias_t *d, dealias_options_t *o)
  */
 void *scamper_do_dealias_alloc(char *str)
 {
+  static int (*const alloc_func[])(scamper_dealias_t *, dealias_options_t *) = {
+    dealias_alloc_mercator,
+    dealias_alloc_ally,
+    dealias_alloc_radargun,
+    dealias_alloc_prefixscan,
+    dealias_alloc_bump,
+  };
   scamper_option_out_t *opts_out = NULL, *opt;
   scamper_dealias_t *dealias = NULL;
   dealias_options_t o;
@@ -2649,7 +3197,6 @@ void *scamper_do_dealias_alloc(char *str)
   uint32_t userid = 0;
   size_t len;
   long tmp = 0;
-  int rc;
 
   memset(&o, 0, sizeof(o));
 
@@ -2768,21 +3315,7 @@ void *scamper_do_dealias_alloc(char *str)
     }
   dealias->method = method;
   dealias->userid = userid;
-
-  if(method == SCAMPER_DEALIAS_METHOD_MERCATOR)
-    rc = dealias_alloc_mercator(dealias, &o);
-  else if(method == SCAMPER_DEALIAS_METHOD_ALLY)
-    rc = dealias_alloc_ally(dealias, &o);
-  else if(method == SCAMPER_DEALIAS_METHOD_RADARGUN)
-    rc = dealias_alloc_radargun(dealias, &o);
-  else if(method == SCAMPER_DEALIAS_METHOD_PREFIXSCAN)
-    rc = dealias_alloc_prefixscan(dealias, &o);
-  else if(method == SCAMPER_DEALIAS_METHOD_BUMP)
-    rc = dealias_alloc_bump(dealias, &o);
-  else
-    goto err;
-
-  if(rc != 0)
+  if(alloc_func[method-1](dealias, &o) != 0)
     goto err;
 
   if(o.probedefs != NULL)
@@ -2850,6 +3383,7 @@ scamper_task_t *scamper_do_dealias_alloctask(void *data,
   scamper_dealias_t             *dealias = (scamper_dealias_t *)data;
   dealias_state_t               *state = NULL;
   scamper_task_t                *task = NULL;
+  scamper_dealias_probedef_t    *def;
   scamper_dealias_prefixscan_t  *pfxscan;
   scamper_dealias_mercator_t    *mercator;
   scamper_dealias_radargun_t    *radargun;
@@ -2863,7 +3397,10 @@ scamper_task_t *scamper_do_dealias_alloctask(void *data,
   if((task = scamper_task_alloc(dealias, &funcs)) == NULL)
     goto err;
 
-  if((state = malloc_zero(sizeof(dealias_state_t))) == NULL)
+  if((state = malloc_zero(sizeof(dealias_state_t))) == NULL ||
+     (state->recent_probes = dlist_alloc()) == NULL ||
+     (state->ptbq = slist_alloc()) == NULL ||
+     (state->discard = slist_alloc()) == NULL)
     {
       printerror(errno, strerror, __func__, "could not malloc state");
       goto err;
@@ -2930,6 +3467,15 @@ scamper_task_t *scamper_do_dealias_alloctask(void *data,
     }
   else goto err;
 
+  for(i=0; i<state->probedefc; i++)
+    {
+      def = &state->probedefs[i];
+      if(def->mtu != 0)
+	state->flags |= DEALIAS_STATE_FLAG_DL;
+      if(dealias_probedef_add(state, def) != 0)
+	goto err;
+    }
+
   /* associate the list and cycle with the trace */
   dealias->list  = scamper_list_use(list);
   dealias->cycle = scamper_cycle_use(cycle);
@@ -2940,7 +3486,7 @@ scamper_task_t *scamper_do_dealias_alloctask(void *data,
   return task;
 
  err:
-  if(task != NULL) 
+  if(task != NULL)
     {
       scamper_task_setdatanull(task);
       scamper_task_free(task);
@@ -2962,14 +3508,6 @@ void scamper_do_dealias_cleanup(void)
 
 int scamper_do_dealias_init(void)
 {
-#ifndef _WIN32
-  pid_t pid = getpid();
-#else
-  DWORD pid = GetCurrentProcessId();
-#endif
-
-  default_sport = (pid & 0x7fff) + 0x8000;
-
   funcs.probe                  = do_dealias_probe;
   funcs.handle_icmp            = do_dealias_handle_icmp;
   funcs.handle_timeout         = do_dealias_handle_timeout;

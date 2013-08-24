@@ -2,7 +2,7 @@
  * linked list routines
  * by Matthew Luckie
  *
- * Copyright (C) 2004-2009 Matthew Luckie. All rights reserved.
+ * Copyright (C) 2004-2013 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_list.h,v 1.31 2010/12/08 03:23:11 mjl Exp $
+ * $Id: mjl_list.h,v 1.36 2013/07/19 20:45:28 mjl Exp $
  *
  */
 
@@ -49,6 +49,7 @@ typedef void (*dlist_onremove_t)(void *item);
 typedef void (*clist_onremove_t)(void *item);
 
 typedef int (*slist_cmp_t)(const void *a, const void *b);
+typedef int (*dlist_cmp_t)(const void *a, const void *b);
 
 #ifndef DMALLOC
 slist_t *slist_alloc(void);
@@ -80,12 +81,15 @@ void slist_onremove(slist_t *list, slist_onremove_t onremove);
 void slist_concat(slist_t *first, slist_t *second);
 void *slist_head_pop(slist_t *list);
 void *slist_head_get(const slist_t *list);
+void *slist_tail_get(const slist_t *list);
 void *slist_node_item(const slist_node_t *node);
 slist_node_t *slist_head_node(const slist_t *list);
+slist_node_t *slist_tail_node(const slist_t *list);
 slist_node_t *slist_node_next(const slist_node_t *node);
 int slist_foreach(slist_t *list, const slist_foreach_t func, void *param);
 int slist_count(const slist_t *list);
 int slist_qsort(slist_t *list, slist_cmp_t func);
+int slist_shuffle(slist_t *list);
 void slist_lock(slist_t *list);
 void slist_unlock(slist_t *list);
 int slist_islocked(slist_t *list);
@@ -128,6 +132,8 @@ void dlist_node_head_push(dlist_t *list, dlist_node_t *node);
 void dlist_node_tail_push(dlist_t *list, dlist_node_t *node);
 int dlist_foreach(dlist_t *list, const dlist_foreach_t func, void *param);
 int dlist_count(const dlist_t *list);
+int dlist_qsort(dlist_t *list, dlist_cmp_t func);
+int dlist_shuffle(dlist_t *list);
 void dlist_lock(dlist_t *list);
 void dlist_unlock(dlist_t *list);
 int dlist_islocked(dlist_t *list);

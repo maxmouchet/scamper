@@ -2,7 +2,7 @@
  * sc_ally : scamper driver to collect data on candidate aliases using the
  *           Ally method.
  *
- * $Id: sc_ally.c,v 1.7 2011/10/24 22:59:00 mjl Exp $
+ * $Id: sc_ally.c,v 1.9 2013/08/07 22:16:02 mjl Exp $
  *
  * Copyright (C) 2009-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_ally.c,v 1.7 2011/10/24 22:59:00 mjl Exp $";
+  "$Id: sc_ally.c,v 1.9 2013/08/07 22:16:02 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -318,7 +318,7 @@ static void status(char *format, ...)
   char pref[32];
   char msg[512];
 
-  snprintf(pref, sizeof(pref), "p %d, w %d, v %d", 
+  snprintf(pref, sizeof(pref), "p %d, w %d, v %d",
 	   probing, heap_count(waiting), slist_count(virgin));
 
   va_start(ap, format);
@@ -533,6 +533,7 @@ static sc_ipidseq_t *sc_ipidseq_alloc(scamper_addr_t *addr)
     {
       scamper_addr_free(seq->addr);
       free(seq);
+      return NULL;
     }
 
   return seq;
@@ -823,7 +824,7 @@ static int process_ally(sc_test_t *test, scamper_dealias_t *dealias)
       else if(dealias->result == SCAMPER_DEALIAS_RESULT_NOTALIASES)
 	string_concat(msg, sizeof(msg), &off, "not aliases");
       else
-	string_concat(msg, sizeof(msg), &off, "no result");	
+	string_concat(msg, sizeof(msg), &off, "no result");
 
       sc_allytest_free(test->data);
       sc_test_free(test);

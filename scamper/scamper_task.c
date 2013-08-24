@@ -1,10 +1,11 @@
 /*
  * scamper_task.c
  *
- * $Id: scamper_task.c,v 1.53 2011/10/20 21:58:59 mjl Exp $
+ * $Id: scamper_task.c,v 1.56 2013/04/01 23:16:38 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012-2013 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -19,12 +20,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_task.c,v 1.53 2011/10/20 21:58:59 mjl Exp $";
+  "$Id: scamper_task.c,v 1.56 2013/04/01 23:16:38 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -727,10 +728,8 @@ int scamper_task_queue_isdone(scamper_task_t *task)
   return scamper_queue_isdone(task->queue);
 }
 
-static int task_fd_cmp(const void *va, const void *vb)
+static int task_fd_cmp(const scamper_fd_t *a, const scamper_fd_t *b)
 {
-  const scamper_fd_t *a = *((scamper_fd_t **)va);
-  const scamper_fd_t *b = *((scamper_fd_t **)vb);
   if(a < b) return -1;
   if(a > b) return  1;
   return 0;
@@ -741,14 +740,15 @@ static int task_fd_cmp(const void *va, const void *vb)
  *
  * make sure the task has a hold on this fd.
  */
-static scamper_fd_t *task_fd(scamper_task_t *task, scamper_fd_t *fd)
+static scamper_fd_t *task_fd(scamper_task_t *t, scamper_fd_t *fd)
 {
   if(fd == NULL)
     return NULL;
 
-  if(array_find((void **)task->fds, task->fdc, fd, task_fd_cmp) == NULL)
+  if(array_find((void **)t->fds, t->fdc, fd, (array_cmp_t)task_fd_cmp) == NULL)
     {
-      if(array_insert((void ***)&task->fds, &task->fdc, fd, task_fd_cmp) != 0)
+      if(array_insert((void ***)&t->fds, &t->fdc, fd,
+		      (array_cmp_t)task_fd_cmp) != 0)
 	{
 	  scamper_fd_free(fd);
 	  return NULL;
@@ -801,6 +801,12 @@ scamper_fd_t *scamper_task_fd_tcp6(scamper_task_t *task, void *a, uint16_t sp)
 scamper_fd_t *scamper_task_fd_dl(scamper_task_t *task, int ifindex)
 {
   scamper_fd_t *fd = scamper_fd_dl(ifindex);
+  return task_fd(task, fd);
+}
+
+scamper_fd_t *scamper_task_fd_ip4(scamper_task_t *task)
+{
+  scamper_fd_t *fd = scamper_fd_ip4();
   return task_fd(task, fd);
 }
 

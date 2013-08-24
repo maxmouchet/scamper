@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([scamper], [20111202c], [mjl@luckie.org.nz])
+AC_INIT([scamper], [20130824], [mjl@luckie.org.nz])
 
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([scamper/scamper.c])
@@ -124,10 +124,35 @@ AC_CHECK_HEADERS(sys/event.h)
 AC_CHECK_HEADERS(sys/ioctl.h)
 AC_CHECK_HEADERS(sys/param.h)
 AC_CHECK_HEADERS(sys/socket.h)
-AC_CHECK_HEADERS(sys/sysctl.h)
 AC_CHECK_HEADERS(sys/time.h)
 AC_CHECK_HEADERS(unistd.h)
 AC_CHECK_HEADERS(ifaddrs.h)
+
+# sys/sysctl.h requires other headers on at least OpenBSD
+AC_CHECK_HEADERS([sys/sysctl.h], [], [],
+[[
+#if HAVE_SYS_PARAM_H
+# include <sys/param.h>
+#endif
+]])
+
+AC_CHECK_HEADERS([netinet/ip_fw.h netinet6/ip6_fw.h], [], [],
+[[
+#if HAVE_SYS_TYPES_H
+# include <sys/types.h>
+#endif
+#if HAVE_SYS_SOCKET_H
+# include <sys/socket.h>
+#endif
+#if HAVE_NETINET_IN_H
+# include <netinet/in.h>
+#endif
+#if HAVE_ARPA_INET_H
+# include <arpa/inet.h>
+#endif
+#include <net/if.h>
+#include <netinet/ip_compat.h>
+]])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_C_CONST
@@ -211,7 +236,10 @@ AC_CONFIG_FILES([
 	utils/sc_ally/Makefile
 	utils/sc_analysis_dump/Makefile
 	utils/sc_attach/Makefile
+	utils/sc_ipiddump/Makefile
+	utils/sc_speedtrap/Makefile
 	utils/sc_tracediff/Makefile
+	utils/sc_warts2json/Makefile
 	utils/sc_warts2pcap/Makefile
 	utils/sc_warts2text/Makefile
 	utils/sc_wartscat/Makefile

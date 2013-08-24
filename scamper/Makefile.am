@@ -1,6 +1,8 @@
-# $Id: Makefile.am,v 1.12.4.1 2012/03/21 17:23:54 mjl Exp $
+# $Id: Makefile.am,v 1.23 2013/08/04 19:51:31 mjl Exp $
 
-INCLUDES = -I$(top_srcdir) -I$(top_srcdir)/scamper
+AUTOMAKE_OPTIONS = subdir-objects
+
+AM_CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/scamper
 
 bin_PROGRAMS = scamper
 
@@ -21,15 +23,18 @@ libscamperfile_la_SOURCES = \
 	trace/scamper_trace.c \
 	trace/scamper_trace_warts.c \
 	trace/scamper_trace_text.c \
+	trace/scamper_trace_json.c \
 	ping/scamper_ping.c \
 	ping/scamper_ping_warts.c \
 	ping/scamper_ping_text.c \
+	ping/scamper_ping_json.c \
 	tracelb/scamper_tracelb.c \
 	tracelb/scamper_tracelb_warts.c \
 	tracelb/scamper_tracelb_text.c \
 	dealias/scamper_dealias.c \
 	dealias/scamper_dealias_warts.c \
 	dealias/scamper_dealias_text.c \
+	dealias/scamper_dealias_json.c \
 	sting/scamper_sting.c \
 	sting/scamper_sting_warts.c \
 	sting/scamper_sting_text.c \
@@ -47,6 +52,7 @@ scamper_SOURCES = \
 	../mjl_splaytree.c \
 	../utils.c \
 	scamper.c \
+	scamper_osinfo.c \
 	scamper_addr.c \
 	scamper_list.c \
 	scamper_debug.c \
@@ -90,10 +96,12 @@ scamper_SOURCES = \
 	trace/scamper_trace.c \
 	trace/scamper_trace_warts.c \
 	trace/scamper_trace_text.c \
+	trace/scamper_trace_json.c \
 	trace/scamper_trace_do.c \
 	ping/scamper_ping.c \
 	ping/scamper_ping_warts.c \
 	ping/scamper_ping_text.c \
+	ping/scamper_ping_json.c \
 	ping/scamper_ping_do.c \
 	tracelb/scamper_tracelb.c \
 	tracelb/scamper_tracelb_warts.c \
@@ -102,6 +110,7 @@ scamper_SOURCES = \
 	dealias/scamper_dealias.c \
 	dealias/scamper_dealias_warts.c \
 	dealias/scamper_dealias_text.c \
+	dealias/scamper_dealias_json.c \
 	dealias/scamper_dealias_do.c \
 	sting/scamper_sting.c \
 	sting/scamper_sting_warts.c \
@@ -139,6 +148,6 @@ man_MANS = \
 	libscamperfile.3 \
 	warts.5
 
-CLEANFILES = *~ scamper.1.html \
+CLEANFILES = *~ *.core scamper.1.html \
 	trace/*~ ping/*~ tracelb/*~ dealias/*~ sting/*~ \
 	neighbourdisc/*~ tbit/*~ sniff/*~

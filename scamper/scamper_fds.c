@@ -1,10 +1,10 @@
 /*
  * scamper_fds: manage events and file descriptors
  *
- * $Id: scamper_fds.c,v 1.79.2.1 2012/03/20 18:10:31 mjl Exp $
+ * $Id: scamper_fds.c,v 1.82 2012/04/05 18:00:54 mjl Exp $
  *
  *          Matthew Luckie
- * 
+ *
  *          Supported by:
  *           The University of Waikato
  *           NLANR Measurement and Network Analysis
@@ -33,7 +33,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_fds.c,v 1.79.2.1 2012/03/20 18:10:31 mjl Exp $";
+  "$Id: scamper_fds.c,v 1.82 2012/04/05 18:00:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -517,7 +517,7 @@ static void fds_select_check(fd_set *fdset, dlist_t *fds, int *count)
   while(node != NULL && *count > 0)
     {
       fdp = (scamper_fd_poll_t *)dlist_node_item(node);
-      node = dlist_node_next(node);      
+      node = dlist_node_next(node);
 
       if(FD_ISSET(fdp->fdn->fd, fdset))
 	{

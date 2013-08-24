@@ -82,7 +82,7 @@ be globally referenced before the data object that uses it is written.
 A reader therefore must keep a copy of all addresses it reads in order to
 be able to decode data objects that subsequently reference it, which can
 consume a significant amount of memory.
-The format of the address is 
+The format of the address is
 .Bd -literal -offset indent
   Warts header   ID Modulo    Type     Address
 +--------------+-----------+--------+----//----+

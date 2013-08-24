@@ -1,7 +1,7 @@
 /*
  * scamper_source
  *
- * $Id: scamper_sources.c,v 1.46.2.3 2012/04/04 00:07:47 mjl Exp $
+ * $Id: scamper_sources.c,v 1.53 2012/04/22 22:59:17 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sources.c,v 1.46.2.3 2012/04/04 00:07:47 mjl Exp $";
+  "$Id: scamper_sources.c,v 1.53 2012/04/22 22:59:17 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -230,12 +230,12 @@ typedef struct command
   } un;
 } command_t;
 
-#define COMMAND_PROBE 0x00
-#define COMMAND_CYCLE 0x01
-#define COMMAND_TASK  0x02
+#define COMMAND_PROBE      0x00
+#define COMMAND_CYCLE      0x01
+#define COMMAND_TASK       0x02
 
-#define COMMAND_TYPE_MIN 0x00
-#define COMMAND_TYPE_MAX 0x02
+#define COMMAND_TYPE_MIN   0x00
+#define COMMAND_TYPE_MAX   0x02
 
 /*
  * command_onhold
@@ -697,7 +697,7 @@ static void source_command_unhold(void *cookie)
 /*
  * source_command_onhold
  *
- * 
+ *
  */
 static int source_command_onhold(scamper_source_t *source,
 				 scamper_task_t *block,
@@ -771,7 +771,6 @@ static int command_probe_handle(scamper_source_t *source, command_t *command,
   scamper_sourcetask_t *st = NULL;
   scamper_cycle_t *cycle;
   scamper_task_t *task = NULL;
-  scamper_task_t *block;
 
   sources_assert();
 

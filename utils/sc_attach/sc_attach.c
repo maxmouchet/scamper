@@ -8,7 +8,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_attach.c,v 1.9 2011/11/16 00:42:06 mjl Exp $";
+  "$Id: sc_attach.c,v 1.13 2012/04/05 18:00:55 mjl Exp $";
 #endif
 
 #include <sys/time.h>
@@ -48,10 +48,13 @@ static const char rcsid[] =
 #define OPT_PORT        0x0008
 #define OPT_STDOUT      0x0010
 #define OPT_VERSION     0x0020
+#define OPT_DEBUG       0x0040
+#define OPT_PRIORITY    0x0080
 
 static uint32_t               options       = 0;
 static char                  *infile        = NULL;
 static unsigned int           port          = 0;
+static uint32_t               priority      = 1;
 static int                    scamper_fd    = -1;
 static int                    stdin_fd      = -1;
 static char                  *readbuf       = NULL;
@@ -113,20 +116,24 @@ static void cleanup(void)
   return;
 }
 
-static void usage(const char *argv0, uint32_t opt_mask)
+static void usage(uint32_t opt_mask)
 {
   fprintf(stderr,
-	  "usage: %s [-?v] [-i infile] [-o outfile] [-p port]\n", argv0);
+	  "usage: sc_attach [-?dv] [-i infile] [-o outfile] [-p port]\n"
+	  "                 [-P priority]\n");
 
   if(opt_mask == 0) return;
 
   fprintf(stderr, "\n");
 
-  if(opt_mask & OPT_VERSION)
-    fprintf(stderr, "     -v give the version string of sc_attach\n");
-
   if(opt_mask & OPT_HELP)
     fprintf(stderr, "     -? give an overview of the usage of sc_attach\n");
+
+  if(opt_mask & OPT_DEBUG)
+    fprintf(stderr, "     -d output debugging information to stderr\n");
+
+  if(opt_mask & OPT_VERSION)
+    fprintf(stderr, "     -v give the version string of sc_attach\n");
 
   if(opt_mask & OPT_INFILE)
     fprintf(stderr, "     -i input command file\n");
@@ -137,6 +144,9 @@ static void usage(const char *argv0, uint32_t opt_mask)
   if(opt_mask & OPT_PORT)
     fprintf(stderr, "     -p port to find scamper on\n");
 
+  if(opt_mask & OPT_PRIORITY)
+    fprintf(stderr, "     -P priority\n");
+
   return;
 }
 
@@ -144,14 +154,18 @@ static int check_options(int argc, char *argv[])
 {
   int       ch;
   long      lo;
-  char     *opts = "i:o:p:v?";
-  char     *opt_port = NULL;
+  char     *opts = "di:o:p:P:v?";
+  char     *opt_port = NULL, *opt_priority = NULL;
   uint32_t  mandatory = OPT_INFILE | OPT_OUTFILE | OPT_PORT;
 
   while((ch = getopt(argc, argv, opts)) != -1)
     {
       switch(ch)
 	{
+	case 'd':
+	  options |= OPT_DEBUG;
+	  break;
+
 	case 'i':
 	  if(strcasecmp(optarg, "-") == 0)
 	    stdin_fd = STDIN_FILENO;
@@ -177,13 +191,18 @@ static int check_options(int argc, char *argv[])
 	  opt_port = optarg;
 	  break;
 
+	case 'P':
+	  options |= OPT_PRIORITY;
+	  opt_priority = optarg;
+	  break;
+
 	case 'v':
-	  printf("$Id: sc_attach.c,v 1.9 2011/11/16 00:42:06 mjl Exp $\n");
+	  printf("$Id: sc_attach.c,v 1.13 2012/04/05 18:00:55 mjl Exp $\n");
 	  return -1;
 
 	case '?':
 	default:
-	  usage(argv[0], 0xffffffff);
+	  usage(0xffffffff);
 	  return -1;
 	}
     }
@@ -191,18 +210,28 @@ static int check_options(int argc, char *argv[])
   /* these options are mandatory */
   if((options & mandatory) != mandatory)
     {
-      if(options == 0) usage(argv[0], 0);
-      else             usage(argv[0], mandatory);
+      if(options == 0) usage(0);
+      else             usage(mandatory);
       return -1;
     }
 
   /* find out which port scamper can be found listening on */
   if(string_tolong(opt_port, &lo) != 0 || lo < 1 || lo > 65535)
     {
-      usage(argv[0], OPT_PORT);
+      usage(OPT_PORT);
       return -1;
     }
   port = lo;
+
+  if((options & OPT_PRIORITY) != 0)
+    {
+      if(string_tolong(opt_priority, &lo) != 0 || lo < 1)
+	{
+	  usage(OPT_PRIORITY);
+	  return -1;
+	}
+      priority = lo;
+    }
 
   return 0;
 }
@@ -373,8 +402,8 @@ static int do_method(void)
   write_wrap(scamper_fd, command, NULL, strlen(command));
   more--;
 
-  if((options & OPT_STDOUT) == 0)
-    printf("%ld: %s", (long int)tv.tv_sec, command);
+  if((options & OPT_DEBUG) != 0)
+    fprintf(stderr, "%ld: %s", (long int)tv.tv_sec, command);
 
   if(lastcommand != NULL)
     free(lastcommand);
@@ -435,7 +464,7 @@ static int do_stdinread(void)
       fprintf(stderr, "could not read: errno %d\n", errno);
       return -1;
     }
-  
+
   /* process whatever is in the stdinbuf */
   if(stdinbuf_len == 0)
     {
@@ -660,6 +689,25 @@ static int do_scamperread(void)
   return -1;
 }
 
+static int do_attach(void)
+{
+  char buf[256];
+  size_t off = 0;
+
+  string_concat(buf, sizeof(buf), &off, "attach");
+  if((options & OPT_PRIORITY) != 0)
+    string_concat(buf, sizeof(buf), &off, " priority %d", priority);
+  string_concat(buf, sizeof(buf), &off, "\n");
+
+  if(write_wrap(scamper_fd, buf, NULL, off) != 0)
+    {
+      fprintf(stderr, "could not attach to scamper process\n");
+      return -1;
+    }
+
+  return 0;
+}
+
 int main(int argc, char *argv[])
 {
   fd_set rfds;
@@ -690,11 +738,8 @@ int main(int argc, char *argv[])
     return -1;
 
   /* attach */
-  if(write_wrap(scamper_fd, "attach\n", NULL, 7) != 0)
-    {
-      fprintf(stderr, "could not attach to scamper process\n");
-      return -1;
-    }
+  if(do_attach() != 0)
+    return -1;
 
   for(;;)
     {

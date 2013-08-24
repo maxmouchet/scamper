@@ -1,7 +1,7 @@
 /*
  * scamper_ip6.c
  *
- * $Id: scamper_ip6.c,v 1.17 2011/09/20 22:56:29 mjl Exp $
+ * $Id: scamper_ip6.c,v 1.19 2011/12/14 04:24:55 mjl Exp $
  *
  * Copyright (C) 2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ip6.c,v 1.17 2011/09/20 22:56:29 mjl Exp $";
+  "$Id: scamper_ip6.c,v 1.19 2011/12/14 04:24:55 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -52,33 +52,29 @@ static int ip6_ext_route0(struct ip6_hdr *ip6,
 			  const scamper_probe_ipopt_t *opt,
 			  uint8_t *buf, size_t *len)
 {
-  int i, addrc;
+  int i;
   ssize_t off;
 
-  /* the header value is always at least 16 bytes in length */
-  assert(opt->len >= 16);
+  assert(opt->opt_v6rh0_ipc > 0);
 
-  if(*len < (size_t)(opt->len + 8))
+  if(*len < (opt->opt_v6rh0_ipc * 16) + 8)
     {
-      *len = opt->len + 8;
+      *len = (opt->opt_v6rh0_ipc * 16) + 8;
       return -1;
     }
-
-  /* calculate how many addresses will be in the routing header */
-  addrc = opt->len / 16;
 
   /*
    * the length field counts number of 8 octets, excluding the first 8 bytes
    * of routing header.
    * RFC 2460 says this value is twice the number of addresses in the header
    */
-  buf[1] = addrc * 2;
+  buf[1] = opt->opt_v6rh0_ipc * 2;
 
   /* routing type = 0 */
   buf[2] = 0;
 
   /* number of segments left */
-  buf[3] = addrc;
+  buf[3] = opt->opt_v6rh0_ipc;
 
   /* set the next four bytes to zero */
   memset(buf+4, 0, 4);
@@ -89,9 +85,9 @@ static int ip6_ext_route0(struct ip6_hdr *ip6,
    * copy in addresses 1 .. N, skipping over the first address which is
    * swapped with ip6->ip6_dst after this loop
    */
-  for(i=1; i<addrc; i++)
+  for(i=1; i<opt->opt_v6rh0_ipc; i++)
     {
-      memcpy(buf+off, opt->val+(16 * i), 16);
+      memcpy(buf+off, &opt->opt_v6rh0_ips[i], 16);
       off += 16;
     }
 
@@ -103,7 +99,7 @@ static int ip6_ext_route0(struct ip6_hdr *ip6,
   off += 16;
 
   /* the first address in the option becomes the destination address */
-  memcpy(&ip6->ip6_dst, opt->val, 16);
+  memcpy(&ip6->ip6_dst, &opt->opt_v6rh0_ips[0], 16);
 
   *len = off;
   return 0;
@@ -113,9 +109,6 @@ static int ip6_ext_frag(struct ip6_hdr *ip6,
 			const scamper_probe_ipopt_t *opt,
 			uint8_t *buf, size_t *len)
 {
-  /* the header value is always 6 bytes in length */
-  assert(opt->len == 6);
-
   /* make sure the pktbuf has at least enough space left for this */
   if(*len < 8)
     {
@@ -127,9 +120,46 @@ static int ip6_ext_frag(struct ip6_hdr *ip6,
   buf[1] = 0;
 
   /* copy in the fragmentation value */
-  memcpy(buf+2, opt->val, 6);
+  bytes_htons(buf+2, opt->opt_v6frag_off);
+  bytes_htonl(buf+4, opt->opt_v6frag_id);
 
   *len = 8;
+  return 0;
+}
+
+static int ip6_ext_quickstart(struct ip6_hdr *ip6,
+			      const scamper_probe_ipopt_t *opt,
+			      uint8_t *buf, size_t *len)
+{
+  size_t off = 1;
+
+  if(*len < 16)
+    {
+      *len = 16;
+      return -1;
+    }
+
+  buf[off++] = 1; /* length of hop-by-hop options : 16 bytes */
+
+  /* two Pad1 options */
+  buf[off++] = 0;
+  buf[off++] = 0;
+
+  /* quickstart option */
+  buf[off++] = 0x26;
+  buf[off++] = 6;
+  buf[off++] = (opt->opt_qs_func << 4) | opt->opt_qs_rate;
+  buf[off++] = opt->opt_qs_ttl;
+  bytes_htonl(&buf[off], opt->opt_qs_nonce << 2);
+  off += 4;
+
+  /* PadN option, length 4 */
+  buf[off++] = 1;
+  buf[off++] = 2;
+  buf[off++] = 0;
+  buf[off++] = 0;
+
+  *len = off;
   return 0;
 }
 
@@ -151,15 +181,23 @@ int scamper_ip6_build(scamper_probe_t *probe, uint8_t *buf, size_t *len)
 {
   static int (*const func[])(struct ip6_hdr *, const scamper_probe_ipopt_t *,
 			     uint8_t *, size_t *) = {
-    ip6_ext_route0,  /* SCAMPER_PROBE_IPOPTS_V6ROUTE0 */
-    ip6_ext_frag,    /* SCAMPER_PROBE_IPOPTS_V6FRAG */
-    NULL,            /* SCAMPER_PROBE_IPOPTS_V4RR */
+    ip6_ext_route0,     /* SCAMPER_PROBE_IPOPTS_V6ROUTE0 */
+    ip6_ext_frag,       /* SCAMPER_PROBE_IPOPTS_V6FRAG */
+    NULL,               /* SCAMPER_PROBE_IPOPTS_V4RR */
+    NULL,               /* SCAMPER_PROBE_IPOPTS_V4TSPS */
+    NULL,               /* SCAMPER_PROBE_IPOPTS_V4TSO */
+    NULL,               /* SCAMPER_PROBE_IPOPTS_V4TSAA */
+    ip6_ext_quickstart, /* SCAMPER_PROBE_IPOPTS_QUICKSTART */
   };
 
   static const int nxthdrval[] = {
-    IPPROTO_ROUTING,  /* SCAMPER_PROBE_IPOPTS_V6ROUTE0 */
-    IPPROTO_FRAGMENT, /* SCAMPER_PROBE_IPOPTS_V6FRAG */
-    -1,               /* SCAMPER_PROBE_IPOPTS_V4RR */
+    IPPROTO_ROUTING,    /* SCAMPER_PROBE_IPOPTS_V6ROUTE0 */
+    IPPROTO_FRAGMENT,   /* SCAMPER_PROBE_IPOPTS_V6FRAG */
+    -1,                 /* SCAMPER_PROBE_IPOPTS_V4RR */
+    -1,                 /* SCAMPER_PROBE_IPOPTS_V4TSPS */
+    -1,                 /* SCAMPER_PROBE_IPOPTS_V4TSO */
+    -1,                 /* SCAMPER_PROBE_IPOPTS_V4TSAA */
+    IPPROTO_HOPOPTS,    /* SCAMPER_PROBE_IPOPTS_QUICKSTART */
   };
 
   struct ip6_hdr        *ip6;

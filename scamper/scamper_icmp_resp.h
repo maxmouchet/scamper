@@ -1,10 +1,11 @@
 /*
  * scamper_icmp_resp.h
  *
- * $Id: scamper_icmp_resp.h,v 1.26 2011/09/20 22:04:42 mjl Exp $
+ * $Id: scamper_icmp_resp.h,v 1.29 2013/07/23 23:05:26 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2013      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,12 +26,17 @@
 #ifndef __SCAMPER_ICMP_RESP_H
 #define __SCAMPER_ICMP_RESP_H
 
-#define SCAMPER_ICMP_RESP_FLAG_KERNRX   (0x01)
-#define SCAMPER_ICMP_RESP_FLAG_INNER_IP (0x02)
+#define SCAMPER_ICMP_RESP_FLAG_KERNRX          0x01
+#define SCAMPER_ICMP_RESP_FLAG_INNER_IP        0x02
+#define SCAMPER_ICMP_RESP_FLAG_IPOPT_TS        0x04
+#define SCAMPER_ICMP_RESP_FLAG_INNER_IPOPT_TS  0x08
 
 #define SCAMPER_ICMP_RESP_IS_ECHO_REPLY(ir) ( \
  (ir->ir_af == AF_INET  && ir->ir_icmp_type == 0) || \
  (ir->ir_af == AF_INET6 && ir->ir_icmp_type == 129))
+
+#define SCAMPER_ICMP_RESP_IS_TIME_REPLY(ir) ( \
+ (ir->ir_af == AF_INET && ir->ir_icmp_type == 14))
 
 #define SCAMPER_ICMP_RESP_IS_TTL_EXP(ir) ( \
  (ir->ir_af == AF_INET  && ir->ir_icmp_type == 11) || \
@@ -67,6 +73,10 @@
   ir->ir_inner_ip_proto == 1  && ir->ir_inner_icmp_type == 8) || \
  (ir->ir_af == AF_INET6 && \
   ir->ir_inner_ip_proto == 58 && ir->ir_inner_icmp_type == 128))
+
+#define SCAMPER_ICMP_RESP_INNER_IS_ICMP_TIME_REQ(ir) (	\
+ ir->ir_af == AF_INET && \
+ ir->ir_inner_ip_proto == 1 && ir->ir_inner_icmp_type == 13)
 
 /*
  * an ICMP response may consist of up to four pieces.  when an ICMP
@@ -140,21 +150,16 @@ typedef struct scamper_icmp_resp
    *
    * scamper records the type and code of the ICMP message.  depending on
    * the type of the message, optional ICMP id and sequence fields are
-   * also recorded.  if the message 
+   * also recorded.  if the message
    */
   uint8_t           ir_icmp_type;
   uint8_t           ir_icmp_code;
-
-  union
-  {
-    struct ir_idseq
-    {
-      uint16_t      id;
-      uint16_t      seq;
-    } idseq;
-
-    uint16_t        nhmtu;
-  } ir_icmp_un;
+  uint16_t          ir_icmp_id;
+  uint16_t          ir_icmp_seq;
+  uint16_t          ir_icmp_nhmtu;
+  uint32_t          ir_icmp_tso;
+  uint32_t          ir_icmp_tsr;
+  uint32_t          ir_icmp_tst;
 
   /*
    * category 3: the inner IP header;
@@ -223,10 +228,6 @@ typedef struct scamper_icmp_resp
 } scamper_icmp_resp_t;
 
 #define ir_ip_hlim         ir_ip_ttl
-
-#define ir_icmp_id         ir_icmp_un.idseq.id
-#define ir_icmp_seq        ir_icmp_un.idseq.seq
-#define ir_icmp_nhmtu      ir_icmp_un.nhmtu
 
 #define ir_inner_ip_hlim   ir_inner_ip_ttl
 #define ir_inner_udp_sport ir_inner_trans_un.irit_udp.sport

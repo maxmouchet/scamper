@@ -1,7 +1,7 @@
 /*
  * scamper_do_neighbourdisc
  *
- * $Id: scamper_neighbourdisc_do.c,v 1.33 2011/11/03 01:39:48 mjl Exp $
+ * $Id: scamper_neighbourdisc_do.c,v 1.35 2012/05/14 21:55:02 mjl Exp $
  *
  * Copyright (C) 2009-2011 Matthew Luckie
  *
@@ -17,12 +17,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_neighbourdisc_do.c,v 1.33 2011/11/03 01:39:48 mjl Exp $";
+  "$Id: scamper_neighbourdisc_do.c,v 1.35 2012/05/14 21:55:02 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -75,6 +75,7 @@ struct scamper_neighbourdisc_do
 #define ND_OPT_ATTEMPTS          4
 #define ND_OPT_ALLATTEMPTS       5
 #define ND_OPT_WAIT              6
+#define ND_OPT_SRCADDR           7
 
 static const scamper_option_in_t opts[] = {
   {'F', NULL, ND_OPT_FIRSTRESPONSE, SCAMPER_OPTION_TYPE_NULL},
@@ -82,13 +83,14 @@ static const scamper_option_in_t opts[] = {
   {'o', NULL, ND_OPT_REPLYC,        SCAMPER_OPTION_TYPE_NUM},
   {'q', NULL, ND_OPT_ATTEMPTS,      SCAMPER_OPTION_TYPE_NUM},
   {'Q', NULL, ND_OPT_ALLATTEMPTS,   SCAMPER_OPTION_TYPE_NULL},
+  {'S', NULL, ND_OPT_SRCADDR,       SCAMPER_OPTION_TYPE_STR},
   {'w', NULL, ND_OPT_WAIT,          SCAMPER_OPTION_TYPE_NUM},
 };
 static const int opts_cnt = SCAMPER_OPTION_COUNT(opts);
 
 const char *scamper_do_neighbourdisc_usage(void)
 {
-  return "neighbourdisc [-FQ] [-i if] [-o replyc] [-q attempts] [-w wait]\n";
+  return "neighbourdisc [-FQ] [-i if] [-o replyc] [-q attempts] [-S srcaddr] [-w wait]\n";
 }
 
 static scamper_neighbourdisc_t *nd_getdata(const scamper_task_t *task)
@@ -145,7 +147,8 @@ static int nd_state_alloc(scamper_task_t *task)
       goto err;
     }
 
-  if((nd->src_ip = scamper_getsrc(nd->dst_ip, state->ifindex)) == NULL)
+  if(nd->src_ip == NULL &&
+     (nd->src_ip = scamper_getsrc(nd->dst_ip, state->ifindex)) == NULL)
     {
       printerror(errno, strerror, __func__, "could not get src ip");
       goto err;
@@ -548,6 +551,7 @@ static int nd_arg_param_validate(int optid, char *param, long *out)
     {
     case ND_OPT_IFNAME:
     case ND_OPT_ALLATTEMPTS:
+    case ND_OPT_SRCADDR:
       return 0;
 
     case ND_OPT_ATTEMPTS:
@@ -626,6 +630,7 @@ void *scamper_do_neighbourdisc_alloc(char *str)
   uint16_t wait     = 1000;
   uint8_t  flags    = 0;
   char    *dst      = NULL;
+  char    *src      = NULL;
   long     tmp      = 0;
 
   /* try and parse the string passed in */
@@ -673,6 +678,12 @@ void *scamper_do_neighbourdisc_alloc(char *str)
 	  wait = (uint16_t)tmp;
 	  break;
 
+	case ND_OPT_SRCADDR:
+	  if(src != NULL)
+	    goto err;
+	  src = opt->str;
+	  break;
+
 	default:
 	  scamper_debug(__func__, "unhandled option %d", opt->id);
 	  goto err;
@@ -690,12 +701,21 @@ void *scamper_do_neighbourdisc_alloc(char *str)
   if((nd->dst_ip = scamper_addrcache_resolve(addrcache,AF_UNSPEC,dst)) == NULL)
     goto err;
 
-  if(nd->dst_ip->type == SCAMPER_ADDR_TYPE_IPV4)
+  if(SCAMPER_ADDR_TYPE_IS_IPV4(nd->dst_ip))
     nd->method = SCAMPER_NEIGHBOURDISC_METHOD_ARP;
-  else if(nd->dst_ip->type == SCAMPER_ADDR_TYPE_IPV6)
+  else if(SCAMPER_ADDR_TYPE_IS_IPV6(nd->dst_ip))
     nd->method = SCAMPER_NEIGHBOURDISC_METHOD_ND_NSOL;
   else
     goto err;
+
+  if(src != NULL)
+    {
+      if(SCAMPER_ADDR_TYPE_IS_IPV6(nd->dst_ip) == 0)
+	goto err;
+      nd->src_ip = scamper_addrcache_resolve(addrcache, AF_INET6, src);
+      if(nd->src_ip == NULL)
+	goto err;
+    }
 
   if(scamper_neighbourdisc_ifname_set(nd, ifname) != 0)
     goto err;

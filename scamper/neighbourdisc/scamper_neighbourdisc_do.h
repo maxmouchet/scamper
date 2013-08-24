@@ -1,7 +1,7 @@
 /*
  * scamper_do_neighbourdisc.h
  *
- * $Id: scamper_neighbourdisc_do.h,v 1.4 2010/10/30 19:19:55 mjl Exp $
+ * $Id: scamper_neighbourdisc_do.h,v 1.5 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2009-2010 Matthew Luckie
  *
@@ -17,7 +17,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef __SCAMPER_DO_NEIGHBOURDISC_H

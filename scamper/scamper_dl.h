@@ -1,10 +1,12 @@
 /*
  * scamper_dl.h
  *
- * $Id: scamper_dl.h,v 1.52 2011/11/16 03:52:00 mjl Exp $
+ * $Id: scamper_dl.h,v 1.57 2013/07/08 17:48:31 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012      Matthew Luckie
+ * Copyright (c) 2013      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -19,7 +21,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef __SCAMPER_DL_H
@@ -90,6 +92,10 @@
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP && \
  (dl)->dl_ip_proto == 6)
 
+#define SCAMPER_DL_IS_TCP_SYNACK(dl) ( \
+ SCAMPER_DL_IS_TCP(dl) && \
+ ((dl)->dl_tcp_flags & (TH_SYN|TH_ACK)) == (TH_SYN|TH_ACK))
+
 #define SCAMPER_DL_IS_ICMPV4(dl) ( \
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP && \
  (dl)->dl_af == AF_INET && (dl)->dl_ip_proto == 1)
@@ -124,6 +130,11 @@
   ((dl)->dl_af == AF_INET6 && (dl)->dl_ip_proto == 58 && \
    (dl)->dl_icmp_ip_proto == 58 && (dl)->dl_icmp_icmp_type == 128)))
 
+#define SCAMPER_DL_IS_ICMP_Q_ICMP_TIME_REQ(dl) (	\
+ (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP &&	\
+ (dl)->dl_af == AF_INET && (dl)->dl_ip_proto == 1 &&	\
+ (dl)->dl_icmp_ip_proto == 1 && (dl)->dl_icmp_icmp_type == 13)
+
 #define SCAMPER_DL_IS_ICMP_Q_ICMP_ECHO(dl) ( \
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP && \
  (((dl)->dl_af == AF_INET && \
@@ -154,6 +165,11 @@
   ((dl)->dl_af == AF_INET6 && (dl)->dl_ip_proto == 58 && \
    ((dl)->dl_icmp_type == 128 || (dl)->dl_icmp_type == 129))))
 
+#define SCAMPER_DL_IS_ICMP_TIME_REPLY(dl) (		\
+ (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP &&	\
+ (dl)->dl_af == AF_INET && (dl)->dl_ip_proto == 1 &&	\
+ (dl)->dl_icmp_icmp_type == 14)
+
 #define SCAMPER_DL_IS_ICMP_TTL_EXP(dl) ( \
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP && \
  (((dl)->dl_af == AF_INET && (dl)->dl_ip_proto == 1 && \
@@ -179,7 +195,7 @@
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP && \
  (dl)->dl_af == AF_INET6 && (dl)->dl_ip_proto == 58 && \
  (dl)->dl_icmp_type == 136)
-    
+
 #define SCAMPER_DL_IS_ARP(dl) ( \
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_ARP)
 
@@ -358,7 +374,7 @@ typedef struct scamper_dl_rec
 	  uint8_t   ip_tos;
 	  uint8_t   ip_ttl;
 	  uint8_t   ip_proto;
-	  
+
 	  union
 	  {
 	    struct icmp_udp
@@ -517,14 +533,17 @@ int scamper_dl_tx(const scamper_dl_t *dl,
 
 #ifdef __SCAMPER_ADDR_H
 int scamper_dl_rec_src(scamper_dl_rec_t *dl, scamper_addr_t *addr);
+int scamper_dl_rec_icmp_ip_dst(scamper_dl_rec_t *dl, scamper_addr_t *addr);
 #endif
 
 #if !defined(NDEBUG) && !defined(WITHOUT_DEBUGFILE)
-void    scamper_dl_rec_tcp_print(scamper_dl_rec_t *dl);
-void    scamper_dl_rec_frag_print(scamper_dl_rec_t *dl);
+void    scamper_dl_rec_tcp_print(const scamper_dl_rec_t *dl);
+void    scamper_dl_rec_frag_print(const scamper_dl_rec_t *dl);
+void    scamper_dl_rec_icmp_print(const scamper_dl_rec_t *dl);
 #else
 #define scamper_dl_rec_tcp_print(dl) ((void)0)
 #define scamper_dl_rec_frag_print(dl) ((void)0)
+#define scamper_dl_rec_icmp_print(dl) ((void)0)
 #endif
 
 #endif /* __SCAMPER_DL_H */

@@ -1,13 +1,14 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.229.2.1 2012/03/20 17:51:44 mjl Exp $
+ * $Id: scamper.c,v 1.235 2013/07/18 04:35:58 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012      Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper.c,v 1.229.2.1 2012/03/20 17:51:44 mjl Exp $";
+  "$Id: scamper.c,v 1.235 2013/07/18 04:35:58 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -60,6 +61,7 @@ static const char rcsid[] =
 #include "scamper_probe.h"
 #include "scamper_privsep.h"
 #include "scamper_control.h"
+#include "scamper_osinfo.h"
 #include "trace/scamper_trace_do.h"
 #include "ping/scamper_ping_do.h"
 #include "tracelb/scamper_tracelb_do.h"
@@ -71,39 +73,40 @@ static const char rcsid[] =
 
 #include "utils.h"
 
-static uint32_t options = 0;
-#define OPT_PPS         0x00000001 /* p: */
-#define OPT_OUTFILE     0x00000002 /* o: */
-#define OPT_OPTION      0x00000004 /* O: */
-#define OPT_NOINITNDC   0x00000008
-#define OPT_PIDFILE     0x00000010 /* e: */
-#define OPT_VERSION     0x00000020 /* v: */
-#define OPT_OUTCOPY     0x00000040
-#define OPT_SELECT      0x00000080
-#define OPT_KQUEUE      0x00000100
-#define OPT_DAEMON      0x00000200 /* D: */
-#define OPT_IP          0x00000400 /* i: */
-#define OPT_PLANETLAB   0x00000800
-#define OPT_DL          0x00001000
-#define OPT_MONITORNAME 0x00002000 /* M: */
-#define OPT_COMMAND     0x00004000 /* c: */
-#define OPT_HELP        0x00008000 /* ?: */
-#define OPT_WINDOW      0x00010000 /* w: */
-#define OPT_DEBUGFILE   0x00020000 /* d: */
-#define OPT_LISTNAME    0x00040000 /* l: */
-#define OPT_LISTID      0x00080000 /* L: */
-#define OPT_CYCLEID     0x00100000 /* C: */
-#define OPT_FIREWALL    0x00200000 /* F: */
-#define OPT_CMDLIST     0x00400000 /* I: */
-#define OPT_INFILE      0x00800000 /* f: */
-#define OPT_CTRL_PORT   0x01000000 /* P: */
-#define OPT_CTRL_UNIX   0x02000000 /* U: */
-#define OPT_EPOLL       0x04000000
-#define OPT_RAWTCP      0x08000000
+#define OPT_PPS             0x00000001 /* p: */
+#define OPT_OUTFILE         0x00000002 /* o: */
+#define OPT_OPTION          0x00000004 /* O: */
+#define OPT_NOINITNDC       0x00000008
+#define OPT_PIDFILE         0x00000010 /* e: */
+#define OPT_VERSION         0x00000020 /* v: */
+#define OPT_OUTCOPY         0x00000040
+#define OPT_SELECT          0x00000080
+#define OPT_KQUEUE          0x00000100
+#define OPT_DAEMON          0x00000200 /* D: */
+#define OPT_IP              0x00000400 /* i: */
+#define OPT_PLANETLAB       0x00000800
+#define OPT_DL              0x00001000
+#define OPT_MONITORNAME     0x00002000 /* M: */
+#define OPT_COMMAND         0x00004000 /* c: */
+#define OPT_HELP            0x00008000 /* ?: */
+#define OPT_WINDOW          0x00010000 /* w: */
+#define OPT_DEBUGFILE       0x00020000 /* d: */
+#define OPT_LISTNAME        0x00040000 /* l: */
+#define OPT_LISTID          0x00080000 /* L: */
+#define OPT_CYCLEID         0x00100000 /* C: */
+#define OPT_FIREWALL        0x00200000 /* F: */
+#define OPT_CMDLIST         0x00400000 /* I: */
+#define OPT_INFILE          0x00800000 /* f: */
+#define OPT_CTRL_PORT       0x01000000 /* P: */
+#define OPT_CTRL_UNIX       0x02000000 /* U: */
+#define OPT_EPOLL           0x04000000
+#define OPT_RAWTCP          0x08000000
+#define OPT_DEBUGFILEAPPEND 0x10000000
 
 /*
  * parameters configurable by the command line:
  *
+ * options:     bitmask corresponding to command line arguments
  * command:     default command to use with scamper
  * pps:         how many probe packets to send per second
  * window:      maximum number of concurrent tasks to actively probe
@@ -122,6 +125,7 @@ static uint32_t options = 0;
  * firewall:    scamper should use the system firewall when needed
  * pidfile:     place to write process id
  */
+static uint32_t options = 0;
 static char  *command      = NULL;
 static int    pps          = SCAMPER_PPS_DEF;
 static int    window       = SCAMPER_WINDOW_DEF;
@@ -153,6 +157,9 @@ static int    exit_when_done = 1;
 
 /* central cache of addresses that scamper is dealing with */
 scamper_addrcache_t *addrcache = NULL;
+
+/* Source port to use in our probes */
+static uint16_t default_sport = 0;
 
 typedef struct scamper_multicall
 {
@@ -241,9 +248,12 @@ static void usage(uint32_t opt_mask)
   if((opt_mask & OPT_OPTION) != 0)
     {
       off = 0;
-      string_concat(buf, sizeof(buf), &off, "specify options [warts | text");
+      string_concat(buf, sizeof(buf), &off, "specify options [warts | text | json");
       string_concat(buf, sizeof(buf), &off, " | outcopy | tsps | dlts");
       string_concat(buf, sizeof(buf), &off, " | rawtcp");
+#ifndef WITHOUT_DEBUGFILE
+      string_concat(buf, sizeof(buf), &off, " | debugfileappend");
+#endif
 #ifndef _WIN32
       string_concat(buf, sizeof(buf), &off, " | select");
 #endif
@@ -511,7 +521,7 @@ static int check_options(int argc, char *argv[])
 	  break;
 
         case 'o':
-          options |= OPT_OUTFILE; 
+          options |= OPT_OUTFILE;
           outfile = optarg;
           break;
 
@@ -519,6 +529,8 @@ static int check_options(int argc, char *argv[])
 	  if(strcasecmp(optarg, "text") == 0)
 	    outtype = optarg;
 	  else if(strcasecmp(optarg, "warts") == 0)
+	    outtype = optarg;
+	  else if(strcasecmp(optarg, "json") == 0)
 	    outtype = optarg;
 	  else if(strcasecmp(optarg, "tsps") == 0)
 	    intype = optarg;
@@ -543,6 +555,10 @@ static int check_options(int argc, char *argv[])
 #ifdef HAVE_EPOLL
 	  else if(strcasecmp(optarg, "epoll") == 0)
 	    options |= OPT_EPOLL;
+#endif
+#ifndef WITHOUT_DEBUGFILE
+	  else if(strcasecmp(optarg, "debugfileappend") == 0)
+	    options |= OPT_DEBUGFILEAPPEND;
 #endif
 	  else
 	    {
@@ -888,6 +904,12 @@ int scamper_option_rawtcp(void)
   return 0;
 }
 
+int scamper_option_debugfileappend(void)
+{
+  if(options & OPT_DEBUGFILEAPPEND) return 1;
+  return 0;
+}
+
 static int scamper_pidfile(void)
 {
   char buf[32];
@@ -951,6 +973,22 @@ static void scamper_chld(int sig)
 }
 #endif
 
+static void scamper_sport_init(void)
+{
+#ifndef _WIN32
+  pid_t pid = getpid();
+#else
+  DWORD pid = GetCurrentProcessId();
+#endif
+  default_sport = (pid & 0x7fff) + 0x8000;
+  return;
+}
+
+uint16_t scamper_sport_default(void)
+{
+  return default_sport;
+}
+
 /*
  * scamper:
  * this bit of code contains most of the logic for driving the parallel
@@ -987,6 +1025,9 @@ static int scamper(int argc, char *argv[])
    * pidfile.
    */
   if((options & OPT_PIDFILE) != 0 && scamper_pidfile() != 0)
+    return -1;
+
+  if(scamper_osinfo_init() != 0)
     return -1;
 
   /*
@@ -1027,6 +1068,9 @@ static int scamper(int argc, char *argv[])
       return -1;
     }
 #endif
+
+  /* determine a suitable default value for the source port in packets */
+  scamper_sport_init();
 
   /* allocate the cache of addresses for scamper to keep track of */
   if((addrcache = scamper_addrcache_alloc()) == NULL)
@@ -1329,7 +1373,7 @@ static int scamper(int argc, char *argv[])
 	}
     }
 
-  return 0; 
+  return 0;
 }
 
 /*
@@ -1401,6 +1445,8 @@ static void cleanup(void)
       scamper_debug_close();
     }
 #endif
+
+  scamper_osinfo_cleanup();
 
   if(debugfile != NULL)
     {

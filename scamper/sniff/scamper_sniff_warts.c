@@ -4,7 +4,7 @@
  * Copyright (C) 2011 The University of Waikato
  * Author: Matthew Luckie
  *
- * $Id: scamper_sniff_warts.c,v 1.4 2011/02/21 03:59:53 mjl Exp $
+ * $Id: scamper_sniff_warts.c,v 1.5 2012/04/05 18:00:54 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sniff_warts.c,v 1.4 2011/02/21 03:59:53 mjl Exp $";
+  "$Id: scamper_sniff_warts.c,v 1.5 2012/04/05 18:00:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -174,7 +174,7 @@ static void warts_sniff_params(const scamper_sniff_t *sniff,
 {
   const warts_var_t *var;
   int i, max_id = 0;
-    
+
   /* Unset all flags */
   memset(flags, 0, sniff_vars_mfb);
   *params_len = 0;
@@ -195,7 +195,7 @@ static void warts_sniff_params(const scamper_sniff_t *sniff,
 
       /* Set the flag for the rest of the variables */
       flag_set(flags, var->id, &max_id);
-       
+
       /* Variables that don't have a fixed size */
       if(var->id == WARTS_SNIFF_SRC)
         {
@@ -298,7 +298,7 @@ int scamper_file_warts_sniff_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     {
       goto err;
     }
-    
+
   /* Read in the sniff data from the warts file */
   if(warts_sniff_params_read(sniff, &table, state, buf, &off, hdr->len) != 0)
     {
@@ -306,14 +306,14 @@ int scamper_file_warts_sniff_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     }
 
   /* Determine how many sniff pkts to read */
-  if(sniff->pktc > 0) 
+  if(sniff->pktc > 0)
     {
       /* Allocate the sniff pkts array */
       if(scamper_sniff_pkts_alloc(sniff, sniff->pktc) != 0)
 	{
 	  goto err;
 	}
-        
+
       /*
        * for each sniff packet, read it and insert it into the sniff
        * structure
@@ -354,8 +354,8 @@ int scamper_file_warts_sniff_write(const scamper_file_t *sf,
   size_t size;
 
   memset(&table, 0, sizeof(table));
-        
-  /* Set the sniff data (not including the packets) */  
+
+  /* Set the sniff data (not including the packets) */
   warts_sniff_params(sniff, &table, flags, &flags_len, &params_len);
   len = 8 + flags_len + params_len + 2;
 

@@ -2,9 +2,10 @@
  * scamper_dealias_text.c
  *
  * Copyright (C) 2008-2010 The University of Waikato
+ * Copyright (C) 2013      Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_text.c,v 1.2 2010/10/18 02:23:52 mjl Exp $
+ * $Id: scamper_dealias_text.c,v 1.3 2013/01/05 22:00:38 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_text.c,v 1.2 2010/10/18 02:23:52 mjl Exp $";
+  "$Id: scamper_dealias_text.c,v 1.3 2013/01/05 22:00:38 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -42,7 +43,7 @@ int scamper_file_text_dealias_write(const scamper_file_t *sf,
 				    const scamper_dealias_t *dealias)
 {
   scamper_dealias_ally_t *ally;
-  char buf[256], a[32], b[32], c[32];
+  char buf[256], a[64], b[64], c[32];
   int fd = scamper_file_getfd(sf);
 
   if(SCAMPER_DEALIAS_METHOD_IS_ALLY(dealias))

@@ -1,10 +1,11 @@
 /*
  * utils.h
  *
- * $Id: utils.h,v 1.101 2011/10/25 02:24:42 mjl Exp $
+ * $Id: utils.h,v 1.108 2013/02/22 17:58:03 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012-2013 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -19,7 +20,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef __UTILS_H
@@ -40,6 +41,8 @@ void timeval_add_cs(struct timeval *out, const struct timeval *in, int cs);
 void timeval_add_ms(struct timeval *out, const struct timeval *in, int ms);
 void timeval_add_us(struct timeval *out, const struct timeval *in, int us);
 void timeval_add_tv(struct timeval *tv, const struct timeval *add);
+void timeval_add_tv3(struct timeval *out, const struct timeval *a,
+		     const struct timeval *b);
 void timeval_add_s(struct timeval *out, const struct timeval *in, int s);
 void timeval_sub_us(struct timeval *out, const struct timeval *in, int us);
 void timeval_cpy(struct timeval *dst, const struct timeval *src);
@@ -68,27 +71,21 @@ void *malloc_zero_dm(const size_t size, const char *file, const int line);
 
 void mem_concat(void *dst,const void *src,size_t len,size_t *off,size_t size);
 
-void *array_find(void **a, int nmemb, const void *item,
-		 int (*cmp)(const void *, const void *));
-
-int array_findpos(void **a, int nmemb, const void *item,
-		  int (*cmp)(const void *, const void *));
-
+typedef int (*array_cmp_t)(const void *va, const void *vb);
+void *array_find(void **a, int nmemb, const void *item, array_cmp_t cmp);
+int array_findpos(void **a, int nmemb, const void *item, array_cmp_t cmp);
 void array_remove(void **, int *nmemb, int pos);
-
-void array_qsort(void **a, int n, int (*cmp)(const void *, const void *));
+void array_qsort(void **a, int n, array_cmp_t cmp);
 
 #ifndef DMALLOC
-int array_insert(void ***a, int *nmemb, void *item,
-		 int (*cmp)(const void *, const void *));
+int array_insert(void ***a, int *nmemb, void *item, array_cmp_t cmp);
 int array_insert_gb(void ***a, int *nmemb, int *mmemb, int growby,
-		    void *item, int (*cmp)(const void *, const void *));
+		    void *item, array_cmp_t cmp);
 #else
-int array_insert_dm(void ***a, int *nmemb, void *item,
-		    int (*cmp)(const void *, const void *),
+int array_insert_dm(void ***a, int *nmemb, void *item, array_cmp_t cmp,
 		    const char *file, const int line);
 int array_insert_gb_dm(void ***a, int *nmemb, int *mmemb, int growby,
-		       void *item, int (*cmp)(const void *, const void *),
+		       void *item, array_cmp_t cmp,
 		       const char *file, const int line);
 #define array_insert(a, nmemb, item, cmp) \
   array_insert_dm((a), (nmemb), (item), (cmp), __FILE__, __LINE__)
@@ -184,10 +181,14 @@ uint16_t in_cksum(const void *buf, size_t len);
 /* generate a 32-bit random number and return it */
 int random_u32(uint32_t *r);
 int random_u16(uint16_t *r);
+int random_u8(uint8_t *r);
 
 /* fisher-yates shuffle */
 int shuffle16(uint16_t *array, int len);
 int shuffle32(uint32_t *array, int len);
+
+/* count the number of bits set */
+int countbits32(uint32_t v);
 
 /*
  * Functions for uuencode and uudecode.
@@ -201,38 +202,9 @@ int uudecode_line(const char *in, size_t ilen, uint8_t *out, size_t *olen);
 
 /* swap bytes in a 16 bit word */
 uint16_t byteswap16(const uint16_t word);
+uint32_t byteswap32(const uint32_t word);
 
 /* process a text file, line by line */
 int file_lines(const char *filename, int (*func)(char *, void *), void *param);
-
-/*
- * Method and apparatus for parsing the output from uname(3)
- */
-
-#define SCAMPER_OSINFO_OS_NULL     0
-#define SCAMPER_OSINFO_OS_FREEBSD  1
-#define SCAMPER_OSINFO_OS_OPENBSD  2
-#define SCAMPER_OSINFO_OS_NETBSD   3
-#define SCAMPER_OSINFO_OS_SUNOS    4
-#define SCAMPER_OSINFO_OS_LINUX    5
-#define SCAMPER_OSINFO_OS_DARWIN   6
-#define SCAMPER_OSINFO_OS_WINDOWS  7
-
-typedef struct scamper_osinfo
-{
-  /* name of the OS, and an ID for it */
-  char *os;
-  int   os_id;
-
-  /* parse the OS version string into integers */
-  long *os_rel;
-  int   os_rel_dots;
-
-} scamper_osinfo_t;
-
-#define SCAMPER_OSINFO_IS_SUNOS(os) ((os)->os_id == SCAMPER_OSINFO_OS_SUNOS)
-
-scamper_osinfo_t *uname_wrap(void);
-void scamper_osinfo_free(scamper_osinfo_t *osinfo);
 
 #endif /* __UTILS_H */

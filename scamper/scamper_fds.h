@@ -1,10 +1,10 @@
 /*
  * scamper_fds: manage events for file descriptors
  *
- * $Id: scamper_fds.h,v 1.19 2011/11/11 02:30:55 mjl Exp $
+ * $Id: scamper_fds.h,v 1.20 2012/04/05 18:00:54 mjl Exp $
  *
  *          Matthew Luckie
- * 
+ *
  *          Supported by:
  *           The University of Waikato
  *           NLANR Measurement and Network Analysis

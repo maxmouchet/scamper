@@ -1,7 +1,7 @@
 /*
  * scamper_ip4.c
  *
- * $Id: scamper_ip4.c,v 1.12 2011/11/10 21:37:53 mjl Exp $
+ * $Id: scamper_ip4.c,v 1.15 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2009-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -23,7 +23,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ip4.c,v 1.12 2011/11/10 21:37:53 mjl Exp $";
+  "$Id: scamper_ip4.c,v 1.15 2012/04/05 18:00:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -104,10 +104,10 @@ int scamper_ip4_hlen(scamper_probe_t *pr, size_t *hlen)
 	}
       else if(opt->type == SCAMPER_PROBE_IPOPTS_V4TSPS)
 	{
-	  if((opt->len % 4) != 0 || opt->len == 0 || opt->len > 16)
+	  if(opt->opt_v4tsps_ipc < 1 || opt->opt_v4tsps_ipc > 4)
 	    goto err;
 
-	  ip4hlen += (opt->len * 2) + 4;
+	  ip4hlen += (opt->opt_v4tsps_ipc * 4 * 2) + 4;
 	  if(ip4hlen > 60)
 	    goto err;
 	}
@@ -120,6 +120,12 @@ int scamper_ip4_hlen(scamper_probe_t *pr, size_t *hlen)
       else if(opt->type == SCAMPER_PROBE_IPOPTS_V4TSAA)
 	{
 	  ip4hlen += 36;
+	  if(ip4hlen > 60)
+	    goto err;
+	}
+      else if(opt->type == SCAMPER_PROBE_IPOPTS_QUICKSTART)
+	{
+	  ip4hlen += 8;
 	  if(ip4hlen > 60)
 	    goto err;
 	}
@@ -201,12 +207,12 @@ int scamper_ip4_build(scamper_probe_t *pr, uint8_t *buf, size_t *len)
 
 	  if(opt->type == SCAMPER_PROBE_IPOPTS_V4TSPS)
 	    {
-	      buf[off+1] = (opt->len * 2) + 4;
+	      buf[off+1] = (opt->opt_v4tsps_ipc * 4 * 2) + 4;
 	      buf[off+3] = 3;
 	      off += 4;
-	      for(j=0; j<opt->len; j+=4)
+	      for(j=0; j<opt->opt_v4tsps_ipc; j++)
 		{
-		  memcpy(buf+off, opt->val+j, 4); off += 4;
+		  memcpy(buf+off, &opt->opt_v4tsps_ips[j], 4); off += 4;
 		  memset(buf+off, 0, 4); off += 4;
 		}
 	    }
@@ -224,8 +230,19 @@ int scamper_ip4_build(scamper_probe_t *pr, uint8_t *buf, size_t *len)
 	      off += 36;
 	    }
 	}
+      else if(opt->type == SCAMPER_PROBE_IPOPTS_QUICKSTART)
+	{
+	  assert(opt->opt_qs_func <= 0xf);
+	  assert(opt->opt_qs_rate <= 0xf);
+	  buf[off+0] = 25;
+	  buf[off+1] = 8;
+	  buf[off+2] = (opt->opt_qs_func << 4) | opt->opt_qs_rate;
+	  buf[off+3] = opt->opt_qs_ttl;
+	  bytes_htonl(&buf[off+4], opt->opt_qs_nonce << 2);
+	  off += 8;
+	}
       else return -1;
-    }  
+    }
 
   assert(off == ip4hlen);
   ip->ip_sum = in_cksum(ip, ip4hlen);

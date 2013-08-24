@@ -1,14 +1,13 @@
 /*
  * scamper_debug.c
  *
- * $Id: scamper_debug.c,v 1.32.2.1 2012/03/20 17:58:21 mjl Exp $
+ * $Id: scamper_debug.c,v 1.34 2012/04/05 18:00:54 mjl Exp $
  *
  * routines to reduce the impact of debugging cruft in scamper's code.
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
- *
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -28,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_debug.c,v 1.32.2.1 2012/03/20 17:58:21 mjl Exp $";
+  "$Id: scamper_debug.c,v 1.34 2012/04/05 18:00:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -187,9 +186,8 @@ void scamper_debug(const char *func, const char *format, ...)
 #ifndef WITHOUT_DEBUGFILE
 int scamper_debug_open(const char *file)
 {
-  mode_t mode; 
-  int flags = O_WRONLY | O_CREAT | O_TRUNC;
-  int fd;
+  mode_t mode;
+  int flags, fd;
 
 #if defined(WITHOUT_PRIVSEP) && !defined(_WIN32)
   uid_t uid = getuid();
@@ -200,6 +198,11 @@ int scamper_debug_open(const char *file)
 #else
   mode = _S_IREAD | _S_IWRITE;
 #endif
+
+  if(scamper_option_debugfileappend() == 0)
+    flags = O_WRONLY | O_CREAT | O_TRUNC;
+  else
+    flags = O_WRONLY | O_CREAT | O_APPEND;
 
 #ifndef WITHOUT_PRIVSEP
   fd = scamper_privsep_open_file(file, flags, mode);

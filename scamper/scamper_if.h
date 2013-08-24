@@ -1,7 +1,7 @@
 /*
  * scamper_if.h
  *
- * $Id: scamper_if.h,v 1.3 2011/02/03 00:05:06 mjl Exp $
+ * $Id: scamper_if.h,v 1.4 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2008-2009 The University of Waikato
  * Author: Matthew Luckie
@@ -18,7 +18,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef __SCAMPER_IF_H

@@ -1,10 +1,11 @@
 /*
  * scamper_addr.c
  *
- * $Id: scamper_addr.c,v 1.53 2011/09/16 03:15:43 mjl Exp $
+ * $Id: scamper_addr.c,v 1.56 2013/07/25 18:02:51 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2013      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_addr.c,v 1.53 2011/09/16 03:15:43 mjl Exp $";
+  "$Id: scamper_addr.c,v 1.56 2013/07/25 18:02:51 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -96,6 +97,10 @@ static int ipv6_islinklocal(const scamper_addr_t *);
 static int ipv4_netaddr(const scamper_addr_t *, void *, int);
 static int ipv6_netaddr(const scamper_addr_t *, void *, int);
 
+static int ipv4_isreserved(const scamper_addr_t *);
+
+static int ipv6_isunicast(const scamper_addr_t *);
+
 struct handler
 {
   int     type;
@@ -108,6 +113,8 @@ struct handler
   int    (*prefixhosts)(const scamper_addr_t *a, const scamper_addr_t *b);
   int    (*islinklocal)(const scamper_addr_t *a);
   int    (*netaddr)(const scamper_addr_t *a, void *net, int netlen);
+  int    (*isunicast)(const scamper_addr_t *a);
+  int    (*isreserved)(const scamper_addr_t *a);
 };
 
 static const struct handler handlers[] = {
@@ -122,6 +129,8 @@ static const struct handler handlers[] = {
     ipv4_prefixhosts,
     ipv4_islinklocal,
     ipv4_netaddr,
+    NULL,
+    ipv4_isreserved,
   },
   {
     SCAMPER_ADDR_TYPE_IPV6,
@@ -134,6 +143,8 @@ static const struct handler handlers[] = {
     NULL,
     ipv6_islinklocal,
     ipv6_netaddr,
+    ipv6_isunicast,
+    NULL,
   },
   {
     SCAMPER_ADDR_TYPE_ETHERNET,
@@ -141,6 +152,8 @@ static const struct handler handlers[] = {
     ethernet_cmp,
     ethernet_cmp,
     ethernet_tostr,
+    NULL,
+    NULL,
     NULL,
     NULL,
     NULL,
@@ -158,9 +171,11 @@ static const struct handler handlers[] = {
     NULL,
     NULL,
     NULL,
+    NULL,
+    NULL,
   }
 };
-    
+
 struct scamper_addrcache
 {
   splaytree_t *tree[sizeof(handlers)/sizeof(struct handler)];
@@ -307,6 +322,34 @@ static int ipv4_netaddr(const scamper_addr_t *sa, void *net, int netlen)
     return -1;
   p.s_addr = htonl(ntohl(a->s_addr) & uint32_netmask[netlen-1]);
   memcpy(net, &p, sizeof(p));
+  return 0;
+}
+
+static int ipv4_isreserved(const scamper_addr_t *a)
+{
+  static const uint32_t prefs[][2] = {
+    {0x00000000, 0xff000000}, /* 0.0.0.0/8 */
+    {0x0a000000, 0xff000000}, /* 10.0.0.0/8 */
+    {0x64400000, 0xffc00000}, /* 100.64.0.0/10 */
+    {0x7f000000, 0xff000000}, /* 127.0.0.0/8 */
+    {0xa9fe0000, 0xffff0000}, /* 169.254.0.0/16 */
+    {0xac100000, 0xfff00000}, /* 172.16.0.0/12 */
+    {0xc0000000, 0xffffff00}, /* 192.0.0.0/24 */
+    {0xc0000200, 0xffffff00}, /* 192.0.2.0/24 */
+    {0xc0586300, 0xffffff00}, /* 192.88.99.0/24 */
+    {0xc0a80000, 0xffff0000}, /* 192.168.0.0/16 */
+    {0xc6120000, 0xfffe0000}, /* 198.18.0.0/15 */
+    {0xc6336400, 0xffffff00}, /* 198.51.100.0/24 */
+    {0xcb007100, 0xffffff00}, /* 203.0.113.0/24 */
+    {0xe0000000, 0xf0000000}, /* 224.0.0.0/4 */
+    {0xf0000000, 0xf0000000}, /* 240.0.0.0/4 */
+  };
+  static const int prefc = 15;
+  uint32_t addr = ntohl(((const struct in_addr *)a->addr)->s_addr);
+  int i;
+  for(i=0; i<prefc; i++)
+    if((addr & prefs[i][1]) == prefs[i][0])
+      return 1;
   return 0;
 }
 
@@ -512,6 +555,14 @@ static int ipv6_netaddr(const scamper_addr_t *sa, void *net, int nl)
   return 0;
 }
 
+static int ipv6_isunicast(const scamper_addr_t *sa)
+{
+  const struct in6_addr *a = sa->addr;
+  if((a->s6_addr[0] & 0xe0) == 0x20)
+    return 1;
+  return 0;
+}
+
 static int ethernet_cmp(const scamper_addr_t *sa, const scamper_addr_t *sb)
 {
   assert(sa->type == SCAMPER_ADDR_TYPE_ETHERNET);
@@ -625,7 +676,7 @@ scamper_addr_t *scamper_addr_resolve(const int af, const char *addr)
 	  break;
 	}
     }
-  
+
   freeaddrinfo(res0);
   return sa;
 }
@@ -692,6 +743,39 @@ int scamper_addr_isrfc1918(const scamper_addr_t *sa)
       return 1;
     }
   return 0;
+}
+
+int scamper_addr_is6to4(const scamper_addr_t *sa)
+{
+  const struct in6_addr *a;
+
+  if(sa->type != SCAMPER_ADDR_TYPE_IPV6)
+    return 0;
+
+  a = sa->addr;
+#ifndef _WIN32
+  if(a->s6_addr[0] == 0x20 && a->s6_addr[1] == 0x02)
+    return 1;
+#else
+  if(a->u.Word[0] == htons(0x2002))
+     return 1;
+#endif
+
+  return 0;
+}
+
+int scamper_addr_isunicast(const scamper_addr_t *sa)
+{
+  if(handlers[sa->type-1].isunicast == NULL)
+    return -1;
+  return handlers[sa->type-1].isunicast(sa);
+}
+
+int scamper_addr_isreserved(const scamper_addr_t *sa)
+{
+  if(handlers[sa->type-1].isreserved == NULL)
+    return -1;
+  return handlers[sa->type-1].isreserved(sa);
 }
 
 scamper_addr_t *scamper_addrcache_get(scamper_addrcache_t *ac,
@@ -768,7 +852,7 @@ scamper_addr_t *scamper_addrcache_resolve(scamper_addrcache_t *addrcache,
 	  break;
 	}
     }
-  
+
   freeaddrinfo(res0);
   return sa;
 }

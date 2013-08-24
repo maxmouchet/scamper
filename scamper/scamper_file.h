@@ -1,10 +1,11 @@
 /*
  * scamper_file.c
  *
- * $Id: scamper_file.h,v 1.28 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_file.h,v 1.30 2012/03/21 21:23:28 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -34,6 +35,9 @@ typedef struct scamper_file_filter scamper_file_filter_t;
 typedef int (*scamper_file_writefunc_t)(void *param,
 					const void *data, size_t len);
 
+typedef int (*scamper_file_readfunc_t)(void *param,
+				       uint8_t **data, size_t len);
+
 /* types of objects that scamper understands */
 #define SCAMPER_FILE_OBJ_LIST          0x01
 #define SCAMPER_FILE_OBJ_CYCLE_START   0x02
@@ -51,7 +55,7 @@ typedef int (*scamper_file_writefunc_t)(void *param,
 
 scamper_file_t *scamper_file_open(char *fn, char mode, char *type);
 scamper_file_t *scamper_file_openfd(int fd, char *fn, char mode, char *type);
-scamper_file_t *scamper_file_opennull(void);
+scamper_file_t *scamper_file_opennull(char mode);
 void scamper_file_close(scamper_file_t *sf);
 void scamper_file_free(scamper_file_t *sf);
 
@@ -107,6 +111,11 @@ char *scamper_file_getfilename(scamper_file_t *sf);
 
 int   scamper_file_geteof(scamper_file_t *sf);
 void  scamper_file_seteof(scamper_file_t *sf);
+
+void  scamper_file_setreadfunc(scamper_file_t *sf, void *param,
+			       scamper_file_readfunc_t readfunc);
+scamper_file_readfunc_t scamper_file_getreadfunc(const scamper_file_t *sf);
+void *scamper_file_getreadparam(const scamper_file_t *sf);
 
 void  scamper_file_setwritefunc(scamper_file_t *sf, void *param,
 				scamper_file_writefunc_t writefunc);

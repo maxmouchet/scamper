@@ -7,7 +7,7 @@
 .\" Copyright (c) 2007-2011 University of Waikato
 .\"                         All rights reserved
 .\"
-.\" $Id: scamper.1,v 1.44.2.1 2012/03/20 17:51:44 mjl Exp $
+.\" $Id: scamper.1,v 1.49 2013/07/18 21:21:30 mjl Exp $
 .\"
 .\"  nroff -man scamper.1
 .\"  groff -man -Tascii scamper.1 | man2html -title scamper.1
@@ -149,7 +149,7 @@ default, stdout is used.
 specifies that scamper may use the firewall in measurements that require it.
 To use the firewall on FreeBSD and MacOS X systems, pass ipfw here.
 .It Fl d Ar debugfile
-specifies a filename to append debugging messages to.  By default, no
+specifies a filename to write debugging messages to.  By default, no
 debugfile is used, though debugging output is sent to stderr if scamper is
 built for debugging.
 .It Fl e Ar pidfile
@@ -211,8 +211,13 @@ the input file consists of complete commands.
 .Sy dlts
 use timestamps from the datalink layer, if possible.
 .It
-.Sy copyout
+.Sy outcopy
 write a copy of all data written by scamper with the default output method.
+.It
+.Sy debugfileappend
+append to the debugfile specified with the
+.Fl d
+option.  The default is to truncate the debugfile.
 .El
 .It Fl i Ar IP 1..N
 specifies the addresses to probe, on the command line, using the command
@@ -367,6 +372,7 @@ ping
 .Op Fl F Ar sport
 .Op Fl i Ar wait
 .Op Fl m Ar ttl
+.Op Fl M Ar MTU
 .Op Fl o Ar replycount
 .Op Fl O Ar options
 .Op Fl p Ar pattern
@@ -390,13 +396,16 @@ The payload of each probe will be manipulated so that the checksum is valid.
 specifies the destination port to use in each TCP/UDP probe.
 .It Fl F Ar sport
 specifies the source port to use in each TCP/UDP probe, and the ICMP ID to
-use in ICMP echo probes.
+use in ICMP probes.
 .It Fl i Ar wait
 specifies the length of time to wait, in seconds, between probes.  By default,
 a value of 1 is used.
 .It Fl m Ar ttl
 specifies the TTL value to use for outgoing packets.  By default, a value of
 64 is used.
+.It Fl M Ar MTU
+specifies a pseudo MTU value.  If the response packet is larger than the
+pseudo MTU, an ICMP packet too big (PTB) message is sent.
 .It Fl o Ar replycount
 specifies the number of replies required at which time probing may cease.  By
 default, all probes are sent.
@@ -417,7 +426,7 @@ specified.  By default, each probe's bytes are zeroed.
 .It Fl P Ar method
 specifies the type of ping packets to send.
 By default, ICMP echo requests are sent.
-Choices are: icmp-echo, tcp-ack, tcp-ack-sport, udp, and udp-dport.
+Choices are: icmp-echo, icmp-time, tcp-ack, tcp-ack-sport, udp, and udp-dport.
 .It Fl U Ar userid
 specifies an unsigned integer to include with the data collected; the meaning
 of the user-id is entirely up to the user and has no effect on the behaviour
@@ -461,7 +470,7 @@ dealias command:
 .Pp
 dealias
 .\"dealias [-d dport] [-f fudge] [-m method] [-o replyc] [-O option]\n"
-.\"        [-p '[-c sum] [-d dp] [-i ip] [-P meth] [-s sp] [-t ttl]']\n"
+.\"        [-p '[-c sum] [-d dp] [-F sp] [-i ip] [-P meth] [-s size] [-t ttl]']\n"
 .\"        [-q attempts] [-r wait-round] [-s sport] [-t ttl]\n"
 .\"        [-U userid] [-w wait-timeout] [-W wait-probe] [-x exclude]\n"
 .Bk -words
@@ -521,15 +530,17 @@ The payload of the probe will be altered appropriately.
 .It Fl d Ar dst-port
 specifies the destination port of the probe.
 Defaults to 33435.
+.It Fl F Ar src-port
+specifies the source port of the probe.
+Defaults to (pid & 0x7fff) + 0x8000.
 .It Fl i Ar IP
 specifies the destination IP address of the probe.
 .It Fl P Ar method
 specifies which method to use for the probe.
 Valid options are: udp, udp-dport, tcp-ack, tcp-ack-sport, tcp-syn-sport,
 and icmp-echo.
-.It Fl s Ar src-port
-specifies the source port of the probe.
-Defaults to (pid & 0x7fff) + 0x8000.
+.It Fl s Ar size
+specifies the size of the probes to send.
 .It Fl t Ar ttl
 specifies the IP time to live of the probe.
 .El
@@ -1132,6 +1143,7 @@ scamper -I "tracelb -P udp-sport -c 99 192.0.2.6"
 .Xr sc_tracediff 1 ,
 .Xr sc_wartscat 1 ,
 .Xr sc_wartsdump 1 ,
+.Xr sc_warts2json 1 ,
 .Xr sc_warts2pcap 1 ,
 .Xr sc_warts2text 1 ,
 .Rs
@@ -1215,6 +1227,8 @@ Stephen Eichler contributed an initial implementation of TBIT's ECN test;
 Boris Pfahringer adapted
 .Nm
 to use GNU autotools, modularised the tests, and updated this man page.
+Brian Hammond of Internap Network Services Corporation provided an initial
+implementation of scamper's json output format.
 .\""""""""""""
 .Sh ACKNOWLEDGEMENTS
 .Nm

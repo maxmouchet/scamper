@@ -1,35 +1,21 @@
 /*
  * scamper_dl: manage BPF/PF_PACKET datalink instances for scamper
  *
- * $Id: scamper_dl.c,v 1.172 2011/11/17 00:29:22 mjl Exp $
+ * $Id: scamper_dl.c,v 1.179 2013/07/08 17:48:31 mjl Exp $
  *
  *          Matthew Luckie
  *          Ben Stasiewicz added fragmentation support.
  *          Stephen Eichler added SACK support.
  *
- * Copyright (C) 2004-2006 Matthew Luckie
- * Copyright (C) 2006-2011 The University of Waikato
- * 
  *          Supported by:
  *           The University of Waikato
  *           NLANR Measurement and Network Analysis
  *           CAIDA
  *           The WIDE Project
  *
- * The purpose of this code is to obtain the timestamp of when the
- * outgoing probe hits the wire.  This is so scamper sees when the probe
- * is actually sent and allows it to compute the RTT more accurately in
- * theory.
- *
- * David Moore (CAIDA) originally suggested that scamper use BPF for this
- * task.  I decided to use file handles to the underlying packet capture
- * interface instead of pcap(3) for two reasons.  The first is that I
- * needed file descriptors to pass to select(2).  pcap(3) got in the way.
- * The second is that I like writing filters with BPF instructions.
- *
- * The pcap library was very useful to document how to access the various
- * datalink types, particularly the dlpi interface.  The libnet interface
- * was also helpful to determine how to write raw packets.
+ * Copyright (C) 2004-2006 Matthew Luckie
+ * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012      Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -48,7 +34,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dl.c,v 1.172 2011/11/17 00:29:22 mjl Exp $";
+  "$Id: scamper_dl.c,v 1.179 2013/07/08 17:48:31 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -68,6 +54,7 @@ static const char rcsid[] =
 #include "scamper_privsep.h"
 #include "scamper_task.h"
 #include "scamper_if.h"
+#include "scamper_osinfo.h"
 #include "utils.h"
 
 #if defined(HAVE_BPF) && defined(DLT_APPLE_IP_OVER_IEEE1394)
@@ -101,7 +88,7 @@ static uint8_t          *readbuf = NULL;
 static size_t            readbuf_len = 0;
 
 #if defined(HAVE_BPF)
-static scamper_osinfo_t *osinfo = NULL;
+static const scamper_osinfo_t *osinfo = NULL;
 #endif
 
 /*
@@ -193,7 +180,7 @@ static int dl_parse_ip(scamper_dl_rec_t *dl, uint8_t *pktbuf, size_t pktlen)
       pkt += iplen;
       len -= iplen;
 
-      /* Process any IPv6 fragmentation headers */ 
+      /* Process any IPv6 fragmentation headers */
       for(;;)
         {
 	  switch(dl->dl_ip_proto)
@@ -427,6 +414,8 @@ static int dl_parse_ip(scamper_dl_rec_t *dl, uint8_t *pktbuf, size_t pktlen)
 
 	case ICMP_ECHOREPLY:
 	case ICMP_ECHO:
+	case ICMP_TSTAMPREPLY:
+	case ICMP_TSTAMP:
 	  dl->dl_icmp_id  = ntohs(icmp4->icmp_id);
 	  dl->dl_icmp_seq = ntohs(icmp4->icmp_seq);
 	  break;
@@ -910,16 +899,7 @@ static int dl_bpf_init(void)
       return -1;
     }
 
-  /*
-   * use a global osinfo structure for the datalink code since other
-   * bits of the code want to use it too.
-   */
-  if((osinfo = uname_wrap()) == NULL)
-    {
-      printerror(errno, strerror, __func__, "uname failed");
-      return -1;
-    }
-
+  osinfo = scamper_osinfo_get();
   if(osinfo->os_id == SCAMPER_OSINFO_OS_FREEBSD &&
      osinfo->os_rel[0] == 4 &&
      (osinfo->os_rel[1] == 3 || osinfo->os_rel[1] == 4))
@@ -1634,8 +1614,21 @@ int scamper_dl_rec_src(scamper_dl_rec_t *dl, scamper_addr_t *addr)
   return 0;
 }
 
+int scamper_dl_rec_icmp_ip_dst(scamper_dl_rec_t *dl, scamper_addr_t *addr)
+{
+  if(dl->dl_af == AF_INET)
+    addr->type = SCAMPER_ADDR_TYPE_IPV4;
+  else if(dl->dl_af == AF_INET6)
+    addr->type = SCAMPER_ADDR_TYPE_IPV6;
+  else
+    return -1;
+
+  addr->addr = dl->dl_icmp_ip_dst;
+  return 0;
+}
+
 #if !defined(NDEBUG) && !defined(WITHOUT_DEBUGFILE)
-void scamper_dl_rec_frag_print(scamper_dl_rec_t *dl)
+void scamper_dl_rec_frag_print(const scamper_dl_rec_t *dl)
 {
   char addr[64];
   uint32_t id;
@@ -1651,10 +1644,10 @@ void scamper_dl_rec_frag_print(scamper_dl_rec_t *dl)
 		addr_tostr(dl->dl_af, dl->dl_ip_src, addr, sizeof(addr)),
 		dl->dl_ip_size, id, dl->dl_ip_off);
 
-  return; 
+  return;
 }
 
-void scamper_dl_rec_tcp_print(scamper_dl_rec_t *dl)
+void scamper_dl_rec_tcp_print(const scamper_dl_rec_t *dl)
 {
   static const char *tcpflags[] = {
     "fin",
@@ -1717,6 +1710,217 @@ void scamper_dl_rec_tcp_print(scamper_dl_rec_t *dl)
 		ipid, dl->dl_tcp_sport, dl->dl_tcp_dport, flags, pos,
 		dl->dl_ip_size);
 
+  return;
+}
+
+void scamper_dl_rec_icmp_print(const scamper_dl_rec_t *dl)
+{
+  char *t = NULL, tbuf[64];
+  char *c = NULL, cbuf[64];
+  char addr[64];
+  char ip[256];
+  char icmp[256];
+  char inner_ip[256];
+  char inner_transport[256];
+  size_t off;
+
+  assert(dl->dl_af == AF_INET || dl->dl_af == AF_INET6);
+
+  if(dl->dl_af == AF_INET)
+    {
+      addr_tostr(AF_INET, dl->dl_ip_src, addr, sizeof(addr));
+      snprintf(ip, sizeof(ip), "from %s size %d ttl %d tos 0x%02x ipid 0x%04x",
+	       addr, dl->dl_ip_size, dl->dl_ip_ttl, dl->dl_ip_tos,
+	       dl->dl_ip_id);
+
+      switch(dl->dl_icmp_type)
+        {
+        case ICMP_UNREACH:
+          t = "unreach";
+          switch(dl->dl_icmp_code)
+            {
+            case ICMP_UNREACH_NET:           c = "net";           break;
+            case ICMP_UNREACH_HOST:          c = "host";          break;
+            case ICMP_UNREACH_PROTOCOL:      c = "protocol";      break;
+            case ICMP_UNREACH_PORT:          c = "port";          break;
+            case ICMP_UNREACH_SRCFAIL:       c = "src-rt failed"; break;
+            case ICMP_UNREACH_NET_UNKNOWN:   c = "net unknown";   break;
+            case ICMP_UNREACH_HOST_UNKNOWN:  c = "host unknown";  break;
+            case ICMP_UNREACH_ISOLATED:      c = "isolated";      break;
+            case ICMP_UNREACH_NET_PROHIB:    c = "net prohib";    break;
+            case ICMP_UNREACH_HOST_PROHIB:   c = "host prohib";   break;
+            case ICMP_UNREACH_TOSNET:        c = "tos net";       break;
+            case ICMP_UNREACH_TOSHOST:       c = "tos host";      break;
+            case ICMP_UNREACH_FILTER_PROHIB: c = "admin prohib";  break;
+            case ICMP_UNREACH_NEEDFRAG:
+	      /*
+	       * use the type buf to be consistent with the ICMP6
+	       * fragmentation required message
+	       */
+	      snprintf(tbuf, sizeof(tbuf), "need frag %d", dl->dl_icmp_nhmtu);
+	      t = tbuf;
+	      break;
+
+            default:
+	      snprintf(cbuf, sizeof(cbuf), "code %d", dl->dl_icmp_code);
+	      c = cbuf;
+	      break;
+            }
+          break;
+
+        case ICMP_TIMXCEED:
+          t = "time exceeded";
+          switch(dl->dl_icmp_code)
+            {
+            case ICMP_TIMXCEED_INTRANS: c = "in trans"; break;
+            case ICMP_TIMXCEED_REASS:   c = "in reass"; break;
+            default:
+	      snprintf(cbuf, sizeof(cbuf), "code %d", dl->dl_icmp_code);
+	      c = cbuf;
+	      break;
+            }
+          break;
+
+	case ICMP_ECHOREPLY:
+	  t = "echo reply";
+	  snprintf(cbuf, sizeof(cbuf), "id %d seq %d",
+		   dl->dl_icmp_id, dl->dl_icmp_seq);
+	  c = cbuf;
+	  break;
+
+	case ICMP_TSTAMPREPLY:
+	  t = "time reply";
+	  snprintf(cbuf, sizeof(cbuf), "id %d seq %d",
+		   dl->dl_icmp_id, dl->dl_icmp_seq);
+	  c = cbuf;
+	  break;
+        }
+    }
+  else
+    {
+      addr_tostr(AF_INET6, dl->dl_ip_src, addr, sizeof(addr));
+      off = 0;
+      string_concat(ip, sizeof(ip), &off, "from %s size %d hlim %d", addr,
+		    dl->dl_ip_size, dl->dl_ip_hlim);
+      if(dl->dl_ip_flags & SCAMPER_DL_IP_FLAG_FRAG)
+	string_concat(ip, sizeof(ip), &off, " ipid 0x%08x", dl->dl_ip6_id);
+
+      switch(dl->dl_icmp_type)
+        {
+        case ICMP6_DST_UNREACH:
+          t = "unreach";
+          switch(dl->dl_icmp_code)
+            {
+            case ICMP6_DST_UNREACH_NOROUTE:     c = "no route";     break;
+            case ICMP6_DST_UNREACH_ADMIN:       c = "admin prohib"; break;
+            case ICMP6_DST_UNREACH_BEYONDSCOPE: c = "beyond scope"; break;
+            case ICMP6_DST_UNREACH_ADDR:        c = "addr";         break;
+            case ICMP6_DST_UNREACH_NOPORT:      c = "port";         break;
+
+            default:
+	      snprintf(cbuf, sizeof(cbuf), "code %d", dl->dl_icmp_code);
+	      c = cbuf;
+	      break;
+            }
+          break;
+
+        case ICMP6_TIME_EXCEEDED:
+          t = "time exceeded";
+          switch(dl->dl_icmp_code)
+            {
+            case ICMP6_TIME_EXCEED_TRANSIT:    c = "in trans"; break;
+            case ICMP6_TIME_EXCEED_REASSEMBLY: c = "in reass"; break;
+
+            default:
+	      snprintf(cbuf, sizeof(cbuf), "code %d", dl->dl_icmp_code);
+	      c = cbuf;
+	      break;
+            }
+          break;
+
+	case ICMP6_PACKET_TOO_BIG:
+	  snprintf(tbuf, sizeof(tbuf), "need frag %d", dl->dl_icmp_nhmtu);
+	  t = tbuf;
+	  break;
+
+	case ICMP6_ECHO_REPLY:
+	  t = "echo reply";
+	  snprintf(cbuf, sizeof(cbuf), "id %d seq %d",
+		   dl->dl_icmp_id, dl->dl_icmp_seq);
+	  c = cbuf;
+	  break;
+        }
+    }
+
+  if(t == NULL)
+    {
+      snprintf(icmp, sizeof(icmp), "icmp %d code %d",
+	       dl->dl_icmp_type, dl->dl_icmp_code);
+    }
+  else if(c == NULL)
+    {
+      snprintf(icmp, sizeof(icmp), "icmp %s", t);
+    }
+  else
+    {
+      snprintf(icmp, sizeof(icmp), "icmp %s %s", t, c);
+    }
+
+  if(dl->dl_icmp_ip_dst != NULL)
+    {
+      if(dl->dl_af == AF_INET)
+	{
+	  addr_tostr(AF_INET, dl->dl_icmp_ip_dst, addr, sizeof(addr));
+	  snprintf(inner_ip, sizeof(inner_ip),
+		   " to %s size %d ttl %d tos 0x%02x ipid 0x%04x",
+		   addr, dl->dl_icmp_ip_size, dl->dl_icmp_ip_ttl,
+		   dl->dl_icmp_ip_tos, dl->dl_icmp_ip_id);
+	}
+      else
+	{
+	  addr_tostr(AF_INET6, dl->dl_icmp_ip_dst, addr, sizeof(addr));
+	  snprintf(inner_ip, sizeof(inner_ip),
+		   " to %s size %d hlim %d flow 0x%05x", addr,
+		   dl->dl_icmp_ip_size, dl->dl_icmp_ip_hlim,
+		   dl->dl_icmp_ip_flow);
+	}
+
+      switch(dl->dl_icmp_ip_proto)
+	{
+	case IPPROTO_UDP:
+	  snprintf(inner_transport, sizeof(inner_transport),
+		   " proto UDP sport %d dport %d sum 0x%04x",
+		   dl->dl_icmp_udp_sport, dl->dl_icmp_udp_dport,
+		   ntohs(dl->dl_icmp_udp_sum));
+	  break;
+
+	case IPPROTO_ICMP:
+	case IPPROTO_ICMPV6:
+	  snprintf(inner_transport, sizeof(inner_transport),
+		   " proto ICMP type %d code %d id %04x seq %d",
+		   dl->dl_icmp_icmp_type, dl->dl_icmp_icmp_code,
+		   dl->dl_icmp_icmp_id, dl->dl_icmp_icmp_seq);
+	  break;
+
+	case IPPROTO_TCP:
+	  snprintf(inner_transport, sizeof(inner_transport),
+		   " proto TCP sport %d dport %d seq %08x",
+		   dl->dl_icmp_tcp_sport, dl->dl_icmp_tcp_dport,
+		   dl->dl_icmp_tcp_seq);
+	  break;
+
+	default:
+	  inner_transport[0] = '\0';
+	  break;
+	}
+    }
+  else
+    {
+      inner_ip[0] = '\0';
+      inner_transport[0] = '\0';
+    }
+
+  scamper_debug(NULL, "%s %s%s%s", ip, icmp, inner_ip, inner_transport);
   return;
 }
 #endif
@@ -1868,14 +2072,6 @@ void scamper_dl_cleanup()
       free(readbuf);
       readbuf = NULL;
     }
-
-#if defined(HAVE_BPF)
-  if(osinfo != NULL)
-    {
-      scamper_osinfo_free(osinfo);
-      osinfo = NULL;
-    }
-#endif
 
   return;
 }

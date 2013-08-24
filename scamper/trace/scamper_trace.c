@@ -1,11 +1,12 @@
 /*
  * scamper_trace.c
  *
- * $Id: scamper_trace.c,v 1.91 2011/09/20 23:25:27 mjl Exp $
+ * $Id: scamper_trace.c,v 1.92 2012/03/29 00:01:12 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2003-2011 The University of Waikato
  * Copyright (C) 2008 Alistair King
+ * Copyright (C) 2012      The Regents of the University of California
  *
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
@@ -27,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace.c,v 1.91 2011/09/20 23:25:27 mjl Exp $";
+  "$Id: scamper_trace.c,v 1.92 2012/03/29 00:01:12 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -164,13 +165,6 @@ void scamper_trace_dtree_free(scamper_trace_t *trace)
   return;
 }
 
-static int dtree_gss_cmp(const void *va, const void *vb)
-{
-  scamper_addr_t *a = *((scamper_addr_t **)va);
-  scamper_addr_t *b = *((scamper_addr_t **)vb);
-  return scamper_addr_cmp(a, b);
-}
-
 int scamper_trace_dtree_lss(scamper_trace_t *trace, const char *name)
 {
   if(trace->dtree == NULL || (trace->dtree->lss = strdup(name)) == NULL)
@@ -191,8 +185,8 @@ int scamper_trace_dtree_gss_add(scamper_trace_t *trace, scamper_addr_t *iface)
   trace->dtree->gss[trace->dtree->gssc] = scamper_addr_use(iface);
   trace->dtree->gssc++;
 
-  qsort(trace->dtree->gss, trace->dtree->gssc, sizeof(scamper_addr_t *),
-        dtree_gss_cmp);
+  array_qsort((void **)trace->dtree->gss, trace->dtree->gssc,
+	      (array_cmp_t)scamper_addr_cmp);
 
   return 0;
 }
@@ -204,7 +198,7 @@ scamper_addr_t *scamper_trace_dtree_gss_find(const scamper_trace_t *trace,
     return NULL;
 
   return array_find((void **)trace->dtree->gss, trace->dtree->gssc,
-                    iface, dtree_gss_cmp);
+                    iface, (array_cmp_t)scamper_addr_cmp);
 }
 
 int scamper_trace_hops_alloc(scamper_trace_t *trace, const int hops)

@@ -2,9 +2,11 @@
  * scamper_dealias_warts.c
  *
  * Copyright (C) 2008-2011 The University of Waikato
+ * Copyright (C) 2012      Matthew Luckie
+ * Copyright (C) 2012-2013 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_warts.c,v 1.3 2011/02/21 03:59:53 mjl Exp $
+ * $Id: scamper_dealias_warts.c,v 1.9 2013/01/04 04:12:36 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_warts.c,v 1.3 2011/02/21 03:59:53 mjl Exp $";
+  "$Id: scamper_dealias_warts.c,v 1.9 2013/01/04 04:12:36 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -81,7 +83,7 @@ static const warts_var_t dealias_ally_vars[] =
 #define WARTS_DEALIAS_MERCATOR_ATTEMPTS     1
 #define WARTS_DEALIAS_MERCATOR_WAIT_TIMEOUT 2
 
-static const warts_var_t dealias_mercator_vars[] = 
+static const warts_var_t dealias_mercator_vars[] =
 {
   {WARTS_DEALIAS_MERCATOR_ATTEMPTS,     1, -1},
   {WARTS_DEALIAS_MERCATOR_WAIT_TIMEOUT, 1, -1},
@@ -159,6 +161,9 @@ static const warts_var_t dealias_bump_vars[] =
 #define WARTS_DEALIAS_PROBEDEF_ICMP_ID    9
 #define WARTS_DEALIAS_PROBEDEF_DST        10
 #define WARTS_DEALIAS_PROBEDEF_SRC        11
+#define WARTS_DEALIAS_PROBEDEF_SIZE       12
+#define WARTS_DEALIAS_PROBEDEF_MTU        13
+#define WARTS_DEALIAS_PROBEDEF_ICMP_CSUM  14
 
 static const warts_var_t dealias_probedef_vars[] =
 {
@@ -173,6 +178,9 @@ static const warts_var_t dealias_probedef_vars[] =
   {WARTS_DEALIAS_PROBEDEF_ICMP_ID,    2, -1},
   {WARTS_DEALIAS_PROBEDEF_DST,       -1, -1},
   {WARTS_DEALIAS_PROBEDEF_SRC,       -1, -1},
+  {WARTS_DEALIAS_PROBEDEF_SIZE,       2, -1},
+  {WARTS_DEALIAS_PROBEDEF_MTU,        2, -1},
+  {WARTS_DEALIAS_PROBEDEF_ICMP_CSUM,  2, -1},
 };
 #define dealias_probedef_vars_mfb WARTS_VAR_MFB(dealias_probedef_vars)
 
@@ -202,6 +210,8 @@ static const warts_var_t dealias_probe_vars[] =
 #define WARTS_DEALIAS_REPLY_PROTO      8
 #define WARTS_DEALIAS_REPLY_TCP_FLAGS  9
 #define WARTS_DEALIAS_REPLY_SRC        10
+#define WARTS_DEALIAS_REPLY_IPID32     11
+#define WARTS_DEALIAS_REPLY_FLAG       12
 
 static const warts_var_t dealias_reply_vars[] =
 {
@@ -215,6 +225,8 @@ static const warts_var_t dealias_reply_vars[] =
   {WARTS_DEALIAS_REPLY_PROTO,       1, -1},
   {WARTS_DEALIAS_REPLY_TCP_FLAGS,   1, -1},
   {WARTS_DEALIAS_REPLY_SRC,        -1, -1},
+  {WARTS_DEALIAS_REPLY_IPID32,      4, -1},
+  {WARTS_DEALIAS_REPLY_FLAG,        1, -1},
 };
 #define dealias_reply_vars_mfb WARTS_VAR_MFB(dealias_reply_vars)
 
@@ -345,15 +357,35 @@ static int warts_dealias_probedef_params(const scamper_file_t *sf,
   flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_TOS, &max_id);
   state->params_len += 1;
 
-  /* always include the first 4 bytes of the IP payload */
-  flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_4BYTES, &max_id);
-  state->params_len += 4;
+  if(p->size != 0)
+    {
+      flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_SIZE, &max_id);
+      state->params_len += 2;
+    }
+  if(p->mtu != 0)
+    {
+      flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_MTU, &max_id);
+      state->params_len += 2;
+    }
 
-  /* sometimes include icmp id/sequence number */
+  /* always include the first 4 bytes of the IP payload */
+  if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP(p) ||
+     SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP(p))
+    {
+      flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_4BYTES, &max_id);
+      state->params_len += 4;
+    }
+
+  /* sometimes include icmp id/csum */
   if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(p))
     {
       flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_ICMP_ID, &max_id);
       state->params_len += 2;
+      if(p->un.icmp.csum != 0)
+	{
+	  flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_ICMP_CSUM, &max_id);
+	  state->params_len += 2;
+	}
     }
 
   /* sometimes include tcp flags */
@@ -378,9 +410,8 @@ static int warts_dealias_probedef_read(scamper_dealias_probedef_t *p,
 				       uint8_t *buf,uint32_t *off,uint32_t len)
 {
   uint8_t bytes[4]; uint16_t bytes_len = 4;
-  uint16_t u16;
   uint8_t tcp_flags = 0;
-  uint16_t icmpid   = 0;
+  uint16_t icmpid = 0, csum = 0;
   warts_param_reader_t handlers[] = {
     {&p->dst,    (wpr_t)extract_addr_gid,  state},
     {&p->src,    (wpr_t)extract_addr_gid,  state},
@@ -393,34 +424,34 @@ static int warts_dealias_probedef_read(scamper_dealias_probedef_t *p,
     {&icmpid,    (wpr_t)extract_uint16,    NULL},
     {&p->dst,    (wpr_t)extract_addr,      table},
     {&p->src,    (wpr_t)extract_addr,      table},
+    {&p->size,   (wpr_t)extract_uint16,    NULL},
+    {&p->mtu,    (wpr_t)extract_uint16,    NULL},
+    {&csum,      (wpr_t)extract_uint16,    NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
+  uint32_t o = *off;
 
   if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0)
     return -1;
 
   if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(p))
     {
-      p->un.icmp.type = bytes[0];
-      p->un.icmp.code = bytes[1];
-      memcpy(&u16, bytes+2, 2);
-      p->un.icmp.csum = ntohs(u16);
-      p->un.icmp.id   = icmpid;
+      if(flag_isset(&buf[o], WARTS_DEALIAS_PROBEDEF_4BYTES))
+	p->un.icmp.csum = bytes_ntohs(bytes+2);
+      else
+	p->un.icmp.csum = csum;
+      p->un.icmp.id = icmpid;
     }
   else if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP(p))
     {
-      memcpy(&u16, bytes+0, 2);
-      p->un.tcp.sport = ntohs(u16);
-      memcpy(&u16, bytes+2, 2);
-      p->un.tcp.dport = ntohs(u16);
+      p->un.tcp.sport = bytes_ntohs(bytes+0);
+      p->un.tcp.dport = bytes_ntohs(bytes+2);
       p->un.tcp.flags = tcp_flags;
     }
   else if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP(p))
     {
-      memcpy(&u16, bytes+0, 2);
-      p->un.udp.sport = ntohs(u16);
-      memcpy(&u16, bytes+2, 2);
-      p->un.udp.dport = ntohs(u16);
+      p->un.udp.sport = bytes_ntohs(bytes+0);
+      p->un.udp.dport = bytes_ntohs(bytes+2);
     }
   else
     {
@@ -439,7 +470,7 @@ static void warts_dealias_probedef_write(const scamper_dealias_probedef_t *p,
 {
   uint8_t bytes[4]; uint16_t bytes_len = 4;
   uint8_t tcp_flags;
-  uint16_t icmpid;
+  uint16_t icmpid, csum;
   uint16_t u16;
 
   warts_param_writer_t handlers[] = {
@@ -454,16 +485,16 @@ static void warts_dealias_probedef_write(const scamper_dealias_probedef_t *p,
     {&icmpid,      (wpw_t)insert_uint16,        NULL},
     {p->dst,       (wpw_t)insert_addr,          table},
     {p->src,       (wpw_t)insert_addr,          table},
+    {&p->size,     (wpw_t)insert_uint16,        NULL},
+    {&p->mtu,      (wpw_t)insert_uint16,        NULL},
+    {&csum,        (wpw_t)insert_uint16,        NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);
 
   if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(p))
     {
-      bytes[0] = p->un.icmp.type;
-      bytes[1] = p->un.icmp.code;
-      u16 = htons(p->un.icmp.csum);
-      memcpy(bytes+2, &u16, 2);
       icmpid = p->un.icmp.id;
+      csum   = p->un.icmp.csum;
     }
   else if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP(p))
     {
@@ -818,7 +849,7 @@ static int warts_dealias_radargun_read(scamper_dealias_t *dealias,
     return -1;
 
   rg->probedefc    = probedefc;
-  rg->attempts     = attempts;  
+  rg->attempts     = attempts;
   rg->wait_probe   = wait_probe;
   rg->wait_round   = wait_round;
   rg->wait_timeout = wait_timeout;
@@ -1280,6 +1311,21 @@ static int warts_dealias_reply_state(const scamper_dealias_reply_t *reply,
 	  if(SCAMPER_DEALIAS_REPLY_IS_TCP(reply) == 0)
 	    continue;
 	}
+      else if(var->id == WARTS_DEALIAS_REPLY_IPID)
+	{
+	  if(!SCAMPER_ADDR_TYPE_IS_IPV4(reply->src) || reply->ipid == 0)
+	    continue;
+	}
+      else if(var->id == WARTS_DEALIAS_REPLY_IPID32)
+	{
+	  if(!SCAMPER_ADDR_TYPE_IS_IPV6(reply->src) || reply->ipid32 == 0)
+	    continue;
+	}
+      else if(var->id == WARTS_DEALIAS_REPLY_FLAG)
+	{
+	  if(reply->flags == 0)
+	    continue;
+	}
 
       flag_set(state->flags, var->id, &max_id);
 
@@ -1318,6 +1364,8 @@ static int warts_dealias_reply_read(scamper_dealias_reply_t *reply,
     {&reply->proto,         (wpr_t)extract_byte,                  NULL},
     {&reply->tcp_flags,     (wpr_t)extract_byte,                  NULL},
     {&reply->src,           (wpr_t)extract_addr,                  table},
+    {&reply->ipid32,        (wpr_t)extract_uint32,                NULL},
+    {&reply->flags,         (wpr_t)extract_byte,                  NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
   uint32_t o = *off;
@@ -1355,6 +1403,8 @@ static int warts_dealias_reply_write(const scamper_dealias_reply_t *r,
     {&r->proto,         (wpw_t)insert_byte,                  NULL},
     {&r->tcp_flags,     (wpw_t)insert_byte,                  NULL},
     {r->src,            (wpw_t)insert_addr,                  table},
+    {&r->ipid32,        (wpw_t)insert_uint32,                NULL},
+    {&r->flags,         (wpw_t)insert_byte,                  NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);
   warts_params_write(buf, off, len,
@@ -1380,10 +1430,14 @@ static int warts_dealias_probe_state(const scamper_file_t *sf,
   state->params_len += 8;
   flag_set(state->flags, WARTS_DEALIAS_PROBE_REPLYC, &i);
   state->params_len += 2;
-  flag_set(state->flags, WARTS_DEALIAS_PROBE_IPID, &i);
-  state->params_len += 2;
   flag_set(state->flags, WARTS_DEALIAS_PROBE_SEQ, &i);
   state->params_len += 4;
+
+  if(SCAMPER_ADDR_TYPE_IS_IPV4(probe->def->dst))
+    {
+      flag_set(state->flags, WARTS_DEALIAS_PROBE_IPID, &i);
+      state->params_len += 2;
+    }
 
   state->flags_len = fold_flags(state->flags, i);
   state->replies = NULL;
@@ -1436,7 +1490,7 @@ static int warts_dealias_probe_read(scamper_dealias_probe_t *probe,
       return -1;
     }
 
-  probe->probedef = defs + probedef_id;
+  probe->def = defs + probedef_id;
 
   if(probe->replyc == 0)
     return 0;
@@ -1472,7 +1526,7 @@ static void warts_dealias_probe_write(const scamper_dealias_probe_t *probe,
 {
   int i;
   warts_param_writer_t handlers[] = {
-    {&probe->probedef->id, (wpw_t)insert_uint32,  NULL},
+    {&probe->def->id,      (wpw_t)insert_uint32,  NULL},
     {&probe->tx,           (wpw_t)insert_timeval, NULL},
     {&probe->replyc,       (wpw_t)insert_uint16,  NULL},
     {&probe->ipid,         (wpw_t)insert_uint16,  NULL},
@@ -1583,9 +1637,8 @@ static void warts_dealias_probes_free(warts_dealias_probe_t *probes,
   if(probes != NULL)
     {
       for(i=0; i<cnt; i++)
-	{
+	if(probes[i].replies != NULL)
 	  free(probes[i].replies);
-	}
       free(probes);
     }
 
@@ -1599,7 +1652,7 @@ int scamper_file_warts_dealias_write(const scamper_file_t *sf,
 			      warts_dealias_data_t *, warts_addrtable_t *,
 			      uint32_t *) = {
     warts_dealias_mercator_state,
-    warts_dealias_ally_state,    
+    warts_dealias_ally_state,
     warts_dealias_radargun_state,
     warts_dealias_prefixscan_state,
     warts_dealias_bump_state,

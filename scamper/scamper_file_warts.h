@@ -3,10 +3,11 @@
  *
  * the Waikato ARTS file format replacement
  *
- * $Id: scamper_file_warts.h,v 1.19 2011/10/25 02:58:46 mjl Exp $
+ * $Id: scamper_file_warts.h,v 1.20 2012/03/29 00:01:12 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -172,7 +173,6 @@ int flag_isset(const uint8_t *flags, const int id);
 uint16_t fold_flags(uint8_t *flags, const int max_id);
 
 int warts_str_size(const char *str);
-int warts_addr_cmp(const void *va, const void *vb);
 uint32_t warts_addr_size(warts_addrtable_t *t, scamper_addr_t *addr);
 void warts_addrtable_clean(warts_addrtable_t *table);
 

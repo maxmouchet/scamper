@@ -1,7 +1,7 @@
 /*
  * scamper_writebuf.c: use in combination with select to send without blocking
  *
- * $Id: scamper_writebuf.c,v 1.30 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_writebuf.c,v 1.32 2013/08/07 21:33:46 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_writebuf.c,v 1.30 2011/09/16 03:15:44 mjl Exp $";
+  "$Id: scamper_writebuf.c,v 1.32 2013/08/07 21:33:46 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -75,7 +75,7 @@ static int writebuf_tx(scamper_writebuf_t *wb, int fd)
   slist_node_t *node;
   int i, iovs;
 
-  if((iovs = slist_count(wb->iovs)) == 0)
+  if((iovs = slist_count(wb->iovs)) <= 0)
     {
       return 0;
     }
@@ -313,7 +313,7 @@ int scamper_writebuf_send(scamper_writebuf_t *wb, const void *data, size_t len)
    */
   if(wb->error != 0)
     return -1;
-    
+
   /* allocate the iovec and fill it out */
   if((iov = malloc_zero(sizeof(struct iovec))) == NULL ||
      (iov->iov_base = memdup(data, len)) == NULL)

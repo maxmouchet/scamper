@@ -1,7 +1,7 @@
 /*
  * warts-fix
  *
- * $Id: sc_wartsfix.c,v 1.9.10.1 2012/03/20 17:51:44 mjl Exp $
+ * $Id: sc_wartsfix.c,v 1.10 2012/02/28 00:21:11 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartsfix.c,v 1.9.10.1 2012/03/20 17:51:44 mjl Exp $";
+  "$Id: sc_wartsfix.c,v 1.10 2012/02/28 00:21:11 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

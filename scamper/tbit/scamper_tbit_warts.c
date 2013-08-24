@@ -5,7 +5,7 @@
  * Copyright (C) 2010-2011 The University of Waikato
  * Authors: Ben Stasiewicz, Matthew Luckie
  *
- * $Id: scamper_tbit_warts.c,v 1.7 2011/11/17 21:32:28 mjl Exp $
+ * $Id: scamper_tbit_warts.c,v 1.10 2012/05/04 18:42:51 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_warts.c,v 1.7 2011/11/17 21:32:28 mjl Exp $";
+  "$Id: scamper_tbit_warts.c,v 1.10 2012/05/04 18:42:51 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -118,10 +118,12 @@ static const warts_var_t tbit_pmtud_vars[] =
 #define tbit_pmtud_vars_mfb WARTS_VAR_MFB(tbit_pmtud_vars)
 
 #define WARTS_TBIT_NULL_OPTIONS 1
+#define WARTS_TBIT_NULL_RESULTS 2
 
 static const warts_var_t tbit_null_vars[] =
 {
   {WARTS_TBIT_NULL_OPTIONS, 2, -1},
+  {WARTS_TBIT_NULL_RESULTS, 2, -1},
 };
 #define tbit_null_vars_mfb WARTS_VAR_MFB(tbit_null_vars)
 
@@ -179,8 +181,10 @@ static void warts_tbit_null_params(const scamper_tbit_t *tbit,
 
   for(i=0; i<sizeof(tbit_null_vars)/sizeof(warts_var_t); i++)
     {
-      var = &tbit_pmtud_vars[i];
+      var = &tbit_null_vars[i];
       if(var->id == WARTS_TBIT_NULL_OPTIONS && null->options == 0)
+	continue;
+      if(var->id == WARTS_TBIT_NULL_RESULTS && null->results == 0)
 	continue;
 
       flag_set(state->flags, var->id, &max_id);
@@ -247,13 +251,16 @@ static int warts_tbit_null_read(scamper_tbit_t *tbit, const uint8_t *buf,
 {
   scamper_tbit_null_t *null = tbit->data;
   uint16_t options = 0;
+  uint16_t results = 0;
   warts_param_reader_t handlers[] = {
-    {&options,  (wpr_t)extract_uint16, NULL},
+    {&options, (wpr_t)extract_uint16, NULL},
+    {&results, (wpr_t)extract_uint16, NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
   if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0)
     goto err;
-  null->options  = options;
+  null->options = options;
+  null->results = results;
   tbit->data = null;
   return 0;
 
@@ -267,7 +274,8 @@ static void warts_tbit_null_write(const scamper_tbit_t *tbit, uint8_t *buf,
 {
   scamper_tbit_null_t *null = tbit->data;
   warts_param_writer_t handlers[] = {
-    {&null->options,  (wpw_t)insert_uint16, NULL},
+    {&null->options, (wpw_t)insert_uint16, NULL},
+    {&null->results, (wpw_t)insert_uint16, NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);
   warts_params_write(buf, off, len, state->flags, state->flags_len,
@@ -500,7 +508,7 @@ static void warts_tbit_params(const scamper_tbit_t *tbit,
 {
   const warts_var_t *var;
   int i, max_id = 0;
-    
+
   /* Unset all flags */
   memset(flags, 0, tbit_vars_mfb);
   *params_len = 0;
@@ -525,7 +533,7 @@ static void warts_tbit_params(const scamper_tbit_t *tbit,
 
       /* Set the flag for the rest of the variables */
       flag_set(flags, var->id, &max_id);
-       
+
       /* Variables that don't have a fixed size */
       if(var->id == WARTS_TBIT_SRC)
         {
@@ -659,7 +667,7 @@ int scamper_file_warts_tbit_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     {
       goto err;
     }
-    
+
   /* Read in the tbit data from the warts file */
   if(warts_tbit_params_read(tbit, &table, state, buf, &off, hdr->len) != 0)
     {
@@ -680,12 +688,12 @@ int scamper_file_warts_tbit_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     }
 
   /* Determine how many tbit_pkts to read */
-  if(tbit->pktc > 0) 
+  if(tbit->pktc > 0)
     {
       /* Allocate the tbit_pkts array */
       if(scamper_tbit_pkts_alloc(tbit, tbit->pktc) != 0)
 	goto err;
-        
+
       /* For each tbit packet, read it and insert it into the tbit structure */
       for(i=0; i<tbit->pktc; i++)
         {
@@ -762,8 +770,8 @@ int scamper_file_warts_tbit_write(const scamper_file_t *sf,
   size_t size;
 
   memset(&table, 0, sizeof(table));
-        
-  /* Set the tbit data (not including the packets) */  
+
+  /* Set the tbit data (not including the packets) */
   warts_tbit_params(tbit, &table, flags, &flags_len, &params_len);
   len = 8 + flags_len + params_len + 2;
 

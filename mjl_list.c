@@ -2,7 +2,7 @@
  * linked list routines
  * by Matthew Luckie
  *
- * Copyright (C) 2004-2011 Matthew Luckie. All rights reserved.
+ * Copyright (C) 2004-2013 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_list.c,v 1.60 2011/10/25 02:50:32 mjl Exp $";
+  "$Id: mjl_list.c,v 1.67 2013/08/07 22:27:06 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -88,7 +88,49 @@ struct clist
   clist_onremove_t  onremove;
 };
 
+static int random_u32(unsigned int *r)
+{
+#ifdef _WIN32
+  unsigned int ui;
+  if(rand_s(&ui) != 0)
+    return -1;
+  *r = ui;
+#else
+  *r = random();
+#endif
+  return 0;
+}
+
+static int shuffle_array(void **array, int len)
+{
+  int n = len;
+  unsigned int k;
+  void *tmp;
+
+  while(n > 1)
+    {
+      n--;
+      if(random_u32(&k) != 0)
+	return -1;
+      k %= n+1;
+
+      tmp = array[k];
+      array[k] = array[n];
+      array[n] = tmp;
+    }
+
+  return 0;
+}
+
 #if !defined(NDEBUG) && defined(MJLLIST_DEBUG)
+static void slist_assert_sort(const slist_t *list, slist_cmp_t cmp)
+{
+  slist_node_t *n;
+  for(n=list->head; n->next != NULL; n = n->next)
+    assert(cmp(n->item, n->next->item) <= 0);
+  return;
+}
+
 static void slist_assert(const slist_t *list)
 {
   slist_node_t *node;
@@ -122,10 +164,11 @@ static void slist_assert(const slist_t *list)
 	}
       assert(node == list->tail);
     }
-  return;  
+  return;
 }
 #else
 #define slist_assert(list)((void)0)
+#define slist_assert_sort(list,cmp)((void)0)
 #endif
 
 void slist_lock(slist_t *list)
@@ -239,13 +282,13 @@ slist_t *slist_dup_dm(slist_t *oldlist,const slist_foreach_t func,void *param,
   list = dmalloc_malloc(file, line, len, DMALLOC_FUNC_MALLOC, 0, 0);
 #endif
 
-  if(list != NULL)
-    {
-      list->head = NULL;
-      list->tail = NULL;
-      list->length = 0;
-    }
-  else return NULL;
+  if(list == NULL)
+    return NULL;
+  list->head = NULL;
+  list->tail = NULL;
+  list->length = 0;
+  list->lock = 0;
+  list->onremove = NULL;
 
   if(oldlist->head != NULL)
     {
@@ -463,10 +506,23 @@ void *slist_head_get(const slist_t *list)
   return list->head->item;
 }
 
+void *slist_tail_get(const slist_t *list)
+{
+  assert(list != NULL);
+  if(list->tail == NULL) return NULL;
+  return list->tail->item;
+}
+
 slist_node_t *slist_head_node(const slist_t *list)
 {
   assert(list != NULL);
   return list->head;
+}
+
+slist_node_t *slist_tail_node(const slist_t *list)
+{
+  assert(list != NULL);
+  return list->tail;
 }
 
 void *slist_node_item(const slist_node_t *node)
@@ -523,6 +579,31 @@ static void slist_swap(slist_node_t **a, int i, int j)
   return;
 }
 
+static slist_node_t **slist_node_array(const slist_t *list)
+{
+  slist_node_t **v = NULL, *n;
+  int i = 0;
+  assert(list->length >= 2);
+  if((v = malloc(sizeof(slist_node_t *) * list->length)) == NULL)
+    return NULL;
+  for(n = list->head; n != NULL; n = n->next)
+    v[i++] = n;
+  assert(i == list->length);
+  return v;
+}
+
+static void slist_rebuild(slist_t *list, slist_node_t **v)
+{
+  int i;
+  list->head = v[0];
+  list->tail = v[list->length-1];
+  list->tail->next = NULL;
+  for(i=0; i<list->length-1; i++)
+    v[i]->next = v[i+1];
+  slist_assert(list);
+  return;
+}
+
 /*
  * slist_qsort_0:
  *
@@ -560,8 +641,7 @@ static void slist_qsort_0(slist_node_t **a, slist_cmp_t cmp, int l, int r)
 
 int slist_qsort(slist_t *list, slist_cmp_t cmp)
 {
-  slist_node_t **v = NULL, *n;
-  int i = 0;
+  slist_node_t **v;
 
   slist_assert(list);
   assert(list->lock == 0);
@@ -570,34 +650,40 @@ int slist_qsort(slist_t *list, slist_cmp_t cmp)
   if(list->length < 2)
     return 0;
 
-  /* allocate an array to hold all slist_node_t structures in the list */
-  if((v = malloc(sizeof(slist_node_t *) * list->length)) == NULL)
+  if((v = slist_node_array(list)) == NULL)
     return -1;
-  for(n = list->head; n != NULL; n = n->next)
-    v[i++] = n;
-  assert(i == list->length);
-
-  /* sort the nodes */
   slist_qsort_0(v, cmp, 0, list->length-1);
-
-  /* rebuild the list using the ordered array */
-  list->head = v[0];
-  list->tail = v[list->length-1];
-  list->tail->next = NULL;
-  for(i=0; i<list->length-1; i++)
-    v[i]->next = v[i+1];
+  slist_rebuild(list, v);
   free(v);
+
+  slist_assert_sort(list, cmp);
+  return 0;
+}
+
+int slist_shuffle(slist_t *list)
+{
+  slist_node_t **v;
   slist_assert(list);
-
-#if !defined(NDEBUG) && defined(MJLLIST_DEBUG)
-  for(n=list->head; n->next != NULL; n = n->next)
-    assert(cmp(n->item, n->next->item) <= 0);
-#endif
-
+  assert(list->lock == 0);
+  if(list->length < 2)
+    return 0;
+  if((v = slist_node_array(list)) == NULL)
+    return -1;
+  shuffle_array((void **)v, list->length);
+  slist_rebuild(list, v);
+  free(v);
   return 0;
 }
 
 #if !defined(NDEBUG) && defined(MJLLIST_DEBUG)
+static void dlist_assert_sort(const dlist_t *list, dlist_cmp_t cmp)
+{
+  dlist_node_t *n;
+  for(n=list->head; n->next != NULL; n = n->next)
+    assert(cmp(n->item, n->next->item) <= 0);
+  return;
+}
+
 static void dlist_assert(const dlist_t *list)
 {
   dlist_node_t *node;
@@ -644,6 +730,7 @@ static void dlist_assert(const dlist_t *list)
 }
 #else
 #define dlist_assert(list)((void)0)
+#define dlist_assert_sort(list,cmp)((void)0)
 #endif
 
 void dlist_lock(dlist_t *list)
@@ -1157,6 +1244,116 @@ int dlist_count(const dlist_t *list)
   assert(list != NULL);
   dlist_assert(list);
   return list->length;
+}
+
+static void dlist_swap(dlist_node_t **a, int i, int j)
+{
+  dlist_node_t *item = a[i];
+  a[i] = a[j];
+  a[j] = item;
+  return;
+}
+
+static dlist_node_t **dlist_node_array(const dlist_t *list)
+{
+  dlist_node_t **v = NULL, *n;
+  int i = 0;
+  assert(list->length >= 2);
+  if((v = malloc(sizeof(dlist_node_t *) * list->length)) == NULL)
+    return NULL;
+  for(n = list->head; n != NULL; n = n->next)
+    v[i++] = n;
+  assert(i == list->length);
+  return v;
+}
+
+static void dlist_rebuild(dlist_t *list, dlist_node_t **v)
+{
+  int i;
+  list->head = v[0];
+  list->tail = v[list->length-1];
+  list->tail->next = NULL;
+  list->head->prev = NULL;
+  for(i=0; i<list->length-1; i++)
+    {
+      if(i > 0)
+	v[i]->prev = v[i-1];
+      if(i < list->length-1)
+	v[i]->next = v[i+1];
+    }
+  dlist_assert(list);
+  return;
+}
+
+/*
+ * dlist_qsort_0:
+ *
+ * recursive function that implements quicksort on an array of dlist_node_t
+ * structures.
+ */
+static void dlist_qsort_0(dlist_node_t **a, dlist_cmp_t cmp, int l, int r)
+{
+  dlist_node_t *c;
+  int i, p;
+
+  if(l >= r)
+    return;
+
+  dlist_swap(a, (l+r)/2, l);
+
+  c = a[l];
+  p = l;
+
+  for(i=l+1; i<=r; i++)
+    {
+      if(cmp(a[i]->item, c->item) < 0)
+	{
+	  p++;
+	  dlist_swap(a, p, i);
+	}
+    }
+  dlist_swap(a, p, l);
+
+  dlist_qsort_0(a, cmp, l, p-1);
+  dlist_qsort_0(a, cmp, p+1, r);
+
+  return;
+}
+
+int dlist_qsort(dlist_t *list, dlist_cmp_t cmp)
+{
+  dlist_node_t **v;
+
+  dlist_assert(list);
+  assert(list->lock == 0);
+
+  /* don't have to order the list if there less than two items in it */
+  if(list->length < 2)
+    return 0;
+
+  if((v = dlist_node_array(list)) == NULL)
+    return -1;
+  dlist_qsort_0(v, cmp, 0, list->length-1);
+  dlist_rebuild(list, v);
+  free(v);
+
+  dlist_assert_sort(list, cmp);
+  return 0;
+}
+
+int dlist_shuffle(dlist_t *list)
+{
+  dlist_node_t **v;
+  dlist_assert(list);
+  assert(list->lock == 0);
+  if(list->length < 2)
+    return 0;
+  if((v = dlist_node_array(list)) == NULL)
+    return -1;
+  shuffle_array((void **)v, list->length);
+  dlist_rebuild(list, v);
+  free(v);
+  return 0;
 }
 
 #if !defined(NDEBUG) && defined(MJLLIST_DEBUG)

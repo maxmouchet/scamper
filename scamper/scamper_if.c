@@ -1,7 +1,7 @@
 /*
  * scamper_if.c
  *
- * $Id: scamper_if.c,v 1.22 2011/04/17 03:56:11 mjl Exp $
+ * $Id: scamper_if.c,v 1.23 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -18,12 +18,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_if.c,v 1.22 2011/04/17 03:56:11 mjl Exp $";
+  "$Id: scamper_if.c,v 1.23 2012/04/05 18:00:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

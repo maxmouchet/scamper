@@ -1,7 +1,7 @@
 /*
  * scamper_file_arts.c
  *
- * $Id: scamper_file_arts.c,v 1.59 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_file_arts.c,v 1.60 2012/04/05 18:00:54 mjl Exp $
  *
  * code to read the legacy arts data file format into scamper_hop structures.
  *
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_arts.c,v 1.59 2011/09/16 03:15:44 mjl Exp $";
+  "$Id: scamper_file_arts.c,v 1.60 2012/04/05 18:00:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -168,7 +168,7 @@ static int arts_read_hdr(const scamper_file_t *sf, arts_header_t *ah)
 	    {
 	      goto err;
 	    }
-	  memcpy(&junk32, tmp + i + 8, 4); 
+	  memcpy(&junk32, tmp + i + 8, 4);
 	  ah->creation = ntohl(junk32);
 	  break;
 	}
@@ -181,7 +181,7 @@ static int arts_read_hdr(const scamper_file_t *sf, arts_header_t *ah)
 	  goto err;
 	}
     }
- 
+
   /* free the buffer allocated, if there was one */
   if(tmp != buf) free(tmp);
 
@@ -266,7 +266,7 @@ static int arts_hop_read(scamper_trace_hop_t *hop, const uint8_t *buf,
       junk32 = ntohl(junk32);
       hop->hop_rtt.tv_sec  = junk32 / 1000000;
       hop->hop_rtt.tv_usec = junk32 % 1000000;
-      
+
       /* num tries */
       hop->hop_probe_id = buf[i++];
     }
@@ -453,7 +453,7 @@ static scamper_trace_t *arts_read_trace(const scamper_file_t *sf,
 	  goto err;
 	}
       scamper_list_use(trace->list);
-      
+
       /* cycle id */
       memcpy(&junk32, buf+i, 4); i += 4; junk32 = ntohl(junk32);
       if((trace->cycle = arts_cycle_get(state, trace->list, junk32)) == NULL)
@@ -484,7 +484,7 @@ static scamper_trace_t *arts_read_trace(const scamper_file_t *sf,
   hop_distance = buf[i++];
 
   /*
-   * read the next 8 bit field.  the first bit says if the trace was 
+   * read the next 8 bit field.  the first bit says if the trace was
    * successful in probing to the end host, and the other 7 bits say
    * how many hops actually responded to a probe.
    */
@@ -609,7 +609,7 @@ static scamper_trace_t *arts_read_trace(const scamper_file_t *sf,
   if(hops != NULL)
     {
       trace->hops[hops->hop_probe_ttl-1] = hop = hops;
-      while(hop->hop_next != NULL) 
+      while(hop->hop_next != NULL)
 	{
 	  if(hop->hop_probe_ttl != hop->hop_next->hop_probe_ttl)
 	    {

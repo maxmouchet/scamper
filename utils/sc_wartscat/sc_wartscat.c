@@ -3,7 +3,7 @@
  *
  * This is a utility program to concatenate warts data files together.
  *
- * $Id: sc_wartscat.c,v 1.19 2011/02/21 03:59:53 mjl Exp $
+ * $Id: sc_wartscat.c,v 1.20 2012/04/05 18:00:55 mjl Exp $
  *
  * Copyright (C) 2007-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartscat.c,v 1.19 2011/02/21 03:59:53 mjl Exp $";
+  "$Id: sc_wartscat.c,v 1.20 2012/04/05 18:00:55 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -353,7 +353,7 @@ static int sort_cat_fill(heap_t *heap, sort_struct_t *s)
 
 	case SCAMPER_FILE_OBJ_DEALIAS:
 	  timeval_cpy(&s->tv, &((scamper_dealias_t *)s->data)->start);
-	  break;	
+	  break;
 
 	case SCAMPER_FILE_OBJ_TBIT:
 	  timeval_cpy(&s->tv, &((scamper_tbit_t *)s->data)->start);

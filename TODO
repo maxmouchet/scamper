@@ -1,4 +1,4 @@
-$Id: TODO,v 1.16 2009/07/28 22:35:35 mjl Exp $
+$Id: TODO,v 1.17 2012/05/29 17:27:50 mjl Exp $
 
 * investigate if gettimeofday has to be called so much
 
@@ -9,8 +9,6 @@ $Id: TODO,v 1.16 2009/07/28 22:35:35 mjl Exp $
 * ensure that all clients that have observed sources unobserves.
 
 * ensure that all outfiles are closed when scamper shuts down.
-
-* reconsider use of int64_t in timeval_* functions
 
 * in the scamper.1 man page:
    document control socket quoting rules.

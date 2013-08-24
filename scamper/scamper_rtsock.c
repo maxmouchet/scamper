@@ -1,10 +1,10 @@
 /*
  * scamper_rtsock: code to deal with a route socket or equivalent
  *
- * $Id: scamper_rtsock.c,v 1.74 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_rtsock.c,v 1.78 2012/05/08 17:37:34 mjl Exp $
  *
  *          Matthew Luckie
- * 
+ *
  *          Supported by:
  *           The University of Waikato
  *           NLANR Measurement and Network Analysis
@@ -41,7 +41,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_rtsock.c,v 1.74 2011/09/16 03:15:44 mjl Exp $";
+  "$Id: scamper_rtsock.c,v 1.78 2012/05/08 17:37:34 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -50,7 +50,7 @@ static const char rcsid[] =
 #include "internal.h"
 
 #if defined(__APPLE__)
-static int broken = 0;
+static int broken = -1;
 #endif
 
 /* include support for the netlink socket in linux */
@@ -135,6 +135,7 @@ struct rtmsg
 #include "scamper_fds.h"
 #include "scamper_rtsock.h"
 #include "scamper_privsep.h"
+#include "scamper_osinfo.h"
 #include "scamper_debug.h"
 #include "utils.h"
 #include "mjl_list.h"
@@ -227,10 +228,21 @@ static void rtmsg_dump(const uint8_t *buf, size_t len)
 }
 #endif
 
-static int rt_roundup(size_t len)
+int scamper_rtsock_roundup(size_t len)
 {
 #ifdef __APPLE__
-  if(broken)
+  const scamper_osinfo_t *osinfo;
+
+  if(broken == -1)
+    {
+      osinfo = scamper_osinfo_get();
+      if(osinfo->os_id == SCAMPER_OSINFO_OS_DARWIN && osinfo->os_rel[0] >= 10)
+	broken = 1;
+      else
+	broken = 0;
+    }
+
+  if(broken != 0)
     {
       if(len > 0)
 	return (1 + ((len - 1) | (sizeof(uint32_t) - 1)));
@@ -265,12 +277,12 @@ static int scamper_rtsock_getifindex(int fd, scamper_addr_t *dst)
     sockaddr_compose((struct sockaddr *)&sas, AF_INET6, dst->addr, 0);
   else
     return -1;
-    
+
   if((slen = sockaddr_len((struct sockaddr *)&sas)) <= 0)
     return -1;
 
-  len = sizeof(struct rt_msghdr) + rt_roundup(slen) +
-    rt_roundup(sizeof(struct sockaddr_dl));
+  len = sizeof(struct rt_msghdr) + scamper_rtsock_roundup(slen) +
+    scamper_rtsock_roundup(sizeof(struct sockaddr_dl));
   if(len > sizeof(buf))
     return -1;
 
@@ -284,7 +296,8 @@ static int scamper_rtsock_getifindex(int fd, scamper_addr_t *dst)
   rtm->rtm_seq     = seq;
   memcpy(buf + sizeof(struct rt_msghdr), &sas, (size_t)slen);
 
-  sdl = (struct sockaddr_dl *)(buf+sizeof(struct rt_msghdr)+rt_roundup(slen));
+  sdl = (struct sockaddr_dl *)(buf + sizeof(struct rt_msghdr) +
+			       scamper_rtsock_roundup(slen));
   sdl->sdl_family = AF_LINK;
 
 #if !defined(__sun__)
@@ -592,7 +605,7 @@ static void rtsock_parsemsg(uint8_t *buf, size_t len)
 		  route->error = EINVAL;
 		  goto done;
 		}
-	      off += rt_roundup(tmp);
+	      off += scamper_rtsock_roundup(tmp);
 	    }
 	}
 
@@ -671,7 +684,7 @@ static void rtsock_parsemsg(uint8_t *buf, size_t len)
  * the message out.  if we did send the message, then we search for the
  * address-sequence pair, which matches the sequence number with a route
  * lookup.
- * if we get a pair back, then we remove it from the list and look for a 
+ * if we get a pair back, then we remove it from the list and look for a
  * trace matching the address.  we then take the result from the route
  * lookup and apply it to the trace.
  */
@@ -798,19 +811,6 @@ scamper_route_t *scamper_route_alloc(scamper_addr_t *dst, void *param,
 
 int scamper_rtsock_init()
 {
-#ifdef __APPLE__
-  scamper_osinfo_t *osinfo;
-
-  if((osinfo = uname_wrap()) == NULL)
-    {
-      printerror(errno, strerror, __func__, "uname failed");
-      return -1;
-    }
-  if(osinfo->os_id == SCAMPER_OSINFO_OS_DARWIN && osinfo->os_rel[0] >= 10)
-    broken = 1;
-  scamper_osinfo_free(osinfo);
-#endif
-
 #ifndef _WIN32
   if((pairs = dlist_alloc()) == NULL)
     {

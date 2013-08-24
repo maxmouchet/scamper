@@ -1,10 +1,11 @@
 /*
  * scamper_control.c
  *
- * $Id: scamper_control.c,v 1.152 2011/11/04 01:35:23 mjl Exp $
+ * $Id: scamper_control.c,v 1.154 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_control.c,v 1.152 2011/11/04 01:35:23 mjl Exp $";
+  "$Id: scamper_control.c,v 1.154 2012/04/05 18:00:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -515,7 +516,6 @@ static int param_handler(param_t *handler, int cnt, client_t *client,
       /* already seen this parameter specified */
       if(*handler[i].var != NULL)
 	{
-	  client_send(client, "ERR parameter '%s' already specified", param);
 	  scamper_debug(__func__, "parameter '%s' already specified", param);
 	  return -1;
 	}
@@ -523,7 +523,6 @@ static int param_handler(param_t *handler, int cnt, client_t *client,
       /* the parameter passed does not have a value to go with it */
       if(next == NULL)
 	{
-	  client_send(client, "ERR parameter '%s' requires argument", param);
 	  scamper_debug(__func__, "parameter '%s' requires argument", param);
 	  return -1;
 	}
@@ -756,6 +755,36 @@ static int command_attach(client_t *client, char *buf)
   scamper_source_params_t ssp;
   scamper_file_t *sf;
   char sab[128];
+  long priority = 1;
+  char *priority_str = NULL, *params[2], *next;
+  int i, cnt = sizeof(params) / sizeof(char *);
+  param_t handlers[] = {
+    {"priority", &priority_str},
+  };
+  int handler_cnt = sizeof(handlers) / sizeof(param_t);
+
+  if(params_get(buf, params, &cnt) != 0)
+    {
+      client_send(client, "ERR could not params_get");
+      return 0;
+    }
+  for(i=0; i<cnt; i+=2)
+    {
+      if(i+1 != cnt) next = params[i+1];
+      else next = NULL;
+      if(param_handler(handlers, handler_cnt, client, params[i], next) == -1)
+	{
+	  client_send(client,"ERR command attach param '%s' failed",params[i]);
+	  return 0;
+	}
+    }
+
+  if(priority_str != NULL && (string_tolong(priority_str, &priority) != 0 ||
+			      priority < 1 || priority > 100000))
+    {
+      client_send(client, "ERR invalid priority");
+      return 0;
+    }
 
   client_sockaddr_tostr(client, sab, sizeof(sab));
 
@@ -782,7 +811,7 @@ static int command_attach(client_t *client, char *buf)
   memset(&ssp, 0, sizeof(ssp));
   ssp.list_id    = 0;
   ssp.cycle_id   = 1;
-  ssp.priority   = 1;
+  ssp.priority   = priority;
   ssp.name       = sab;
   ssp.sof        = client->sof;
   if((client->source = scamper_source_control_alloc(&ssp, client_signalmore,
@@ -992,7 +1021,7 @@ static void command_observe_source_cb(const scamper_source_event_t *sse,
 				      void *param)
 {
   static void (* const func[])(const scamper_source_event_t *,
-			       char *, const size_t) = 
+			       char *, const size_t) =
   {
     observe_source_event_add,
     observe_source_event_update,
@@ -1364,7 +1393,7 @@ static int command_set(client_t *client, char *buf)
  * source add [name <name>] [descr <descr>] [list_id <id>] [cycle_id <id>]
  *            [priority <priority>] [outfile <name>]
  *            [command <command>] [file <name>] [cycles <count>]
- *            [autoreload <on|off>] 
+ *            [autoreload <on|off>]
  */
 static int command_source_add(client_t *client, char *buf)
 {
@@ -1387,7 +1416,7 @@ static int command_source_add(client_t *client, char *buf)
     {"file",       &file},
     {"list_id",    &list_id},
     {"name",       &name},
-    {"outfile",    &outfile},    
+    {"outfile",    &outfile},
     {"priority",   &priority},
   };
   int handler_cnt = sizeof(handlers) / sizeof(param_t);
@@ -1943,7 +1972,7 @@ static void client_drained(void *ptr, scamper_writebuf_t *wb)
   if(client_isdone(client) == 0)
     return;
 
-  client_free(client);  
+  client_free(client);
   return;
 }
 
@@ -1979,7 +2008,7 @@ static int client_attached_cb(client_t *client, uint8_t *buf, size_t len)
 	return client_send(client, "ERR halt number invalid");
       id = l;
       if(scamper_source_halttask(client->source, id) != 0)
-	return client_send(client, "ERR no task id-%d", id);      
+	return client_send(client, "ERR no task id-%d", id);
       return client_send(client, "OK halted %ld", id);
     }
 

@@ -1,10 +1,11 @@
 /*
  * scamper_addr.h
  *
- * $Id: scamper_addr.h,v 1.23 2011/09/16 03:15:43 mjl Exp $
+ * $Id: scamper_addr.h,v 1.26 2013/07/25 18:02:51 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2013      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -51,6 +52,9 @@
 
 #define SCAMPER_ADDR_TYPE_IS_IPV4(a) ((a)->type == SCAMPER_ADDR_TYPE_IPV4)
 #define SCAMPER_ADDR_TYPE_IS_IPV6(a) ((a)->type == SCAMPER_ADDR_TYPE_IPV6)
+
+#define SCAMPER_ADDR_TYPE_IS_IP(a) ((a)->type == SCAMPER_ADDR_TYPE_IPV4 || \
+				    (a)->type == SCAMPER_ADDR_TYPE_IPV6)
 
 /*
  * scamper_addr:
@@ -186,6 +190,9 @@ scamper_addr_t *scamper_addrcache_resolve(scamper_addrcache_t *ac,
  */
 int scamper_addr_islinklocal(const scamper_addr_t *a);
 int scamper_addr_isrfc1918(const scamper_addr_t *a);
+int scamper_addr_isunicast(const scamper_addr_t *a);
+int scamper_addr_is6to4(const scamper_addr_t *a);
+int scamper_addr_isreserved(const scamper_addr_t *a);
 
 /*
  * scamper_addrcache_get_[ipv4|ipv6|ethernet|firewire]

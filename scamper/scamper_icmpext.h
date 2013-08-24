@@ -1,14 +1,11 @@
 /*
  * scamper_icmpext.h
  *
- * $Id: scamper_icmpext.h,v 1.1 2008/05/01 22:10:56 mjl Exp $
+ * $Id: scamper_icmpext.h,v 1.2 2012/11/26 20:54:46 mjl Exp $
  *
  * Copyright (C) 2008 The University of Waikato
+ * Copyright (C) 2012 Matthew Luckie
  * Author: Matthew Luckie
- *
- * Load-balancer traceroute technique authored by
- * Ben Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
- *  Paths in the Internet", in Proc. Internet Measurement Conference 2007.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -45,6 +42,9 @@ typedef struct scamper_icmpext
 #define SCAMPER_ICMPEXT_IS_MPLS(ie)				\
  ((ie)->ie_cn == 1 && (ie)->ie_ct == 1)
 
+#define SCAMPER_ICMPEXT_IS_UNNUMBERED(ie)			\
+ ((ie)->ie_cn == 2)
+
 #define SCAMPER_ICMPEXT_MPLS_COUNT(ie)				\
  ((ie)->ie_dl >> 2)
 
@@ -61,6 +61,48 @@ typedef struct scamper_icmpext
 
 #define SCAMPER_ICMPEXT_MPLS_TTL(ie, x)				\
  ((ie)->ie_data[((x)<<2)+3])
+
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_ROLE(ie)			\
+ ((ie)->ie_data[0] >> 6)
+
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_ROLE_ARRIVED_IP		0
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_ROLE_ARRIVED_SUBIP	1
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_ROLE_FORWARD		2
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_ROLE_NEXTHOP		3
+
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_IFINDEX			4
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_IPADDR			5
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_NAME			6
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_MTU			7
+
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_IS_IFINDEX(ie)		\
+ ((ie)->ie_ct & SCAMPER_ICMPEXT_UNNUMBERED_CT_IFINDEX)
+
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_IS_IPADDR(ie)		\
+ ((ie)->ie_ct & SCAMPER_ICMPEXT_UNNUMBERED_CT_IPADDR)
+
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_IS_NAME(ie)		\
+ ((ie)->ie_ct & SCAMPER_ICMPEXT_UNNUMBERED_CT_NAME)
+
+#define SCAMPER_ICMPEXT_UNNUMBERED_CT_IS_MTU(ie)		\
+ ((ie)->ie_ct & SCAMPER_ICMPEXT_UNNUMBERED_CT_MTU)
+
+typedef struct scamper_icmpext_unnumbered
+{
+  uint8_t  flags;
+  uint32_t ifindex;
+  int      af;
+  union
+    {
+      struct in_addr v4;
+      struct in6_addr v6;
+    } un;
+  char name[64];
+  uint32_t mtu;
+} scamper_icmpext_unnumbered_t;
+
+void scamper_icmpext_unnumbered_parse(scamper_icmpext_t *ext,
+				      scamper_icmpext_unnumbered_t *unn);
 
 scamper_icmpext_t *scamper_icmpext_alloc(uint8_t cn, uint8_t ct, uint16_t dl,
 					 const void *data);

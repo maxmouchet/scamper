@@ -1,11 +1,12 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.156.2.1 2012/03/20 17:33:19 mjl Exp $
+ * $Id: utils.c,v 1.166 2013/08/02 19:04:10 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2011      Matthew Luckie
+ * Copyright (C) 2012-2013 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -20,12 +21,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.156.2.1 2012/03/20 17:33:19 mjl Exp $";
+  "$Id: utils.c,v 1.166 2013/08/02 19:04:10 mjl Exp $";
 #endif
 
 #if defined(_MSC_VER)
@@ -54,7 +55,6 @@ typedef int ssize_t;
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/param.h>
-#include <sys/utsname.h>
 #include <sys/un.h>
 #endif
 
@@ -108,10 +108,6 @@ typedef int ssize_t;
 # define s6_addr32 _S6_un._S6_u32
 #elif !defined(s6_addr32)
 # define s6_addr32 __u6_addr.__u6_addr32
-#endif
-
-#if defined(__linux__)
-#include <byteswap.h>
 #endif
 
 #include "utils.h"
@@ -180,7 +176,7 @@ struct sockaddr *sockaddr_dup(const struct sockaddr *sa)
   return addr;
 }
 
-int sockaddr_compose(struct sockaddr *sa, 
+int sockaddr_compose(struct sockaddr *sa,
 		     const int af, const void *addr, const int port)
 {
   socklen_t len;
@@ -539,8 +535,7 @@ int realloc_wrap_dm(void **ptr, size_t len, const char *file, const int line)
 }
 #endif
 
-int array_findpos(void **array, int nmemb, const void *item,
-		  int (*compar)(const void *, const void *))
+int array_findpos(void **array, int nmemb, const void *item, array_cmp_t cmp)
 {
   int l, r, k, i;
 
@@ -554,7 +549,7 @@ int array_findpos(void **array, int nmemb, const void *item,
 
   if(r == 0)
     {
-      if(compar(&array[0], &item) == 0)
+      if(cmp(array[0], item) == 0)
 	return 0;
       return -1;
     }
@@ -562,15 +557,11 @@ int array_findpos(void **array, int nmemb, const void *item,
   while(l <= r)
     {
       k = (l + r) / 2;
-      i = compar(&array[k], &item);
+      i = cmp(array[k], item);
       if(i > 0)
-	{
-	  r = k-1;
-	}
+	r = k-1;
       else if(i < 0)
-	{
-	  l = k+1;
-	}
+	l = k+1;
       else
 	return k;
     }
@@ -578,10 +569,9 @@ int array_findpos(void **array, int nmemb, const void *item,
   return -1;
 }
 
-void *array_find(void **array, int nmemb, const void *item,
-		 int (*compar)(const void *, const void *))
+void *array_find(void **array, int nmemb, const void *item, array_cmp_t cmp)
 {
-  int k = array_findpos(array, nmemb, item, compar);
+  int k = array_findpos(array, nmemb, item, cmp);
   if(k >= 0)
     return array[k];
   return NULL;
@@ -594,26 +584,19 @@ void *array_find(void **array, int nmemb, const void *item,
  * and then sorting the array, if necessary.  using mergesort because
  * the array is likely to have pre-existing order.
  */
-static int array_insert_0(void **array, int *nmemb, void *item,
-			  int (*cmp)(const void *, const void *))
+static int array_insert_0(void **array,int *nmemb,void *item,array_cmp_t cmp)
 {
   array[*nmemb] = item;
   *nmemb = *nmemb + 1;
 
   if(cmp != NULL)
-    {
-#if defined(__FreeBSD__)
-      return mergesort(array, *nmemb, sizeof(void *), cmp);
-#else
-      qsort(array, *nmemb, sizeof(void *), cmp);
-#endif
-    }
+    array_qsort(array, *nmemb, cmp);
+
   return 0;
 }
 
 #ifndef DMALLOC
-int array_insert(void ***array, int *nmemb, void *item,
-		 int (*cmp)(const void *, const void *))
+int array_insert(void ***array, int *nmemb, void *item, array_cmp_t cmp)
 {
   size_t len;
 
@@ -626,7 +609,7 @@ int array_insert(void ***array, int *nmemb, void *item,
 }
 
 int array_insert_gb(void ***array, int *nmemb, int *mmemb, int growby,
-		    void *item, int (*cmp)(const void *, const void *))
+		    void *item, array_cmp_t cmp)
 {
   size_t len;
 
@@ -646,8 +629,7 @@ int array_insert_gb(void ***array, int *nmemb, int *mmemb, int growby,
 
 #ifdef DMALLOC
 int array_insert_dm(void ***array, int *nmemb, void *item,
-		    int (*cmp)(const void *, const void *),
-		    const char *file, const int line)
+		    array_cmp_t cmp, const char *file, const int line)
 {
   size_t len;
 
@@ -660,7 +642,7 @@ int array_insert_dm(void ***array, int *nmemb, void *item,
 }
 
 int array_insert_gb_dm(void ***array, int *nmemb, int *mmemb, int growby,
-		       void *item, int (*cmp)(const void *, const void *),
+		       void *item, array_cmp_t cmp,
 		       const char *file, const int line)
 {
   size_t len;
@@ -687,9 +669,46 @@ void array_remove(void **array, int *nmemb, int p)
   return;
 }
 
-void array_qsort(void **a, int n, int (*cmp)(const void *,const void *))
+static void array_swap(void **a, int i, int j)
 {
-  qsort(a, n, sizeof(void *), cmp);
+  void *item = a[i];
+  a[i] = a[j];
+  a[j] = item;
+  return;
+}
+
+static void array_qsort_0(void **a, array_cmp_t cmp, int l, int r)
+{
+  void *c;
+  int i, p;
+
+  if(l >= r)
+    return;
+
+  array_swap(a, (l+r)/2, l);
+
+  c = a[l];
+  p = l;
+
+  for(i=l+1; i<=r; i++)
+    {
+      if(cmp(a[i], c) < 0)
+	{
+	  p++;
+	  array_swap(a, p, i);
+	}
+    }
+  array_swap(a, p, l);
+
+  array_qsort_0(a, cmp, l, p-1);
+  array_qsort_0(a, cmp, p+1, r);
+
+  return;
+}
+
+void array_qsort(void **a, int n, array_cmp_t cmp)
+{
+  array_qsort_0(a, cmp, 0, n-1);
   return;
 }
 
@@ -711,9 +730,9 @@ void gettimeofday_wrap(struct timeval *tv)
   u64 = ft.dwHighDateTime;
   u64 <<= 32;
   u64 |= ft.dwLowDateTime;
- 
+
   u64 /= 10;
-  u64 -= 11644473600000000LL; 
+  u64 -= 11644473600000000LL;
   tv->tv_sec = (long)(u64 / 1000000UL);
   tv->tv_usec = (long)(u64 % 1000000UL);
   return;
@@ -798,6 +817,23 @@ void timeval_add_tv(struct timeval *tv, const struct timeval *add)
     {
       tv->tv_sec++;
       tv->tv_usec -= 1000000;
+    }
+
+  return;
+}
+
+void timeval_add_tv3(struct timeval *out,
+		     const struct timeval *a, const struct timeval *b)
+{
+  assert(a->tv_sec >= 0);  assert(a->tv_usec >= 0);
+  assert(b->tv_sec >= 0);  assert(b->tv_usec >= 0);
+
+  out->tv_sec = a->tv_sec + b->tv_sec;
+  out->tv_usec = a->tv_usec + b->tv_usec;
+  if(out->tv_usec > 1000000)
+    {
+      out->tv_sec++;
+      out->tv_usec -= 1000000;
     }
 
   return;
@@ -1090,9 +1126,7 @@ char *string_nullterm(char *buf, const char *delim, char **next)
   char *tmp;
 
   if(delim == NULL || *delim == '\0' || (tmp = buf) == NULL)
-    {
-      return NULL;
-    }
+    return NULL;
 
   while(*tmp != '\0')
     {
@@ -1118,7 +1152,9 @@ char *string_nullterm(char *buf, const char *delim, char **next)
       tmp++;
     }
 
-  return NULL;
+  if(next != NULL)
+    *next = NULL;
+  return buf;
 }
 
 char *string_nullterm_char(char *buf, const char delim, char **next)
@@ -1126,9 +1162,7 @@ char *string_nullterm_char(char *buf, const char delim, char **next)
   char *tmp;
 
   if((tmp = buf) == NULL)
-    {
-      return NULL;
-    }
+    return NULL;
 
   while(*tmp != '\0')
     {
@@ -1146,7 +1180,9 @@ char *string_nullterm_char(char *buf, const char delim, char **next)
       tmp++;
     }
 
-  return NULL;
+  if(next != NULL)
+    *next = NULL;
+  return buf;
 }
 
 char *string_lastof(char *str, const char *delim)
@@ -1156,9 +1192,7 @@ char *string_lastof(char *str, const char *delim)
   int i;
 
   if(delim == NULL || *delim == '\0' || str == NULL)
-    {
-      return NULL;
-    }
+    return NULL;
 
   for(i=0; str[i] != '\0'; i++)
     {
@@ -1181,9 +1215,7 @@ char *string_lastof_char(char *str, const char delim)
   int i;
 
   if(str == NULL)
-    {
-      return NULL;
-    }
+    return NULL;
 
   for(i=0; str[i] != '\0'; i++)
     {
@@ -1520,6 +1552,33 @@ int random_u16(uint16_t *r)
   return 0;
 }
 
+int random_u8(uint8_t *r)
+{
+#ifdef _WIN32
+  unsigned int ui;
+  if(rand_s(&ui) != 0)
+    return -1;
+  *r = ui;
+#else
+  *r = random();
+#endif
+  return 0;
+}
+
+/*
+ * countbits32
+ *
+ * count the number of bits set in v.  first published by Peter Wegner in
+ * CACM 3 (1960), 322.
+ */
+int countbits32(uint32_t v)
+{
+  int c;
+  for(c=0; v != 0; c++)
+    v &= v - 1;
+  return c;
+}
+
 /* Fisher-Yates shuffle */
 int shuffle16(uint16_t *array, int len)
 {
@@ -1672,7 +1731,7 @@ int uudecode_line(const char *in, size_t ilen, uint8_t *out, size_t *olen)
 
       /* advance */
       if(o-i > 3)
-	i += 3;	  
+	i += 3;
       else break;
     }
 
@@ -1818,7 +1877,7 @@ size_t uuencode_len(size_t ilen, size_t *complete, size_t *leftover)
    */
   len = (complete_lines * 62);
 
-  /* 
+  /*
    * if there are leftover bytes, then each group of three characters
    * will take four output bytes.  if the number of leftover bytes is not
    * a multiple of three, then they are encoded in a 4 character sequence.
@@ -1969,7 +2028,13 @@ int uuencode(const uint8_t *in, size_t ilen, uint8_t **out, size_t *olen)
 
 uint16_t byteswap16(const uint16_t word)
 {
-  return (((word & 0xff00) >> 8) | ((word & 0xff) << 8));
+  return ((word >> 8) | (word << 8));
+}
+
+uint32_t byteswap32(const uint32_t word)
+{
+  return ((word << 24) | (word >> 24) |
+	  ((word & 0xff00) << 8) | ((word >> 8) & 0xff00));
 }
 
 /* process a text file, line by line */
@@ -2032,109 +2097,6 @@ int file_lines(const char *filename, int (*func)(char *, void *), void *param)
   return -1;
 }
 
-/*
- * uname_wrap
- *
- * do some basic parsing on the output from uname
- */
-#ifndef _WIN32
-scamper_osinfo_t *uname_wrap(void)
-{
-  scamper_osinfo_t *osinfo = NULL;
-  struct utsname    utsname;
-  int               i;
-  char             *str;
-
-  /* call uname to get the information */
-  if(uname(&utsname) < 0)
-    goto err;
-
-  /* allocate our wrapping struct */
-  if((osinfo = malloc_zero(sizeof(scamper_osinfo_t))) == NULL)
-    goto err;
-
-  /* copy sysname in */
-  if((osinfo->os = strdup(utsname.sysname)) == NULL)
-    goto err;
-
-  /* parse the OS name */
-  if(strcasecmp(osinfo->os, "FreeBSD") == 0)
-    osinfo->os_id = SCAMPER_OSINFO_OS_FREEBSD;
-  else if(strcasecmp(osinfo->os, "OpenBSD") == 0)
-    osinfo->os_id = SCAMPER_OSINFO_OS_OPENBSD;
-  else if(strcasecmp(osinfo->os, "NetBSD") == 0)
-    osinfo->os_id = SCAMPER_OSINFO_OS_NETBSD;
-  else if(strcasecmp(osinfo->os, "SunOS") == 0)
-    osinfo->os_id = SCAMPER_OSINFO_OS_SUNOS;
-  else if(strcasecmp(osinfo->os, "Linux") == 0)
-    osinfo->os_id = SCAMPER_OSINFO_OS_LINUX;
-  else if(strcasecmp(osinfo->os, "Darwin") == 0)
-    osinfo->os_id = SCAMPER_OSINFO_OS_DARWIN;
-
-  /* parse the release integer string */
-  str = utsname.release;
-  while(*str != '\0')
-    {
-      if(*str == '.')
-	{
-	  *str = '\0';
-	  osinfo->os_rel_dots++;
-	}
-      else if(isdigit((int)*str) == 0)
-	{
-	  *str = '\0';
-	  break;
-	}
-      str++;
-    }
-  if((osinfo->os_rel = malloc(osinfo->os_rel_dots * sizeof(long))) == NULL)
-    goto err;
-  str = utsname.release;
-  for(i=0; i < osinfo->os_rel_dots; i++)
-    {
-      if(string_tolong(str, &osinfo->os_rel[i]) != 0)
-	goto err;
-
-      while(*str != '\0') str++;
-      str++;
-    }
-
-  return osinfo;
-
- err:
-  if(osinfo != NULL) scamper_osinfo_free(osinfo);
-  return NULL;
-}
-#endif
-
-#ifdef _WIN32
-scamper_osinfo_t *uname_wrap(void)
-{
-  scamper_osinfo_t *osinfo = NULL;
-  if((osinfo = malloc_zero(sizeof(scamper_osinfo_t))) == NULL)
-    goto err;
-  if((osinfo->os = strdup("Windows")) == NULL)
-    goto err;
-  osinfo->os_id = SCAMPER_OSINFO_OS_WINDOWS;
-  return osinfo;
-
- err:
-  if(osinfo != NULL) scamper_osinfo_free(osinfo);
-  return NULL;
-}
-#endif
-
-void scamper_osinfo_free(scamper_osinfo_t *osinfo)
-{
-  if(osinfo == NULL)
-    return;
-
-  if(osinfo->os != NULL) free(osinfo->os);
-  if(osinfo->os_rel != NULL) free(osinfo->os_rel);
-  free(osinfo);
-  return;
-}
-
 char *offt_tostr(char *buf, size_t len, off_t off, int lz, char c)
 {
   char sp[8];
@@ -2170,4 +2132,3 @@ char *offt_tostr(char *buf, size_t len, off_t off, int lz, char c)
   snprintf(buf, len, sp, off);
   return buf;
 }
-

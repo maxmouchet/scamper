@@ -1,10 +1,11 @@
 /*
  * scamper_tcp6.c
  *
- * $Id: scamper_tcp6.c,v 1.26 2011/11/17 00:41:11 mjl Exp $
+ * $Id: scamper_tcp6.c,v 1.29 2012/05/04 18:09:35 mjl Exp $
  *
- * Copyright (C) 2006 Matthew Luckie
+ * Copyright (C) 2006      Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tcp6.c,v 1.26 2011/11/17 00:41:11 mjl Exp $";
+  "$Id: scamper_tcp6.c,v 1.29 2012/05/04 18:09:35 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -54,6 +55,22 @@ static size_t tcp_sackp(uint8_t *buf)
   buf[0] = 4;
   buf[1] = 2;
   return 2;
+}
+
+static size_t tcp_sack(uint8_t *buf, const scamper_probe_t *pr)
+{
+  size_t off = 2;
+  uint8_t i;
+  assert(pr->pr_tcp_sackb > 0);
+  assert(pr->pr_tcp_sackb <= 4);
+  buf[0] = 5;
+  for(i=0; i<pr->pr_tcp_sackb * 2; i++)
+    {
+      bytes_htonl(buf+off, pr->pr_tcp_sack[i]);
+      off += 4;
+    }
+  buf[1] = off;
+  return off;
 }
 
 static size_t tcp_nop(uint8_t *buf)
@@ -115,17 +132,28 @@ static void tcp_cksum(struct ip6_hdr *ip6, struct tcphdr *tcp, size_t len)
   return;
 }
 
-size_t scamper_tcp6_hlen(scamper_probe_t *probe)
+size_t scamper_tcp6_hlen(scamper_probe_t *pr)
 {
   size_t tcphlen = 20;
-  if(probe->pr_tcp_mss != 0)
-    tcphlen += 4;
-  if((probe->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_SACK) != 0)
-    tcphlen += 2;
-  if((probe->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_TS) != 0)
-    tcphlen += 10;
+  if(pr->pr_tcp_flags & TH_SYN)
+    {
+      if(pr->pr_tcp_mss != 0)
+	tcphlen += 4;
+      if((pr->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_SACK) != 0)
+	tcphlen += 2;
+    }
+  if((pr->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_TS) != 0)
+    {
+      tcphlen += 10;
+      if(pr->pr_tcp_sackb != 0)
+	while((tcphlen % 4) != 0)
+	  tcphlen++;
+    }
+  if(pr->pr_tcp_sackb != 0)
+    tcphlen += ((8 * pr->pr_tcp_sackb) + 2);
   while((tcphlen % 4) != 0)
     tcphlen++;
+  assert(tcphlen <= 60);
   return tcphlen;
 }
 
@@ -172,10 +200,17 @@ int scamper_tcp6_build(scamper_probe_t *probe, uint8_t *buf, size_t *len)
 	}
 
       if((probe->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_TS) != 0)
-	tcphlen += tcp_ts(buf+ip6hlen+tcphlen, probe);
+	{
+	  tcphlen += tcp_ts(buf+ip6hlen+tcphlen, probe);
+	  while((tcphlen % 4) != 0)
+	    tcphlen += tcp_nop(buf+ip6hlen+tcphlen);
+	}
+
+      if(probe->pr_tcp_sackb != 0)
+	tcphlen += tcp_sack(buf+ip6hlen+tcphlen, probe);
 
       while((tcphlen % 4) != 0)
-	tcphlen += tcp_nop(buf+ip6hlen+tcphlen);      
+	tcphlen += tcp_nop(buf+ip6hlen+tcphlen);
 
 #ifndef _WIN32
       tcp->th_off   = tcphlen >> 2;

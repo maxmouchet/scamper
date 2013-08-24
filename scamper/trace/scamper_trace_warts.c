@@ -5,7 +5,7 @@
  * Copyright (C) 2006-2011 The University of Waikato
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_warts.c,v 1.14 2011/10/25 02:23:22 mjl Exp $
+ * $Id: scamper_trace_warts.c,v 1.15 2012/04/05 18:00:54 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_warts.c,v 1.14 2011/10/25 02:23:22 mjl Exp $";
+  "$Id: scamper_trace_warts.c,v 1.15 2012/04/05 18:00:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -160,7 +160,7 @@ static const warts_var_t pmtud_n_vars[] =
 #define WARTS_TRACE_DTREE_LSS_STOP     4 /* lss stop address */
 #define WARTS_TRACE_DTREE_GSS_STOP     5 /* gss stop address */
 #define WARTS_TRACE_DTREE_LSS_NAME     6 /* lss name */
-static const warts_var_t trace_dtree_vars[] = 
+static const warts_var_t trace_dtree_vars[] =
 {
   {WARTS_TRACE_DTREE_LSS_STOP_GID,  4, -1},
   {WARTS_TRACE_DTREE_GSS_STOP_GID,  4, -1},
@@ -527,7 +527,7 @@ static void warts_trace_hop_params(const scamper_trace_t *trace,
 	  if(hop->hop_reply_ipid == 0)
 	    continue;
 	}
-	
+
       flag_set(flags, var->id, &max_id);
 
       if(var->id == WARTS_TRACE_HOP_ADDR)
@@ -553,7 +553,7 @@ static void warts_trace_hop_params(const scamper_trace_t *trace,
 
 static void warts_trace_hop_state(const scamper_trace_t *trace,
 				  scamper_trace_hop_t *hop,
-				  warts_trace_hop_t *state, 
+				  warts_trace_hop_t *state,
 				  warts_addrtable_t *table, uint32_t *len)
 {
   /* for each hop, figure out how much space it will take up */
@@ -1216,7 +1216,7 @@ int scamper_file_warts_trace_read(scamper_file_t *sf, const warts_hdr_t *hdr,
    * and assemble the responses into trace->hops.
    */
   trace->hops[hops->hop_probe_ttl-1] = hop = hops;
-  while(hop->hop_next != NULL) 
+  while(hop->hop_next != NULL)
     {
       if(hop->hop_probe_ttl != hop->hop_next->hop_probe_ttl)
 	{
@@ -1411,7 +1411,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
       /* write the attribute header */
       u16 = WARTS_TRACE_ATTR_HDR(WARTS_TRACE_ATTR_PMTUD, pmtud->len);
       insert_uint16(buf, &off, len, &u16, NULL);
-		    
+
       /* write details of the pmtud measurement */
       warts_trace_pmtud_write(trace, buf, &off, len, pmtud, &table);
 

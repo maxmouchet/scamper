@@ -5,7 +5,7 @@
  * Copyright (C) 2006-2011 The University of Waikato
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_text.c,v 1.18 2011/10/25 03:20:01 mjl Exp $
+ * $Id: scamper_trace_text.c,v 1.19 2012/04/05 18:00:54 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_text.c,v 1.18 2011/10/25 03:20:01 mjl Exp $";
+  "$Id: scamper_trace_text.c,v 1.19 2012/04/05 18:00:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -260,7 +260,7 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
       scamper_addr_tostr(hop->hop_addr, str_addr, sizeof(str_addr));
       timeval_tostr(&hop->hop_rtt, str_rtt, sizeof(str_rtt));
       icmp_tostr(hop, str_icmp, sizeof(str_icmp));
-      
+
       snprintf(str_hop, sizeof(str_hop),
 	       "%2d  %s  %s ms%s", h+1, str_addr, str_rtt, str_icmp);
       return strdup(str_hop);
@@ -671,7 +671,7 @@ int scamper_file_text_trace_write(const scamper_file_t *sf,
   /* get a string that specifies the source and destination of the trace */
   header = header_tostr(trace);
 
-  len = strlen(header) + 2; 
+  len = strlen(header) + 2;
   for(i=0; i < trace->hop_count; i++)
     {
       if((hops[i] = hop_tostr(trace, i)) == NULL)

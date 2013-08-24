@@ -1,11 +1,12 @@
 /*
  * scamper_do_trace.c
  *
- * $Id: scamper_trace_do.c,v 1.283.2.2 2012/03/20 18:45:31 mjl Exp $
+ * $Id: scamper_trace_do.c,v 1.291 2013/08/07 21:50:33 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2008 Alistair King
+ * Copyright (C) 2008      Alistair King
+ * Copyright (C) 2012      The Regents of the University of California
  *
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
@@ -22,12 +23,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_do.c,v 1.283.2.2 2012/03/20 18:45:31 mjl Exp $";
+  "$Id: scamper_trace_do.c,v 1.291 2013/08/07 21:50:33 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -60,13 +61,14 @@ static const char rcsid[] =
 #include "scamper_udp4.h"
 #include "scamper_udp6.h"
 #include "scamper_if.h"
+#include "scamper_osinfo.h"
 #include "mjl_splaytree.h"
 #include "mjl_list.h"
 #include "utils.h"
 
 #define SCAMPER_DO_TRACE_ATTEMPTS_MIN  1
 #define SCAMPER_DO_TRACE_ATTEMPTS_DEF  2
-#define SCAMPER_DO_TRACE_ATTEMPTS_MAX  20 
+#define SCAMPER_DO_TRACE_ATTEMPTS_MAX  20
 
 #define SCAMPER_DO_TRACE_DPORT_MIN     1
 #define SCAMPER_DO_TRACE_DPORT_DEF     (32768+666+1) /* probe_id starts at 0 */
@@ -284,9 +286,6 @@ static const uint8_t MODE_DTREE_BACK       = 10;
 /* the callback functions registered with the trace task */
 static scamper_task_funcs_t trace_funcs;
 
-/* the default source port to use when tracerouting */
-static uint16_t default_sport;
-
 /* address cache used to avoid reallocating the same address multiple times */
 extern scamper_addrcache_t *addrcache;
 
@@ -423,7 +422,7 @@ static int k(trace_state_t *state)
    */
   static const int k[][2] = {
     {   0,   0 },
-    {   0,   0 }, 
+    {   0,   0 },
     {   6,   8 }, /* n=2  : +6, +8 */
     {  11,  15 }, /* n=3  : +5, +7 */
     {  16,  21 }, /* n=4  : +5, +6 */
@@ -480,13 +479,6 @@ static int trace_queue(scamper_task_t *task)
     return scamper_task_queue_probe(task);
 
   return scamper_task_queue_wait_tv(task, &state->next_tx);
-}
-
-static int trace_interface_cmp(const void *va, const void *vb)
-{
-  scamper_addr_t *a = *((scamper_addr_t **)va);
-  scamper_addr_t *b = *((scamper_addr_t **)vb);
-  return scamper_addr_cmp(a, b);
 }
 
 static void trace_lss_free(trace_lss_t *lss)
@@ -939,7 +931,7 @@ static int dtree_lss_in(trace_state_t *state, scamper_addr_t *iface)
 static int state_lss_in(trace_state_t *state, scamper_addr_t *iface)
 {
   if(array_find((void **)state->lss, state->lssc, iface,
-		trace_interface_cmp) != NULL)
+		(array_cmp_t)scamper_addr_cmp) != NULL)
     {
       return 1;
     }
@@ -949,7 +941,7 @@ static int state_lss_in(trace_state_t *state, scamper_addr_t *iface)
 static int state_lss_add(trace_state_t *state, scamper_addr_t *iface)
 {
   if(array_insert((void ***)&state->lss, &state->lssc, iface,
-		  trace_interface_cmp) == 0)
+		  (array_cmp_t)scamper_addr_cmp) == 0)
     {
       return 0;
     }
@@ -985,7 +977,7 @@ static int trace_ipid_fudge(const trace_state_t *state,
       *id = ipid - 1;
       return 0;
     }
-  
+
   /* check if the IP ID was incremented */
   if(ipid == state->id_next + 1)
     {
@@ -1112,7 +1104,7 @@ static int trace_isloop(const scamper_trace_t *trace,
 		   * between adjacent hops to ignore.
 		   */
 		  if(++state->iloopc <= trace->loopaction)
-		    return 0;		  
+		    return 0;
 		}
 
 	      /* check if the loop condition is met */
@@ -1219,7 +1211,7 @@ static scamper_trace_hop_t *trace_hop(const trace_probe_t *probe,
 
   hop->hop_probe_ttl  = probe->ttl;
   hop->hop_probe_id   = probe->id + 1;
-  hop->hop_probe_size = probe->size;  
+  hop->hop_probe_size = probe->size;
 
   /*
    * if the probe's datalink tx timestamp flag is set, scamper has a tx
@@ -1607,7 +1599,7 @@ static int handleicmp_trace(scamper_task_t *task,
        * currently held
        */
       if(array_find((void **)state->interfaces, state->interfacec,
-		    hop->hop_addr, trace_interface_cmp) == NULL)
+		    hop->hop_addr, (array_cmp_t)scamper_addr_cmp) == NULL)
 	{
 	  len = (state->interfacec + 1) * sizeof(scamper_addr_t *);
 	  if(realloc_wrap((void **)&state->interfaces, len) != 0)
@@ -1622,8 +1614,8 @@ static int handleicmp_trace(scamper_task_t *task,
 
 	  if(state->interfacec > 1)
 	    {
-	      qsort(state->interfaces, state->interfacec,
-		    sizeof(scamper_addr_t *), trace_interface_cmp);
+	      array_qsort((void **)state->interfaces, state->interfacec,
+			  (array_cmp_t)scamper_addr_cmp);
 	      state->n++;
 	    }
 	}
@@ -1838,7 +1830,7 @@ static int handleicmp_dtree_first(scamper_task_t *task,scamper_icmp_resp_t *ir,
       return 0;
     }
 
-  /* hit something in the global stop set. probe backwards */ 
+  /* hit something in the global stop set. probe backwards */
   trace->stop_reason = SCAMPER_TRACE_STOP_GSS;
   trace->stop_data   = 0;
   trace->dtree->gss_stop = scamper_addr_use(hop->hop_addr);
@@ -2747,7 +2739,7 @@ static int handletcp_trace(scamper_task_t *task, scamper_dl_rec_t *dl,
     {
       /* record details of the interface */
       if(array_find((void **)state->interfaces, state->interfacec,
-		    hop->hop_addr, trace_interface_cmp) == NULL)
+		    hop->hop_addr, (array_cmp_t)scamper_addr_cmp) == NULL)
 	{
 	  len = (state->interfacec + 1) * sizeof(scamper_addr_t *);
 	  if(realloc_wrap((void **)&state->interfaces, len) != 0)
@@ -2762,8 +2754,8 @@ static int handletcp_trace(scamper_task_t *task, scamper_dl_rec_t *dl,
 
 	  if(state->interfacec > 1)
 	    {
-	      qsort(state->interfaces, state->interfacec,
-		    sizeof(scamper_addr_t *), trace_interface_cmp);
+	      array_qsort((void **)state->interfaces, state->interfacec,
+			  (array_cmp_t)scamper_addr_cmp);
 	      state->n++;
 	    }
 	}
@@ -2851,7 +2843,7 @@ static void dlin_trace(scamper_trace_t *trace,
       scamper_debug(__func__,
 		    "hop %d.%06d dl_rec %d.%06d diff %d",
 		    hop->hop_rtt.tv_sec, hop->hop_rtt.tv_usec,
-		    tv.tv_sec, tv.tv_usec, 
+		    tv.tv_sec, tv.tv_usec,
 		    timeval_diff_us(&hop->hop_rtt, &tv));
 
       hop->hop_flags &= ~(SCAMPER_TRACE_HOP_FLAG_TS_SOCK_RX);
@@ -3115,7 +3107,7 @@ static void do_trace_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
 	       * for, so assume it was for the last one
 	       */
 	      probe_id = state->id_next - 1;
-	      direction = 0;	      
+	      direction = 0;
 	    }
 	  else return;
 	}
@@ -3206,7 +3198,7 @@ static void do_trace_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
     {
       scamper_debug(__func__, "probe %d.%06d dl %d.%06d diff %d",
 		    probe->tx_tv.tv_sec, probe->tx_tv.tv_usec,
-		    dl->dl_tv.tv_sec, dl->dl_tv.tv_usec, 
+		    dl->dl_tv.tv_sec, dl->dl_tv.tv_usec,
 		    timeval_diff_us(&probe->tx_tv, &dl->dl_tv));
 
       /* if at least one hop record is present then adjust */
@@ -3269,7 +3261,7 @@ static void trace_handle_rt(scamper_route_t *rt)
       scamper_fd_free(state->rtsock);
       state->rtsock = NULL;
     }
-#endif  
+#endif
 
   if(rt->error != 0 || rt->ifindex < 0)
     {
@@ -3563,6 +3555,7 @@ static void do_trace_free(scamper_task_t *task)
  */
 static void do_trace_probe(scamper_task_t *task)
 {
+  scamper_probe_ipopt_t opt;
   scamper_trace_t *trace = trace_getdata(task);
   trace_state_t   *state = trace_getstate(task);
   trace_probe_t   *tp = NULL;
@@ -3642,7 +3635,7 @@ static void do_trace_probe(scamper_task_t *task)
 
       /* initialise the new hops to have null pointers */
       for(i=state->alloc_hops; i<u16; i++)
-	trace->hops[i] = NULL;	  
+	trace->hops[i] = NULL;
       state->alloc_hops = u16;
     }
 
@@ -3733,7 +3726,17 @@ static void do_trace_probe(scamper_task_t *task)
 
   if(trace->offset != 0)
     {
-      goto err;
+      assert(SCAMPER_ADDR_TYPE_IS_IPV6(trace->dst));
+      probe.pr_ip_off = trace->offset;
+      probe.pr_ipopts = &opt;
+      probe.pr_ipoptc = 1;
+
+      opt.type = SCAMPER_PROBE_IPOPTS_V6FRAG;
+      opt.opt_v6frag_off = trace->offset << 3;
+      opt.opt_v6frag_id  = (trace->sport << 16) | trace->probec;
+
+      /* use the first 4 bytes of the payload for packet matching */
+      bytes_htonl(probe.pr_data, trace->probec);
     }
   else if(SCAMPER_TRACE_TYPE_IS_UDP(trace))
     {
@@ -3769,14 +3772,7 @@ static void do_trace_probe(scamper_task_t *task)
     }
   else if(SCAMPER_TRACE_TYPE_IS_ICMP(trace))
     {
-      if(trace->dst->type == SCAMPER_ADDR_TYPE_IPV4)
-	probe.pr_icmp_type = ICMP_ECHO;
-      else
-	probe.pr_icmp_type = ICMP6_ECHO_REQUEST;
-
-      probe.pr_icmp_code = 0;
-      probe.pr_icmp_id   = trace->sport;
-      probe.pr_icmp_seq  = state->id_next;
+      SCAMPER_PROBE_ICMP_ECHO(&probe, trace->sport, state->id_next);
 
       /*
        * ICMP-based paris traceroute tries to ensure the same path is taken
@@ -4072,7 +4068,7 @@ void *scamper_do_trace_alloc(char *str)
   uint8_t  loops       = SCAMPER_DO_TRACE_LOOPS_DEF;
   uint8_t  loopaction  = SCAMPER_DO_TRACE_LOOPACTION_DEF;
   uint8_t  confidence  = 0;
-  uint16_t sport       = default_sport;
+  uint16_t sport       = scamper_sport_default();
   uint16_t dport       = SCAMPER_DO_TRACE_DPORT_DEF;
   uint16_t offset      = SCAMPER_DO_TRACE_OFFSET_DEF;
   uint8_t *payload     = NULL;
@@ -4276,7 +4272,7 @@ void *scamper_do_trace_alloc(char *str)
   trace->loopaction  = loopaction;
   trace->sport       = sport;
   trace->dport       = dport;
-  trace->payload     = payload;
+  trace->payload     = payload; payload = NULL;
   trace->payload_len = payload_len;
   trace->confidence  = confidence;
   trace->wait_probe  = wait_probe;
@@ -4351,7 +4347,7 @@ void *scamper_do_trace_alloc(char *str)
     {
       trace->flags |= SCAMPER_TRACE_FLAG_ICMPCSUMDP;
       if((optids & (0x1 << TRACE_OPT_DPORT)) == 0)
-	trace->dport = default_sport;
+	trace->dport = scamper_sport_default();
     }
 
   if(scamper_option_dl() != 0)
@@ -4391,6 +4387,7 @@ void *scamper_do_trace_alloc(char *str)
   return trace;
 
  err:
+  if(payload != NULL) free(payload);
   if(gss != NULL) slist_free(gss);
   if(trace != NULL) scamper_trace_free(trace);
   if(opts_out != NULL) scamper_options_free(opts_out);
@@ -4483,14 +4480,7 @@ void scamper_do_trace_cleanup(void)
 
 int scamper_do_trace_init(void)
 {
-  scamper_osinfo_t *osinfo = NULL;
-
-#ifndef _WIN32
-  pid_t pid = getpid();
-#else
-  DWORD pid = GetCurrentProcessId();
-#endif
-  default_sport = (pid & 0x7fff) + 0x8000;
+  const scamper_osinfo_t *osinfo;
 
   trace_funcs.probe          = do_trace_probe;
   trace_funcs.handle_icmp    = do_trace_handle_icmp;
@@ -4500,14 +4490,9 @@ int scamper_do_trace_init(void)
   trace_funcs.task_free      = do_trace_free;
   trace_funcs.halt           = do_trace_halt;
 
-  if((osinfo = uname_wrap()) == NULL)
-    {
-      printerror(errno, strerror, __func__, "could not uname_wrap");
-      return -1;
-    }
+  osinfo = scamper_osinfo_get();
   if(SCAMPER_OSINFO_IS_SUNOS(osinfo))
     sunos = 1;
-  scamper_osinfo_free(osinfo);
 
   return 0;
 }

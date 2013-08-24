@@ -1,4 +1,6 @@
-INCLUDES = -I$(top_srcdir) -I$(top_srcdir)/scamper
+AUTOMAKE_OPTIONS = subdir-objects
+
+AM_CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/scamper
 
 bin_PROGRAMS = sc_ally
 
@@ -13,4 +15,4 @@ sc_ally_LDADD = ../../scamper/libscamperfile.la
 
 man_MANS = sc_ally.1
 
-CLEANFILES = *~
+CLEANFILES = *~ *.core

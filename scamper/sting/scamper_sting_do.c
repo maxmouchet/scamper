@@ -1,9 +1,10 @@
 /*
  * scamper_do_sting.c
  *
- * $Id: scamper_sting_do.c,v 1.41 2011/11/03 01:39:48 mjl Exp $
+ * $Id: scamper_sting_do.c,v 1.46 2012/05/04 20:16:06 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This file implements algorithms described in the sting-0.7 source code,
@@ -25,12 +26,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * 
+ *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sting_do.c,v 1.41 2011/11/03 01:39:48 mjl Exp $";
+  "$Id: scamper_sting_do.c,v 1.46 2012/05/04 20:16:06 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -151,9 +152,6 @@ static const uint8_t MODE_RST    = 7;
 /* the callback functions registered with the sting task */
 static scamper_task_funcs_t sting_funcs;
 
-/* the default source port to use */
-static uint16_t default_sport;
-
 /* address cache used to avoid reallocating the same address multiple times */
 extern scamper_addrcache_t *addrcache;
 
@@ -165,6 +163,7 @@ extern scamper_addrcache_t *addrcache;
 #define STING_OPT_INTER  6
 #define STING_OPT_MEAN   7
 #define STING_OPT_SPORT  8
+#define STING_OPT_USERID 9
 
 static const scamper_option_in_t opts[] = {
   {'c', NULL, STING_OPT_COUNT,  SCAMPER_OPTION_TYPE_NUM},
@@ -175,13 +174,14 @@ static const scamper_option_in_t opts[] = {
   {'i', NULL, STING_OPT_INTER,  SCAMPER_OPTION_TYPE_NUM},
   {'m', NULL, STING_OPT_MEAN,   SCAMPER_OPTION_TYPE_STR},
   {'s', NULL, STING_OPT_SPORT,  SCAMPER_OPTION_TYPE_NUM},
+  {'U', NULL, STING_OPT_USERID, SCAMPER_OPTION_TYPE_NUM},
 };
 static const int opts_cnt = SCAMPER_OPTION_COUNT(opts);
 
 const char *scamper_do_sting_usage(void)
 {
   return "sting [-c count] [-d dport] [-f distribution] [-h request]\n"
-         "      [-H hole] [-i inter] [-m mean] [-s sport]";
+         "      [-H hole] [-i inter] [-m mean] [-s sport] [-U userid]";
 }
 
 /*
@@ -399,26 +399,36 @@ static void handletcp_hole(scamper_task_t *task, scamper_dl_rec_t *dl)
   sting_state_t *state = sting_getstate(task);
   uint16_t u16;
 
+  /*
+   * this handles the case where the receiver lost our ACK to
+   * their SYN/ACK and the data request.
+   */
+  if(state->isn >= dl->dl_tcp_ack)
+    goto err;
+
   /* check to see if all holes are now full */
   if(state->isn + sting->seqskip + sting->count == dl->dl_tcp_ack)
     {
       state->off  = sting->seqskip + sting->count - 1;
       state->mode = MODE_RST;
+      sting->result = SCAMPER_STING_RESULT_COMPLETED;
       scamper_task_queue_probe(task);
       return;
     }
 
-  /* figure out which byte to send next, handling sequence space wrapping */
-  if(state->isn < dl->dl_tcp_ack)
-    state->off = dl->dl_tcp_ack - state->isn;
-  else
-    state->off = (0xffffffff - state->isn) + dl->dl_tcp_ack + 1;
-
+  state->off = dl->dl_tcp_ack - state->isn;
   u16 = state->off - sting->seqskip;
+  if(u16 >= state->probec)
+    goto err;
+
   state->probes[u16]->flags |= SCAMPER_STING_PKT_FLAG_HOLE;
   sting->holec++;
-
   state->attempt = 0;
+  scamper_task_queue_probe(task);
+  return;
+
+ err:
+  state->mode = MODE_RST;
   scamper_task_queue_probe(task);
   return;
 }
@@ -440,6 +450,7 @@ static void do_sting_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
     handletcp_data, /* MODE_DATA */
     handletcp_data, /* MODE_INTER */
     handletcp_hole, /* MODE_HOLE */
+    NULL,           /* MODE_RST */
   };
   scamper_sting_t *sting = sting_getdata(task);
   sting_state_t *state = sting_getstate(task);
@@ -588,7 +599,8 @@ static int sting_state_alloc(scamper_task_t *task)
 {
   scamper_sting_t *sting = sting_getdata(task);
   sting_state_t *state;
-  uint16_t c;
+  uint16_t u16;
+  size_t size;
 
   if((state = malloc_zero(sizeof(sting_state_t))) == NULL)
     {
@@ -597,15 +609,16 @@ static int sting_state_alloc(scamper_task_t *task)
     }
   scamper_task_setstate(task, state);
 
-  c = sting->seqskip + sting->count;
-  if((state->probes = malloc_zero(sizeof(scamper_sting_pkt_t *) * c)) == NULL)
+  size = (sting->seqskip + sting->count) * sizeof(scamper_sting_pkt_t *);
+  if((state->probes = malloc_zero(size)) == NULL)
     goto err;
 
-  if(random_u32(&state->isn) != 0)
+  if(random_u16(&u16) != 0)
     {
       printerror(errno, strerror, __func__, "could not get random isn");
       goto err;
     }
+  state->isn = u16;
 
 #ifndef _WIN32
   if((state->rtsock = scamper_fd_rtsock()) == NULL)
@@ -895,6 +908,11 @@ static int sting_arg_param_validate(int optid, char *param, long *out)
 	goto err;
       break;
 
+    case STING_OPT_USERID:
+      if(string_tolong(param, &tmp) != 0 || tmp < 0)
+	goto err;
+      break;
+
     default:
       return -1;
     }
@@ -917,7 +935,7 @@ static int sting_arg_param_validate(int optid, char *param, long *out)
  */
 void *scamper_do_sting_alloc(char *str)
 {
-  uint16_t sport    = default_sport;
+  uint16_t sport    = scamper_sport_default();
   uint16_t dport    = 80;
   uint16_t count    = SCAMPER_DO_STING_COUNT_DEF;
   uint16_t mean     = SCAMPER_DO_STING_MEAN_DEF;
@@ -926,6 +944,7 @@ void *scamper_do_sting_alloc(char *str)
   uint8_t  dist     = SCAMPER_DO_STING_DIST_DEF;
   uint8_t  synretx  = SCAMPER_DO_STING_SYNRETX_DEF;
   uint8_t  dataretx = SCAMPER_DO_STING_DATARETX_DEF;
+  uint32_t userid   = 0;
   scamper_option_out_t *opts_out = NULL, *opt;
   scamper_sting_t *sting = NULL;
   char *addr;
@@ -984,6 +1003,10 @@ void *scamper_do_sting_alloc(char *str)
 	case STING_OPT_INTER:
 	  inter = (uint16_t)tmp;
 	  break;
+
+	case STING_OPT_USERID:
+	  userid = (uint32_t)tmp;
+	  break;
 	}
     }
   scamper_options_free(opts_out); opts_out = NULL;
@@ -1008,6 +1031,7 @@ void *scamper_do_sting_alloc(char *str)
   sting->synretx  = synretx;
   sting->dataretx = dataretx;
   sting->seqskip  = seqskip;
+  sting->userid   = userid;
 
   /* take a copy of the data to be used in the measurement */
   if(scamper_sting_data(sting, (const uint8_t *)defaultrequest,
@@ -1091,13 +1115,6 @@ void scamper_do_sting_cleanup(void)
 
 int scamper_do_sting_init(void)
 {
-#ifndef _WIN32
-  pid_t pid = getpid();
-#else
-  DWORD pid = GetCurrentProcessId();
-#endif
-  default_sport = (pid & 0x7fff) + 0x8000;
-
   sting_funcs.probe          = do_sting_probe;
   sting_funcs.handle_icmp    = NULL;
   sting_funcs.handle_dl      = do_sting_handle_dl;

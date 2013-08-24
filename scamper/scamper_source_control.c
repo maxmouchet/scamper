@@ -1,7 +1,7 @@
 /*
  * scamper_source_control.c
  *
- * $Id: scamper_source_control.c,v 1.13 2011/10/26 01:40:28 mjl Exp $
+ * $Id: scamper_source_control.c,v 1.14 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2007-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -23,7 +23,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_source_control.c,v 1.13 2011/10/26 01:40:28 mjl Exp $";
+  "$Id: scamper_source_control.c,v 1.14 2012/04/05 18:00:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -50,14 +50,14 @@ typedef struct scamper_source_control
   void             (*signalmore)(void *param);
   char *           (*tostr)(void *param, char *buf, size_t len);
   void              *param;
- 
+
 } scamper_source_control_t;
 
 /*
  * ssc_take
  *
  * a task has been taken from this source (a control socket).  if there
- * are no tasks left then signal to the 
+ * are no tasks left then signal to the
  */
 static int ssc_take(void *data)
 {

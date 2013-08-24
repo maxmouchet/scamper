@@ -2,9 +2,10 @@
  * scamper_sting_warts.c
  *
  * Copyright (C) 2010-2011 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_sting_warts.c,v 1.4 2011/02/21 03:59:53 mjl Exp $
+ * $Id: scamper_sting_warts.c,v 1.6 2012/05/04 20:13:19 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sting_warts.c,v 1.4 2011/02/21 03:59:53 mjl Exp $";
+  "$Id: scamper_sting_warts.c,v 1.6 2012/05/04 20:13:19 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -61,6 +62,7 @@ static const char rcsid[] =
 #define WARTS_STING_DATAACKC  19
 #define WARTS_STING_HOLEC     20
 #define WARTS_STING_PKTC      21
+#define WARTS_STING_RESULT    22
 
 static const warts_var_t sting_vars[] =
 {
@@ -85,6 +87,7 @@ static const warts_var_t sting_vars[] =
   {WARTS_STING_DATAACKC, 2, -1},
   {WARTS_STING_HOLEC,    2, -1},
   {WARTS_STING_PKTC,     4, -1},
+  {WARTS_STING_RESULT,   1, -1},
 };
 #define sting_vars_mfb WARTS_VAR_MFB(sting_vars)
 
@@ -199,7 +202,7 @@ static void warts_sting_params(const scamper_sting_t *sting,
 {
   const warts_var_t *var;
   int i, max_id = 0;
-    
+
   /* Unset all flags */
   memset(flags, 0, sting_vars_mfb);
   *params_len = 0;
@@ -221,10 +224,12 @@ static void warts_sting_params(const scamper_sting_t *sting,
 	continue;
       else if(var->id == WARTS_STING_DATA && sting->datalen == 0)
 	continue;
+      else if(var->id == WARTS_STING_RESULT && sting->result == 0)
+	continue;
 
       /* Set the flag for the rest of the variables */
       flag_set(flags, var->id, &max_id);
-       
+
       /* Variables that don't have a fixed size */
       if(var->id == WARTS_STING_SRC)
         {
@@ -277,6 +282,7 @@ static int warts_sting_params_read(scamper_sting_t *sting,
     {&sting->dataackc,     (wpr_t)extract_uint16,       NULL},
     {&sting->holec,        (wpr_t)extract_uint16,       NULL},
     {&sting->pktc,         (wpr_t)extract_uint32,       NULL},
+    {&sting->result,       (wpr_t)extract_byte,         NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
 
@@ -317,6 +323,7 @@ static int warts_sting_params_write(const scamper_sting_t *sting,
     {&sting->dataackc,     (wpw_t)insert_uint16,       NULL},
     {&sting->holec,        (wpw_t)insert_uint16,       NULL},
     {&sting->pktc,         (wpw_t)insert_uint32,       NULL},
+    {&sting->result,       (wpw_t)insert_byte,         NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);
 
@@ -358,7 +365,7 @@ int scamper_file_warts_sting_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     {
       goto err;
     }
-    
+
   /* Read in the sting data from the warts file */
   if(warts_sting_params_read(sting, &table, state, buf, &off, hdr->len) != 0)
     {
@@ -366,14 +373,14 @@ int scamper_file_warts_sting_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     }
 
   /* Determine how many sting pkts to read */
-  if(sting->pktc > 0) 
+  if(sting->pktc > 0)
     {
       /* Allocate the sting pkts array */
       if(scamper_sting_pkts_alloc(sting, sting->pktc) != 0)
 	{
 	  goto err;
 	}
-        
+
       /*
        * for each sting packet, read it and insert it into the sting
        * structure
@@ -414,8 +421,8 @@ int scamper_file_warts_sting_write(const scamper_file_t *sf,
   size_t size;
 
   memset(&table, 0, sizeof(table));
-        
-  /* Set the sting data (not including the packets) */  
+
+  /* Set the sting data (not including the packets) */
   warts_sting_params(sting, &table, flags, &flags_len, &params_len);
   len = 8 + flags_len + params_len + 2;
 

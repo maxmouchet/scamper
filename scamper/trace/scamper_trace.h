@@ -1,7 +1,7 @@
 /*
  * scamper_trace.h
  *
- * $Id: scamper_trace.h,v 1.131 2011/09/20 23:23:54 mjl Exp $
+ * $Id: scamper_trace.h,v 1.132 2012/04/05 18:00:54 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -118,7 +118,7 @@ struct scamper_addr;
  (((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV4 &&		\
    ((hop)->hop_icmp_type == 3 || (hop)->hop_icmp_type == 11)) ||\
   ((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV6 &&		\
-   ((hop)->hop_icmp_type >= 1 && (hop)->hop_icmp_type <= 3)))) 
+   ((hop)->hop_icmp_type >= 1 && (hop)->hop_icmp_type <= 3))))
 
 #define SCAMPER_TRACE_TYPE_IS_ICMP(trace) (			\
  (trace)->type == SCAMPER_TRACE_TYPE_ICMP_ECHO ||		\

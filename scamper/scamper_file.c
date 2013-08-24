@@ -1,10 +1,11 @@
 /*
  * scamper_file.c
  *
- * $Id: scamper_file.c,v 1.61 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_file.c,v 1.67 2013/08/02 18:33:23 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file.c,v 1.61 2011/09/16 03:15:44 mjl Exp $";
+  "$Id: scamper_file.c,v 1.67 2013/08/02 18:33:23 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -42,9 +43,11 @@ static const char rcsid[] =
 #include "trace/scamper_trace.h"
 #include "trace/scamper_trace_text.h"
 #include "trace/scamper_trace_warts.h"
+#include "trace/scamper_trace_json.h"
 #include "ping/scamper_ping.h"
 #include "ping/scamper_ping_text.h"
 #include "ping/scamper_ping_warts.h"
+#include "ping/scamper_ping_json.h"
 #include "sting/scamper_sting.h"
 #include "sting/scamper_sting_text.h"
 #include "sting/scamper_sting_warts.h"
@@ -54,6 +57,7 @@ static const char rcsid[] =
 #include "dealias/scamper_dealias.h"
 #include "dealias/scamper_dealias_text.h"
 #include "dealias/scamper_dealias_warts.h"
+#include "dealias/scamper_dealias_json.h"
 #include "neighbourdisc/scamper_neighbourdisc.h"
 #include "neighbourdisc/scamper_neighbourdisc_warts.h"
 #include "tbit/scamper_tbit.h"
@@ -68,6 +72,9 @@ static const char rcsid[] =
 #define SCAMPER_FILE_TEXT        0
 #define SCAMPER_FILE_ARTS        1
 #define SCAMPER_FILE_WARTS       2
+#define SCAMPER_FILE_JSON        3
+
+typedef int (*write_obj_func_t)(scamper_file_t *sf, const void *);
 
 struct scamper_file
 {
@@ -80,6 +87,8 @@ struct scamper_file
   int                       eof;
   scamper_file_writefunc_t  writefunc;
   void                     *writeparam;
+  scamper_file_readfunc_t   readfunc;
+  void                     *readparam;
 };
 
 struct scamper_file_filter
@@ -135,7 +144,7 @@ struct handler
 
 static struct handler handlers[] = {
   {"text",                                 /* type */
-   scamper_file_text_is,                   /* detect */
+   NULL,                                   /* detect */
    NULL,                                   /* init_read */
    NULL,                                   /* init_write */
    NULL,                                   /* init_append */
@@ -187,7 +196,25 @@ static struct handler handlers[] = {
    scamper_file_warts_tbit_write,          /* write_tbit */
    scamper_file_warts_sniff_write,         /* write_sniff */
    scamper_file_warts_free_state,          /* free_state */
-  }
+  },
+  {"json",                                 /* type */
+   NULL,                                   /* detect */
+   NULL,                                   /* init_read */
+   NULL,                                   /* init_write */
+   NULL,                                   /* init_append */
+   NULL,                                   /* read */
+   scamper_file_json_trace_write,          /* write_trace */
+   NULL,                                   /* write_cycle_start */
+   NULL,                                   /* write_cycle_stop */
+   scamper_file_json_ping_write,           /* write_ping */
+   NULL,                                   /* write_tracelb */
+   NULL,                                   /* write_sting */
+   scamper_file_json_dealias_write,        /* write_dealias */
+   NULL,                                   /* write_neighbourdisc */
+   NULL,                                   /* write_tbit */
+   NULL,                                   /* write_sniff */
+   NULL,                                   /* free_state */
+  },
 };
 
 static int handler_cnt = sizeof(handlers) / sizeof(struct handler);
@@ -211,6 +238,24 @@ void scamper_file_setstate(scamper_file_t *sf, void *state)
 {
   sf->state = state;
   return;
+}
+
+void scamper_file_setreadfunc(scamper_file_t *sf,
+			      void *param, scamper_file_readfunc_t rf)
+{
+  sf->readfunc  = rf;
+  sf->readparam = param;
+  return;
+}
+
+scamper_file_readfunc_t scamper_file_getreadfunc(const scamper_file_t *sf)
+{
+  return sf->readfunc;
+}
+
+void *scamper_file_getreadparam(const scamper_file_t *sf)
+{
+  return sf->readparam;
 }
 
 void scamper_file_setwritefunc(scamper_file_t *sf,
@@ -318,38 +363,25 @@ int scamper_file_write_sniff(scamper_file_t *sf,
 
 int scamper_file_write_obj(scamper_file_t *sf, uint16_t type, const void *data)
 {
-  switch(type)
-    {
-    case SCAMPER_FILE_OBJ_LIST:
-    case SCAMPER_FILE_OBJ_CYCLE_DEF:
-    case SCAMPER_FILE_OBJ_CYCLE_START:
-    case SCAMPER_FILE_OBJ_CYCLE_STOP:
-    case SCAMPER_FILE_OBJ_ADDR:
-      return -1;
-
-    case SCAMPER_FILE_OBJ_TRACE:
-      return scamper_file_write_trace(sf, data);
-
-    case SCAMPER_FILE_OBJ_PING:
-      return scamper_file_write_ping(sf, data);
-
-    case SCAMPER_FILE_OBJ_TRACELB:
-      return scamper_file_write_tracelb(sf, data);
-
-    case SCAMPER_FILE_OBJ_DEALIAS:
-      return scamper_file_write_dealias(sf, data);
-
-    case SCAMPER_FILE_OBJ_NEIGHBOURDISC:
-      return scamper_file_write_neighbourdisc(sf, data);
-
-    case SCAMPER_FILE_OBJ_TBIT:
-      return scamper_file_write_tbit(sf, data);
-
-    case SCAMPER_FILE_OBJ_SNIFF:
-      return scamper_file_write_sniff(sf, data);
-    }
-
-  return -1;
+  static int (*const func[])(scamper_file_t *sf, const void *) = {
+    NULL,
+    NULL, /* SCAMPER_FILE_OBJ_LIST */
+    NULL, /* SCAMPER_FILE_OBJ_CYCLE_START */
+    NULL, /* SCAMPER_FILE_OBJ_CYCLE_DEF */
+    NULL, /* SCAMPER_FILE_OBJ_CYCLE_STOP */
+    NULL, /* SCAMPER_FILE_OBJ_ADDR */
+    (write_obj_func_t)scamper_file_write_trace,
+    (write_obj_func_t)scamper_file_write_ping,
+    (write_obj_func_t)scamper_file_write_tracelb,
+    (write_obj_func_t)scamper_file_write_dealias,
+    (write_obj_func_t)scamper_file_write_neighbourdisc,
+    (write_obj_func_t)scamper_file_write_tbit,
+    (write_obj_func_t)scamper_file_write_sting,
+    (write_obj_func_t)scamper_file_write_sniff,
+  };
+  if(type > 13 || func[type] == NULL)
+    return -1;
+  return func[type](sf, data);
 }
 
 /*
@@ -572,33 +604,20 @@ char *scamper_file_type_tostr(scamper_file_t *sf, char *buf, size_t len)
 static int file_type_get(char *type)
 {
   int i;
-
-  if(type != NULL)
-    {
-      for(i=0; i<handler_cnt; i++)
-	{
-	  if(strcasecmp(type, handlers[i].type) == 0)
-	    {
-	      return i;
-	    }
-	}
-    }
-
+  if(type == NULL)
+    return SCAMPER_FILE_NONE;
+  for(i=0; i<handler_cnt; i++)
+    if(strcasecmp(type, handlers[i].type) == 0)
+      return i;
   return SCAMPER_FILE_NONE;
 }
 
 static int file_type_detect(scamper_file_t *sf)
 {
   int i;
-
   for(i=0; i<handler_cnt; i++)
-    {
-      if(handlers[i].detect(sf) == 1)
-	{
-	  return i;
-	}
-    }
-
+    if(handlers[i].detect != NULL && handlers[i].detect(sf) == 1)
+      return i;
   return SCAMPER_FILE_NONE;
 }
 
@@ -606,15 +625,18 @@ static int file_open_read(scamper_file_t *sf)
 {
   struct stat sb;
 
-  if(fstat(sf->fd, &sb) != 0)
+  if(sf->fd != -1)
     {
-      return -1;
-    }
+      if(fstat(sf->fd, &sb) != 0)
+	{
+	  return -1;
+	}
 
-  if(sb.st_size != 0 && (sb.st_mode & S_IFIFO) == 0 &&
-     (sf->type = file_type_detect(sf)) == SCAMPER_FILE_NONE)
-    {
-      return -1;
+      if(sb.st_size != 0 && (sb.st_mode & S_IFIFO) == 0 &&
+	 (sf->type = file_type_detect(sf)) == SCAMPER_FILE_NONE)
+	{
+	  return -1;
+	}
     }
 
   if(handlers[sf->type].init_read == NULL)
@@ -626,10 +648,7 @@ static int file_open_read(scamper_file_t *sf)
 static int file_open_write(scamper_file_t *sf)
 {
   if(sf->type != SCAMPER_FILE_NONE && handlers[sf->type].init_write != NULL)
-    {
-      return handlers[sf->type].init_write(sf);
-    }
-
+    return handlers[sf->type].init_write(sf);
   return 0;
 }
 
@@ -638,39 +657,26 @@ static int file_open_append(scamper_file_t *sf)
   struct stat sb;
 
   if(fstat(sf->fd, &sb) != 0)
-    {
-      return -1;
-    }
+    return -1;
 
   if(sb.st_size == 0)
     {
-      /* can only write warts and text files */
       if(sf->type == SCAMPER_FILE_WARTS)
-	{
-	  return handlers[sf->type].init_write(sf);
-	}
-      else if(sf->type == SCAMPER_FILE_TEXT)
-	{
-	  return 0;
-	}
+	return handlers[sf->type].init_write(sf);
+      else if(sf->type == SCAMPER_FILE_TEXT || sf->type == SCAMPER_FILE_JSON)
+	return 0;
       return -1;
     }
 
   /* can't append to pipes */
   if((sb.st_mode & S_IFIFO) != 0)
-    {
-      return -1;
-    }
+    return -1;
 
   sf->type = file_type_detect(sf);
   if(handlers[sf->type].init_append != NULL)
-    {
-      return handlers[sf->type].init_append(sf);
-    }
-  else if(sf->type != SCAMPER_FILE_WARTS && sf->type != SCAMPER_FILE_TEXT)
-    {
-      return -1;
-    }
+    return handlers[sf->type].init_append(sf);
+  else if(sf->type != SCAMPER_FILE_TEXT && sf->type != SCAMPER_FILE_JSON)
+    return -1;
 
   return 0;
 }
@@ -707,9 +713,9 @@ static scamper_file_t *file_open(int fd, char *fn, char mode, int type)
   return sf;
 }
 
-scamper_file_t *scamper_file_opennull(void)
+scamper_file_t *scamper_file_opennull(char mode)
 {
-  return file_open(-1, NULL, 'w', SCAMPER_FILE_WARTS);
+  return file_open(-1, NULL, mode, SCAMPER_FILE_WARTS);
 }
 
 scamper_file_t *scamper_file_openfd(int fd, char *fn, char mode, char *type)

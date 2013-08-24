@@ -4,9 +4,10 @@
 .\" Author: Matthew Luckie <mjl@luckie.org.nz>
 .\"
 .\" Copyright (c) 2010 University of Waikato
+.\"               2012 The Regents of the University of California
 .\"                    All rights reserved
 .\"
-.\" $Id: sc_attach.1,v 1.2.10.1 2012/03/20 17:51:44 mjl Exp $
+.\" $Id: sc_attach.1,v 1.5 2012/04/02 21:54:03 mjl Exp $
 .\"
 .\"  nroff -man sc_attach.1
 .\"  groff -man -Tascii sc_attach.1 | man2html -title sc_attach.1
@@ -20,10 +21,11 @@
 .Sh SYNOPSIS
 .Nm
 .Bk -words
-.Op Fl ?v
+.Op Fl ?dv
 .Op Fl i Ar infile
 .Op Fl o Ar outfile
 .Op Fl p Ar port
+.Op Fl P Ar priority
 .Ek
 .\""""""""""""
 .Sh DESCRIPTION
@@ -37,6 +39,14 @@ The options are as follows:
 .Bl -tag -width Ds
 .It Fl ?
 prints a list of command line options and a synopsis of each.
+.It Fl d
+prints each command sent to
+.Xr scamper 1
+on stderr.
+.It Fl v
+prints the current revision of
+.Nm
+and exits.
 .It Fl i Ar infile
 specifies the name of the input file which consists of a sequence
 of
@@ -51,10 +61,10 @@ If '-' is specified, output will be sent to stdout.
 specifies the port on the local host where
 .Xr scamper 1
 is accepting control socket connections.
-.It Fl v
-prints the current revision of
-.Nm
-and exits.
+.It Fl P Ar priority
+specifies the mixing priority
+.Xr scamper 1
+should assign to the source.
 .El
 .Sh EXAMPLE
 Given a set of commands in a file named infile.txt:

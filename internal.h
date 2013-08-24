@@ -1,13 +1,14 @@
 /*
  * internal.h
  *
- * $Id: internal.h,v 1.17.2.1 2012/03/20 17:51:44 mjl Exp $
+ * $Id: internal.h,v 1.24 2013/08/01 23:45:39 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2013      The Regents of the University of California
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -179,10 +180,10 @@ typedef unsigned short sa_family_t;
 #include <stropts.h>
 #endif
 
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#ifdef HAVE_NETINET_IP_FW_H
 #define HAVE_IPFW
 #include <netinet/ip_fw.h>
-#if __FreeBSD_version < 700017 || defined(__APPLE__)
+#ifdef HAVE_NETINET6_IP_FW_H
 #include <netinet6/ip6_fw.h>
 #endif
 #endif
@@ -388,6 +389,10 @@ struct iovec
 #define IPPROTO_FRAGMENT 44
 #endif
 
+#ifndef IPPROTO_HOPOPTS
+#define IPPROTO_HOPOPTS 0
+#endif
+
 #ifndef IP_DF
 #define IP_DF 0x4000
 #endif
@@ -520,6 +525,14 @@ struct iovec
 #define ICMP_ECHO 8
 #endif
 
+#ifndef ICMP_TSTAMP
+#define ICMP_TSTAMP 13
+#endif
+
+#ifndef ICMP_TSTAMPREPLY
+#define ICMP_TSTAMPREPLY 14
+#endif
+
 #ifndef ICMP_TIMXCEED
 #define ICMP_TIMXCEED 11
 #endif
@@ -578,4 +591,24 @@ struct iovec
 
 #ifndef ICMP6_ECHO_REPLY
 #define ICMP6_ECHO_REPLY 129
+#endif
+
+#ifndef TCP_MAX_SEQNUM
+#define TCP_MAX_SEQNUM 4294967295U
+#endif
+
+#ifndef SEQ_LT
+#define SEQ_LT(a,b) ((int)((a)-(b)) < 0)
+#endif
+
+#ifndef SEQ_LEQ
+#define SEQ_LEQ(a,b) ((int)((a)-(b)) <= 0)
+#endif
+
+#ifndef SEQ_GT
+#define SEQ_GT(a,b) ((int)((a)-(b)) > 0)
+#endif
+
+#ifndef SEQ_GEQ
+#define SEQ_GEQ(a,b) ((int)((a)-(b)) >= 0)
 #endif

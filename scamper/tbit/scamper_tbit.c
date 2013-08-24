@@ -3,16 +3,18 @@
  *
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2010-2011 The University of Waikato
+ * Copyright (C) 2012      Matthew Luckie
+ * Copyright (C) 2012      The Regents of the University of California
  * Authors: Ben Stasiewicz, Matthew Luckie
  *
- * $Id: scamper_tbit.c,v 1.12 2011/11/17 21:14:58 mjl Exp $
+ * $Id: scamper_tbit.c,v 1.24 2013/08/07 21:30:02 mjl Exp $
  *
  * This file implements algorithms described in the tbit-1.0 source code,
  * as well as the papers:
  *
  *  "On Inferring TCP Behaviour"
  *      by Jitendra Padhye and Sally Floyd
- *  "Measuring the Evolution of Transport Protocols in the Internet" by
+ *  "Measuring the Evolution of Transport Protocols in the Internet"
  *      by Alberto Medina, Mark Allman, and Sally Floyd.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -32,7 +34,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit.c,v 1.12 2011/11/17 21:14:58 mjl Exp $";
+  "$Id: scamper_tbit.c,v 1.24 2013/08/07 21:30:02 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -44,6 +46,397 @@ static const char rcsid[] =
 #include "scamper_list.h"
 #include "scamper_tbit.h"
 #include "utils.h"
+
+typedef struct tqe
+{
+  int                   off;
+  scamper_tbit_tcpqe_t *qe;
+} tqe_t;
+
+struct scamper_tbit_tcpq
+{
+  uint32_t   seq;
+  tqe_t    **tqes;
+  int        tqec;
+};
+
+static int tqe_cmp(const tqe_t *a, const tqe_t *b)
+{
+  if(a->off < b->off)         return -1;
+  if(a->off > b->off)         return  1;
+  if(a->qe->len < b->qe->len) return -1;
+  if(a->qe->len > b->qe->len) return  1;
+  return 0;
+}
+
+void scamper_tbit_tcpqe_free(scamper_tbit_tcpqe_t *qe, void (*ff)(void *))
+{
+  if(qe == NULL) return;
+  if(ff != NULL && qe->data != NULL)
+    ff(qe->data);
+  free(qe);
+  return;
+}
+
+scamper_tbit_tcpq_t *scamper_tbit_tcpq_alloc(uint32_t isn)
+{
+  scamper_tbit_tcpq_t *q;
+  if((q = malloc_zero(sizeof(scamper_tbit_tcpq_t))) == NULL)
+    goto err;
+  q->seq = isn;
+  return q;
+ err:
+  scamper_tbit_tcpq_free(q, NULL);
+  return NULL;
+}
+
+void scamper_tbit_tcpq_free(scamper_tbit_tcpq_t *q, void (*ff)(void *))
+{
+  tqe_t *tqe;
+  int i;
+
+  if(q == NULL)
+    return;
+
+  if(q->tqes != NULL)
+    {
+      for(i=0; i<q->tqec; i++)
+	{
+	  tqe = q->tqes[i];
+	  scamper_tbit_tcpqe_free(tqe->qe, ff);
+	  free(tqe);
+	}
+      free(q->tqes);
+    }
+
+  free(q);
+  return;
+}
+
+int scamper_tbit_tcpq_seg(scamper_tbit_tcpq_t *q, uint32_t *seq, uint16_t *len)
+{
+  tqe_t *tqe;
+  assert(q->tqec >= 0);
+  if(q->tqec == 0)
+    return -1;
+  tqe = q->tqes[0];
+  assert(q->seq + tqe->off == tqe->qe->seq);
+  *seq = tqe->qe->seq;
+  *len = tqe->qe->len;
+  return 0;
+}
+
+scamper_tbit_tcpqe_t *scamper_tbit_tcpq_pop(scamper_tbit_tcpq_t *q)
+{
+  scamper_tbit_tcpqe_t *qe;
+  uint16_t len;
+  tqe_t *tqe;
+  int i, off;
+
+  if(q->tqec == 0)
+    return NULL;
+
+  tqe = q->tqes[0];
+  qe = tqe->qe;
+  free(tqe);
+
+  if(--q->tqec > 0)
+    memmove(q->tqes, q->tqes+1, sizeof(tqe_t *) * q->tqec);
+
+  off = scamper_tbit_data_seqoff(q->seq, qe->seq);
+  if(off < 0 && off + qe->len <= 0)
+    return qe;
+
+  len = qe->len + off;
+  for(i=0; i<q->tqec; i++)
+    q->tqes[i]->off -= len;
+  q->seq += len;
+
+  return qe;
+}
+
+int scamper_tbit_tcpq_add(scamper_tbit_tcpq_t *q, uint32_t seq,
+			  uint8_t flags, uint16_t len, uint8_t *data)
+{
+  tqe_t *tqe;
+
+  assert(scamper_tbit_data_inrange(q->seq, seq, len) != 0);
+  if((tqe = malloc_zero(sizeof(tqe_t))) == NULL)
+    goto err;
+  if((tqe->qe = malloc_zero(sizeof(scamper_tbit_tcpqe_t))) == NULL)
+    goto err;
+  tqe->off = scamper_tbit_data_seqoff(q->seq, seq);
+  tqe->qe->seq   = seq;
+  tqe->qe->flags = flags;
+  tqe->qe->len   = len;
+  tqe->qe->data  = data;
+  if(array_insert((void ***)&q->tqes,&q->tqec,tqe,(array_cmp_t)tqe_cmp) != 0)
+    goto err;
+  return 0;
+
+ err:
+  if(tqe != NULL)
+    {
+      scamper_tbit_tcpqe_free(tqe->qe, NULL);
+      free(tqe);
+    }
+  return -1;
+}
+
+int scamper_tbit_data_seqoff(uint32_t rcv_nxt, uint32_t seq)
+{
+  if(seq >= rcv_nxt)
+    return seq - rcv_nxt;
+  return TCP_MAX_SEQNUM - rcv_nxt + seq + 1;
+}
+
+int scamper_tbit_tcpq_sack(scamper_tbit_tcpq_t *q, uint32_t *sack, int count)
+{
+  uint32_t left, right;
+  scamper_tbit_tcpqe_t *qe;
+  int i, off, c = 0;
+
+  assert(q->tqec >= 0);
+  if(q->tqec == 0)
+    return 0;
+
+  qe = q->tqes[0]->qe;
+  if(qe->len == 0)
+    return 0;
+
+  left = qe->seq;
+  right = qe->seq + qe->len;
+  assert(scamper_tbit_data_seqoff(q->seq, left) > 0);
+
+  for(i=1; i<q->tqec && c < count; i++)
+    {
+      qe = q->tqes[i]->qe;
+      if(qe->len == 0)
+	continue;
+      if((off = scamper_tbit_data_seqoff(right, qe->seq)) <= 0)
+	{
+	  off = abs(off);
+	  if(qe->len > off)
+	    right = right + qe->len - off;
+	  continue;
+	}
+
+      sack[c*2]     = left;
+      sack[(c*2)+1] = right;
+      c++;
+
+      left  = qe->seq;
+      right = qe->seq + qe->len;
+    }
+
+  if(c < count)
+    {
+      sack[c*2]     = left;
+      sack[(c*2)+1] = right;
+      c++;
+    }
+
+  return c;
+}
+
+/*
+ * scamper_tbit_data_inrange:
+ *
+ * rcv_nxt <= beginning sequence number of segment < rcv_nxt + rcv_wnd OR
+ * rcv_nxt <= ending sequence number of segment < rcv_nxt + rcv_wnd
+ */
+int scamper_tbit_data_inrange(uint32_t rcv_nxt, uint32_t seq, uint16_t len)
+{
+  if((SEQ_LEQ(rcv_nxt, seq) && SEQ_LT(seq, rcv_nxt + 65535)) ||
+     (SEQ_LEQ(rcv_nxt, seq+len-1) && SEQ_LT(seq+len-1, rcv_nxt + 65535)))
+    return 1;
+  return 0;
+}
+
+int scamper_tbit_pkt_iplen(const scamper_tbit_pkt_t *pkt)
+{
+  uint8_t v = pkt->data[0] >> 4;
+  int rc = -1;
+
+  if(v == 4)
+    rc = bytes_ntohs(pkt->data+2);
+  else if(v == 6)
+    rc = bytes_ntohs(pkt->data+4) + 40;
+
+  return rc;
+}
+
+int scamper_tbit_pkt_iph(const scamper_tbit_pkt_t *pkt,
+			 uint8_t *proto, uint8_t *iphlen, uint16_t *iplen)
+{
+  uint8_t v = pkt->data[0] >> 4;
+
+  if(v == 4)
+    {
+      *iphlen = (pkt->data[0] & 0xf) * 4;
+      *iplen = bytes_ntohs(pkt->data+2);
+      *proto = pkt->data[9];
+      return 0;
+    }
+
+  if(v == 6)
+    {
+      *iphlen = 40;
+      *iplen = bytes_ntohs(pkt->data+4) + 40;
+      *proto = pkt->data[6];
+      for(;;)
+	{
+	  switch(*proto)
+	    {
+	    case IPPROTO_HOPOPTS:
+	    case IPPROTO_DSTOPTS:
+	    case IPPROTO_ROUTING:
+	      *proto = pkt->data[*iphlen];
+	      *iphlen += (pkt->data[(*iphlen)+1] * 8) + 8;
+	      continue;
+	    case IPPROTO_FRAGMENT:
+	      *proto = pkt->data[*iphlen];
+	      if((bytes_ntohs(pkt->data+(*iphlen)+2) & 0xfff8) != 0) /* off */
+		return -1;
+	      if((pkt->data[(*iphlen)+3] & 0x1) != 0) /* mf */
+		return -1;
+	      *iphlen += 8;
+	      continue;
+	    }
+	  break;
+	}
+      return 0;
+    }
+
+  return -1;
+}
+
+int scamper_tbit_pkt_tcpdatabytes(const scamper_tbit_pkt_t *pkt, uint16_t *bc)
+{
+  uint8_t iphlen, tcphlen, proto;
+  uint16_t iplen;
+
+  if(scamper_tbit_pkt_iph(pkt, &proto, &iphlen, &iplen) != 0)
+    return -1;
+  if(proto != IPPROTO_TCP)
+    return -1;
+  tcphlen = ((pkt->data[iphlen+12] & 0xf0) >> 4) * 4;
+  *bc = iplen - iphlen - tcphlen;
+  return 0;
+}
+
+int scamper_tbit_pkt_tcpack(const scamper_tbit_pkt_t *pkt, uint32_t *ack)
+{
+  uint8_t iphlen, proto;
+  uint16_t iplen;
+  if(scamper_tbit_pkt_iph(pkt, &proto, &iphlen, &iplen) != 0)
+    return -1;
+  if(proto != IPPROTO_TCP || (pkt->data[iphlen+13] & TH_ACK) == 0)
+    return -1;
+  *ack = bytes_ntohl(pkt->data+iphlen+8);
+  return 0;
+}
+
+int scamper_tbit_stats(const scamper_tbit_t *tbit, scamper_tbit_stats_t *stats)
+{
+  const scamper_tbit_pkt_t *pkt, *syn;
+  scamper_tbit_tcpq_t *q = NULL;
+  scamper_tbit_tcpqe_t *qe;
+  uint32_t rcv_nxt, seq;
+  uint16_t iplen, datalen, len;
+  uint8_t proto, iphlen, tcphlen, flags;
+  uint32_t i;
+  int off, seenfin = 0;
+
+  memset(stats, 0, sizeof(scamper_tbit_stats_t));
+  if(tbit->pktc < 1)
+    return 0;
+
+  /* to begin with, look for a SYN/ACK */
+  syn = tbit->pkts[0];
+  for(i=1; i<tbit->pktc; i++)
+    {
+      pkt = tbit->pkts[i];
+      if(pkt->dir == SCAMPER_TBIT_PKT_DIR_RX)
+	break;
+    }
+  if(i == tbit->pktc)
+    return 0;
+
+  if(scamper_tbit_pkt_iph(pkt, &proto, &iphlen, &iplen) != 0)
+    goto err;
+  if(proto != IPPROTO_TCP)
+    goto err;
+  if((pkt->data[iphlen+13] & (TH_SYN|TH_ACK)) != (TH_SYN|TH_ACK))
+    goto err;
+
+  timeval_diff_tv(&stats->synack_rtt, &syn->tv, &pkt->tv);
+  rcv_nxt = bytes_ntohl(pkt->data+iphlen+4) + 1;
+
+  if((q = scamper_tbit_tcpq_alloc(rcv_nxt)) == NULL)
+    goto err;
+
+  for(i++; i<tbit->pktc; i++)
+    {
+      pkt = tbit->pkts[i];
+      if(pkt->dir != SCAMPER_TBIT_PKT_DIR_RX)
+	continue;
+      if(scamper_tbit_pkt_iph(pkt, &proto, &iphlen, &iplen) != 0)
+	goto err;
+      if(proto != IPPROTO_TCP)
+	goto err;
+      seq     = bytes_ntohl(pkt->data+iphlen+4);
+      tcphlen = ((pkt->data[iphlen+12] & 0xf0) >> 4) * 4;
+      flags   = pkt->data[iphlen+13];
+      if((datalen = iplen - iphlen - tcphlen) == 0 && (flags & TH_FIN) == 0)
+	continue;
+
+      stats->rx_totalsize += (iplen - iphlen - tcphlen);
+
+      /* skip over a packet out of range */
+      if(scamper_tbit_data_inrange(rcv_nxt, seq, datalen) == 0)
+	continue;
+
+      if(scamper_tbit_tcpq_add(q, seq, flags, datalen, NULL) != 0)
+	goto err;
+
+      while(scamper_tbit_tcpq_seg(q, &seq, &datalen) == 0)
+	{
+	  if(scamper_tbit_data_inrange(rcv_nxt, seq, datalen) == 0)
+	    {
+	      scamper_tbit_tcpqe_free(scamper_tbit_tcpq_pop(q), NULL);
+	      continue;
+	    }
+
+	  /* can't process this packet yet */
+	  if((off = scamper_tbit_data_seqoff(rcv_nxt, seq)) > 0)
+	    break;
+
+	  qe = scamper_tbit_tcpq_pop(q);
+	  flags = qe->flags;
+	  scamper_tbit_tcpqe_free(qe, NULL);
+	  len = datalen + off;
+	  rcv_nxt += len;
+	  stats->rx_xfersize += len;
+
+	  if((flags & TH_FIN) != 0)
+	    {
+	      timeval_diff_tv(&stats->xfertime, &syn->tv, &pkt->tv);
+	      seenfin = 1;
+	    }
+	}
+    }
+
+  if(seenfin == 0)
+    goto err;
+
+  scamper_tbit_tcpq_free(q, NULL);
+  return 0;
+
+ err:
+  scamper_tbit_tcpq_free(q, NULL);
+  return -1;
+}
 
 char *scamper_tbit_type2str(const scamper_tbit_t *tbit, char *buf, size_t len)
 {
@@ -77,7 +470,7 @@ char *scamper_tbit_res2str(const scamper_tbit_t *tbit, char *buf, size_t len)
     "halted",
     "tcp-badopt",
     "tcp-fin",
-    NULL,                  /* 10 */
+    "tcp-zerowin",         /* 10 */
     NULL,
     NULL,
     NULL,

@@ -1,10 +1,11 @@
 /*
  * scamper_outfiles: hold a collection of output targets together
  *
- * $Id: scamper_outfiles.c,v 1.41 2011/10/25 22:07:07 mjl Exp $
+ * $Id: scamper_outfiles.c,v 1.42 2012/03/21 21:23:28 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_outfiles.c,v 1.41 2011/10/25 22:07:07 mjl Exp $";
+  "$Id: scamper_outfiles.c,v 1.42 2012/03/21 21:23:28 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -335,7 +336,7 @@ scamper_outfile_t *scamper_outfile_opennull(char *name)
   scamper_outfile_t *sof;
   scamper_file_t *sf;
 
-  if((sf = scamper_file_opennull()) == NULL)
+  if((sf = scamper_file_opennull('w')) == NULL)
     return NULL;
 
   if((sof = outfile_alloc(name, sf)) == NULL)

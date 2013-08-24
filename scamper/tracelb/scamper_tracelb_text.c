@@ -2,9 +2,10 @@
  * scamper_tracelb_text.c
  *
  * Copyright (C) 2008-2011 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_tracelb_text.c,v 1.3 2011/02/21 03:59:53 mjl Exp $
+ * $Id: scamper_tracelb_text.c,v 1.4 2012/03/29 00:01:12 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb_text.c,v 1.3 2011/02/21 03:59:53 mjl Exp $";
+  "$Id: scamper_tracelb_text.c,v 1.4 2012/03/29 00:01:12 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -44,13 +45,6 @@ typedef struct probeset_summary
   int              addrc;
   int              nullc;
 } probeset_summary_t;
-
-static int set_addr_cmp(const void *va, const void *vb)
-{
-  const scamper_addr_t *a = *((const scamper_addr_t **)va);
-  const scamper_addr_t *b = *((const scamper_addr_t **)vb);
-  return scamper_addr_cmp(a, b);
-}
 
 static probeset_summary_t *probeset_summary(scamper_tracelb_probeset_t *set)
 {
@@ -99,11 +93,11 @@ static probeset_summary_t *probeset_summary(scamper_tracelb_probeset_t *set)
 	    {
 	      addr = probe->rxs[j]->reply_from;
 	      if(array_find((void **)sum->addrs, sum->addrc, addr,
-			    set_addr_cmp) != NULL)
+			    (array_cmp_t)scamper_addr_cmp) != NULL)
 		continue;
 
 	      array_insert((void ***)&sum->addrs, &sum->addrc,
-			   addr, set_addr_cmp);
+			   addr, (array_cmp_t)scamper_addr_cmp);
 	    }
 	  x++;
 	}

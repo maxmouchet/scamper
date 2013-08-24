@@ -1,9 +1,10 @@
 /*
  * scamper_tracelb.c
  *
- * $Id: scamper_tracelb.c,v 1.53 2010/09/11 22:10:42 mjl Exp $
+ * $Id: scamper_tracelb.c,v 1.54 2012/03/29 00:01:12 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
+ * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * Load-balancer traceroute technique authored by
@@ -27,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb.c,v 1.53 2010/09/11 22:10:42 mjl Exp $";
+  "$Id: scamper_tracelb.c,v 1.54 2012/03/29 00:01:12 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -116,42 +117,15 @@ int scamper_tracelb_link_cmp(const scamper_tracelb_link_t *a,
 }
 
 /*
- * tracelb_node_cmp
- *
- * comparison function to help determine if two nodes are equivalent, used
- * when the nodes are stored in an array of pointers to nodes.
- */
-static int tracelb_node_cmp(const void *va, const void *vb)
-{
-  const scamper_tracelb_node_t *a = *((const scamper_tracelb_node_t **)va);
-  const scamper_tracelb_node_t *b = *((const scamper_tracelb_node_t **)vb);
-  return scamper_tracelb_node_cmp(a, b);
-}
-
-/*
- * tracelb_link_cmp
- *
- * comparison function to help determine if two links are equivalent, used
- * when the links are stored in an array of pointers to links.
- */
-static int tracelb_link_cmp(const void *va, const void *vb)
-{
-  const scamper_tracelb_link_t *a = *((const scamper_tracelb_link_t **)va);
-  const scamper_tracelb_link_t *b = *((const scamper_tracelb_link_t **)vb);
-  return scamper_tracelb_link_cmp(a, b);
-}
-
-/*
  * tracelb_node_link_cmp
  *
  * compare the `to' node of two links.
  * the from node is the same; this function is used to compare a set of links
  * attached to a single node and order them accordingly.
  */
-static int tracelb_node_link_cmp(const void *va, const void *vb)
+static int tracelb_node_link_cmp(const scamper_tracelb_link_t *a,
+				 const scamper_tracelb_link_t *b)
 {
-  const scamper_tracelb_link_t *a = *((const scamper_tracelb_link_t **)va);
-  const scamper_tracelb_link_t *b = *((const scamper_tracelb_link_t **)vb);
   assert(a->from == b->from);
   return scamper_tracelb_node_cmp(a->to, b->to);
 }
@@ -168,12 +142,13 @@ static void tracelb_nodes_extract(const scamper_tracelb_t *trace,
 {
   uint16_t i;
 
-  if(array_find((void **)nodes, *nodec, from, tracelb_node_cmp) != NULL)
+  if(array_find((void **)nodes, *nodec, from,
+		(array_cmp_t)scamper_tracelb_node_cmp) != NULL)
     return;
 
   nodes[*nodec] = from;
   *nodec = *nodec + 1;
-  qsort(nodes, *nodec, sizeof(scamper_tracelb_node_t *), tracelb_node_cmp);
+  array_qsort((void **)nodes, *nodec, (array_cmp_t)scamper_tracelb_node_cmp);
 
   if(to != NULL && from == to)
     return;
@@ -572,7 +547,8 @@ void scamper_tracelb_probeset_free(scamper_tracelb_probeset_t *set)
 scamper_tracelb_link_t *scamper_tracelb_link_find(const scamper_tracelb_t *tr,
 						  scamper_tracelb_link_t *link)
 {
-  return array_find((void **)tr->links, tr->linkc, link, tracelb_link_cmp);
+  return array_find((void **)tr->links, tr->linkc, link,
+		    (array_cmp_t)scamper_tracelb_link_cmp);
 }
 
 scamper_tracelb_link_t *scamper_tracelb_link_alloc(void)
@@ -624,11 +600,8 @@ int scamper_tracelb_link_add(scamper_tracelb_t *trace,
   if(realloc_wrap((void **)&node->links, size) == 0)
     {
       node->links[node->linkc++] = link;
-      if(node->linkc > 1)
-	{
-	  qsort(node->links, node->linkc,
-		sizeof(scamper_tracelb_link_t *), tracelb_link_cmp);
-	}
+      array_qsort((void **)node->links, node->linkc,
+		  (array_cmp_t)scamper_tracelb_link_cmp);
     }
   else return -1;
 
@@ -637,11 +610,8 @@ int scamper_tracelb_link_add(scamper_tracelb_t *trace,
   if(realloc_wrap((void **)&trace->links, size) == 0)
     {
       trace->links[trace->linkc++] = link;
-      if(trace->linkc > 1)
-	{
-	  qsort(trace->links, trace->linkc,
-		sizeof(scamper_tracelb_link_t *), tracelb_link_cmp);
-	}
+      array_qsort((void **)trace->links, trace->linkc,
+		  (array_cmp_t)scamper_tracelb_link_cmp);
       return 0;
     }
   return -1;
@@ -734,11 +704,8 @@ int scamper_tracelb_probe_replies_alloc(scamper_tracelb_probe_t *probe,
 
 void scamper_tracelb_node_links_sort(scamper_tracelb_node_t *node)
 {
-  if(node->linkc > 1)
-    {
-      qsort(node->links, node->linkc, sizeof(scamper_tracelb_link_t *),
-	    tracelb_node_link_cmp);
-    }
+  array_qsort((void **)node->links, node->linkc,
+	      (array_cmp_t)tracelb_node_link_cmp);
   return;
 }
 

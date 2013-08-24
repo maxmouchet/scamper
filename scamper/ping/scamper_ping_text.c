@@ -3,9 +3,10 @@
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2012-2013 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping_text.c,v 1.4 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_ping_text.c,v 1.11 2013/08/07 20:40:54 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_text.c,v 1.4 2011/09/16 03:15:44 mjl Exp $";
+  "$Id: scamper_ping_text.c,v 1.11 2013/08/07 20:40:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -52,12 +53,23 @@ static char *ping_header(const scamper_ping_t *ping)
   return strdup(header);
 }
 
+static char *tsreply_tostr(char *buf, size_t len, uint32_t val)
+{
+  uint32_t hh, mm, ss, ms;
+  ms = val % 1000;
+  ss = val / 1000;
+  hh = ss / 3600; ss -= (hh * 3600);
+  mm = ss / 60; ss -= (mm * 60);
+  snprintf(buf, len, "%02d:%02d:%02d.%03d", hh, mm, ss, ms);
+  return buf;
+}
+
 static char *ping_reply(const scamper_ping_t *ping,
 			const scamper_ping_reply_t *reply)
 {
   scamper_ping_reply_v4rr_t *v4rr;
   scamper_ping_reply_v4ts_t *v4ts;
-  char buf[256], a[64], rtt[32], *tcp, flags[16];
+  char buf[256], a[64], rtt[32], *tcp, flags[16], tso[16], tsr[16], tst[16];
   uint8_t i;
   size_t off = 0;
 
@@ -66,20 +78,17 @@ static char *ping_reply(const scamper_ping_t *ping,
 
   if(SCAMPER_PING_REPLY_IS_ICMP(reply))
     {
-      if(SCAMPER_PING_METHOD_IS_ICMP(ping))
-	{
-	  string_concat(buf, sizeof(buf), &off,
-			"%d bytes from %s, seq=%d ttl=%d time=%s ms\n",
-			reply->reply_size, a, reply->probe_id,
-			reply->reply_ttl, rtt);
-	}
-      else
-	{
-	  string_concat(buf, sizeof(buf), &off,
-			"%d bytes from %s, seq=%d ttl=%d time=%s ms\n",
-			reply->reply_size, a, reply->probe_id,
-			reply->reply_ttl, rtt);
-	}
+      string_concat(buf, sizeof(buf), &off,
+		    "%d bytes from %s, seq=%d ttl=%d time=%s ms",
+		    reply->reply_size, a, reply->probe_id,
+		    reply->reply_ttl, rtt);
+      if(reply->tsreply != NULL)
+	string_concat(buf, sizeof(buf), &off,
+		      " tso=%s tsr=%s tst=%s",
+		      tsreply_tostr(tso,sizeof(tso),reply->tsreply->tso),
+		      tsreply_tostr(tsr,sizeof(tsr),reply->tsreply->tsr),
+		      tsreply_tostr(tst,sizeof(tst),reply->tsreply->tst));
+      string_concat(buf, sizeof(buf), &off, "\n");
     }
   else if(SCAMPER_PING_REPLY_IS_TCP(reply))
     {
@@ -119,7 +128,7 @@ static char *ping_reply(const scamper_ping_t *ping,
 		      scamper_addr_tostr(v4rr->rr[i], a, sizeof(a)));
     }
 
-  if((v4ts = reply->v4ts) != NULL)
+  if((v4ts = reply->v4ts) != NULL && v4ts->tsc > 0)
     {
       string_concat(buf, sizeof(buf), &off, " TS: ");
       if(v4ts->ips != NULL)
@@ -142,38 +151,37 @@ static char *ping_reply(const scamper_ping_t *ping,
 
 static char *ping_stats(const scamper_ping_t *ping)
 {
-  struct timeval min, max, avg, stddev;
-  uint16_t loss;
-  uint32_t replies, dups;
-  size_t off;
-  char min_str[32], max_str[32], avg_str[32], stddev_str[32];
+  scamper_ping_stats_t stats;
+  size_t off = 0;
+  char str[64];
   char buf[512];
-  char dst[64];
   int rp = 0;
 
-  if(scamper_ping_stats(ping,&replies,&dups,&loss,&min,&max,&avg,&stddev) != 0)
+  if(scamper_ping_stats(ping, &stats) != 0)
     return NULL;
 
   if(ping->ping_sent != 0)
-    rp = ((ping->ping_sent - replies) * 100) / ping->ping_sent;
+    rp = ((ping->ping_sent - stats.nreplies) * 100) / ping->ping_sent;
 
-  off = 0;
   string_concat(buf, sizeof(buf), &off, "--- %s ping statistics ---\n",
-		scamper_addr_tostr(ping->dst, dst, sizeof(dst)));
+		scamper_addr_tostr(ping->dst, str, sizeof(str)));
   string_concat(buf, sizeof(buf), &off,
 		"%d packets transmitted, %d packets received, ",
-		ping->ping_sent, replies);
-  if(dups > 0)
-    string_concat(buf, sizeof(buf), &off, "+%d duplicates, ", dups);
+		ping->ping_sent, stats.nreplies);
+  if(stats.ndups > 0)
+    string_concat(buf, sizeof(buf), &off, "+%d duplicates, ", stats.ndups);
   string_concat(buf, sizeof(buf), &off, "%d%% packet loss\n", rp);
-  if(replies > 0)
+  if(stats.nreplies > 0)
     {
-      string_concat(buf, sizeof(buf), &off,
-		    "round-trip min/avg/max/stddev = %s/%s/%s/%s ms\n",
-		    timeval_tostr(&min,    min_str,    sizeof(min_str)),
-		    timeval_tostr(&avg,    avg_str,    sizeof(avg_str)),
-		    timeval_tostr(&max,    max_str,    sizeof(max_str)),
-		    timeval_tostr(&stddev, stddev_str, sizeof(stddev_str)));
+      string_concat(buf, sizeof(buf), &off, "round-trip min/avg/max/stddev =");
+      string_concat(buf, sizeof(buf), &off, " %s",
+		    timeval_tostr(&stats.min_rtt, str, sizeof(str)));
+      string_concat(buf, sizeof(buf), &off, "/%s",
+		    timeval_tostr(&stats.avg_rtt, str, sizeof(str)));
+      string_concat(buf, sizeof(buf), &off, "/%s",
+		    timeval_tostr(&stats.max_rtt, str, sizeof(str)));
+      string_concat(buf, sizeof(buf), &off, "/%s ms\n",
+      		    timeval_tostr(&stats.stddev_rtt, str, sizeof(str)));
     }
 
   return strdup(buf);
@@ -200,15 +208,11 @@ int scamper_file_text_ping_write(const scamper_file_t *sf,
 
   /* get current position incase trunction is required */
   if(fd != 1 && (off = lseek(fd, 0, SEEK_CUR)) == -1)
-    {
-      return -1;
-    }
+    return -1;
 
   /* get the header string */
   if((header = ping_header(ping)) == NULL)
-    {
-      goto cleanup;
-    }
+    goto cleanup;
   len = (header_len = strlen(header));
 
   /* put together a string for each reply */
@@ -216,9 +220,7 @@ int scamper_file_text_ping_write(const scamper_file_t *sf,
     {
       if((replies    = malloc_zero(sizeof(char *) * reply_count)) == NULL ||
 	 (reply_lens = malloc_zero(sizeof(size_t) * reply_count)) == NULL)
-	{
-	  goto cleanup;
-	}
+	goto cleanup;
 
       for(i=0, j=0; i<ping->ping_sent; i++)
 	{
@@ -231,7 +233,6 @@ int scamper_file_text_ping_write(const scamper_file_t *sf,
 		  goto cleanup;
 		}
 	      len += (reply_lens[j] = strlen(replies[j]));
-
 	      reply = reply->next;
 	      j++;
 	    }
@@ -240,21 +241,26 @@ int scamper_file_text_ping_write(const scamper_file_t *sf,
 
   /* put together the summary stats */
   stats = ping_stats(ping);
-  len += (stats_len = strlen(stats));
+  if(stats != NULL)
+    len += (stats_len = strlen(stats));
 
   /* allocate a string long enough to combine the above strings */
   if((str = malloc(len)) == NULL)
-    {
-      goto cleanup;
-    }
+    goto cleanup;
 
   /* combine the strings created above */
   memcpy(str+wc, header, header_len); wc += header_len;
   for(i=0; i<reply_count; i++)
     {
-      memcpy(str+wc, replies[i], reply_lens[i]); wc += reply_lens[i];
+      memcpy(str+wc, replies[i], reply_lens[i]);
+      wc += reply_lens[i];
     }
-  memcpy(str+wc, stats, stats_len); wc += stats_len;
+
+  if(stats != NULL)
+    {
+      memcpy(str+wc, stats, stats_len);
+      wc += stats_len;
+    }
 
   /*
    * try and write the string to disk.  if it fails, then truncate the
@@ -280,9 +286,8 @@ int scamper_file_text_ping_write(const scamper_file_t *sf,
   if(replies != NULL)
     {
       for(i=0; i<reply_count; i++)
-	{
-	  if(replies[i] != NULL) free(replies[i]);
-	}
+	if(replies[i] != NULL)
+	  free(replies[i]);
       free(replies);
     }
 
