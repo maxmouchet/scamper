@@ -3,10 +3,11 @@
 .\"
 .\" Author: Matthew Luckie <mjl@luckie.org.nz>
 .\"
-.\" Copyright (c) 2010 University of Waikato
-.\"                    All rights reserved
+.\" Copyright (C) 2010      University of Waikato
+.\" Copyright (C) 2013-2014 The Regents of the University of California
+.\"                         All rights reserved
 .\"
-.\" $Id: sc_analysis_dump.1,v 1.5 2013/07/08 21:12:56 mjl Exp $
+.\" $Id: sc_analysis_dump.1,v 1.7 2014/01/22 19:40:23 mjl Exp $
 .\"
 .\"  nroff -man sc_analysis_dump.1
 .\"  groff -man -Tascii sc_analysis_dump.1 | man2html -title sc_analysis_dump.1
@@ -46,7 +47,8 @@ disables printing the destination address in each line of output.
 .It Fl D Ar debug-count
 for each input file stop reading after the specified number of traces.
 .It Fl e
-adds the response from the destination to each line of output.
+adds the response from the destination to each line of output.  Please
+read the bugs section below.
 .It Fl g
 use geographical data from netacuity.
 Not all builds of
@@ -239,9 +241,19 @@ gzcat file1.warts.gz | sc_analysis_dump
 .Pp
 will decode and print the traceroute objects in the uncompressed file
 supplied on stdin.
+.Sh BUGS
+When the
+.Fl e
+option is used, any unresponsive hops between the last responding router
+and the destination are not printed, which could imply an IP link where
+none exists.
+The author recommends using
+.Xr sc_warts2json 1
+instead.
 .Sh SEE ALSO
 .Xr scamper 1 ,
-.Xr sc_wartsdump 1
+.Xr sc_wartsdump 1,
+.Xr sc_warts2json 1
 .Sh AUTHORS
 .Nm
 is written by Matthew Luckie <mjl@luckie.org.nz>.

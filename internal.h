@@ -1,7 +1,7 @@
 /*
  * internal.h
  *
- * $Id: internal.h,v 1.24 2013/08/01 23:45:39 mjl Exp $
+ * $Id: internal.h,v 1.25 2013/09/04 23:32:44 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -523,6 +523,22 @@ struct iovec
 
 #ifndef ICMP_ECHO
 #define ICMP_ECHO 8
+#endif
+
+#ifndef ICMP_PARAMPROB
+#define ICMP_PARAMPROB 12
+#endif
+
+#ifndef ICMP_PARAMPROB_ERRATPTR
+#define ICMP_PARAMPROB_ERRATPTR 0
+#endif
+
+#ifndef ICMP_PARAMPROB_OPTABSENT
+#define ICMP_PARAMPROB_OPTABSENT 1
+#endif
+
+#ifndef ICMP_PARAMPROB_LENGTH
+#define ICMP_PARAMPROB_LENGTH 2
 #endif
 
 #ifndef ICMP_TSTAMP

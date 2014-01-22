@@ -1,7 +1,7 @@
 /*
  * scamper_dealias.h
  *
- * $Id: scamper_dealias.h,v 1.43 2013/08/04 23:26:11 mjl Exp $
+ * $Id: scamper_dealias.h,v 1.45 2013/08/28 05:23:47 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012-2013 The Regents of the University of California
@@ -46,10 +46,12 @@
 #define SCAMPER_DEALIAS_RESULT_ALIASES    1
 #define SCAMPER_DEALIAS_RESULT_NOTALIASES 2
 #define SCAMPER_DEALIAS_RESULT_HALTED     3
+#define SCAMPER_DEALIAS_RESULT_IPIDECHO   4
 
 #define SCAMPER_DEALIAS_ALLY_FLAG_NOBS        1
-#define SCAMPER_DEALIAS_PREFIXSCAN_FLAG_NOBS  1
 #define SCAMPER_DEALIAS_RADARGUN_FLAG_SHUFFLE 1
+#define SCAMPER_DEALIAS_PREFIXSCAN_FLAG_NOBS  1
+#define SCAMPER_DEALIAS_PREFIXSCAN_FLAG_CSA   2
 
 #define SCAMPER_DEALIAS_REPLY_FLAG_IPID32 1
 

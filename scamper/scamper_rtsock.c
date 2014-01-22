@@ -1,7 +1,7 @@
 /*
  * scamper_rtsock: code to deal with a route socket or equivalent
  *
- * $Id: scamper_rtsock.c,v 1.78 2012/05/08 17:37:34 mjl Exp $
+ * $Id: scamper_rtsock.c,v 1.79 2014/01/10 17:59:37 mjl Exp $
  *
  *          Matthew Luckie
  *
@@ -41,7 +41,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_rtsock.c,v 1.78 2012/05/08 17:37:34 mjl Exp $";
+  "$Id: scamper_rtsock.c,v 1.79 2014/01/10 17:59:37 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -394,7 +394,6 @@ static int scamper_rtsock_getifindex(int fd, scamper_addr_t *dst)
 
 int scamper_rtsock_getroute(scamper_fd_t *fdn, scamper_route_t *route)
 {
-  rtsock_pair_t *pair = NULL;
   int fd;
 
   /* get the route socket fd */
@@ -406,7 +405,7 @@ int scamper_rtsock_getroute(scamper_fd_t *fdn, scamper_route_t *route)
     return -1;
 
   /* keep track of the question */
-  if((pair = rtsock_pair_alloc(route, seq++)) == NULL)
+  if(rtsock_pair_alloc(route, seq++) == NULL)
     return -1;
   return 0;
 }

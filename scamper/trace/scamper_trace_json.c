@@ -7,7 +7,7 @@
  * Copyright (C) 2013      The Regents of the University of California
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_trace_json.c,v 1.4 2013/07/31 17:42:42 mjl Exp $
+ * $Id: scamper_trace_json.c,v 1.5 2014/01/10 18:05:40 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_json.c,v 1.4 2013/07/31 17:42:42 mjl Exp $";
+  "$Id: scamper_trace_json.c,v 1.5 2014/01/10 18:05:40 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -157,7 +157,7 @@ int scamper_file_json_trace_write(const scamper_file_t *sf,
   size_t wc, len, off = 0;
   off_t foff = 0;
   char *str = NULL, *header = NULL, **hops = NULL;
-  int hopc, i, j, rc = -1;
+  int i, j, hopc = 0, rc = -1;
 
   if(fd != STDOUT_FILENO && (foff = lseek(fd, 0, SEEK_CUR)) == -1)
     return -1;
@@ -166,7 +166,7 @@ int scamper_file_json_trace_write(const scamper_file_t *sf,
     goto cleanup;
   len = strlen(header);
 
-  for(i=trace->firsthop-1, hopc=0; i<trace->hop_count; i++)
+  for(i=trace->firsthop-1; i<trace->hop_count; i++)
     for(hop = trace->hops[i]; hop != NULL; hop = hop->hop_next)
       hopc++;
   if(hopc > 0)

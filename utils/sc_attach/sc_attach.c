@@ -8,35 +8,13 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_attach.c,v 1.13 2012/04/05 18:00:55 mjl Exp $";
+  "$Id: sc_attach.c,v 1.14 2013/09/04 19:19:47 mjl Exp $";
 #endif
 
-#include <sys/time.h>
-#include <sys/types.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/uio.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-
-#include <ctype.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-
-#if defined(__APPLE__)
-#include <stdint.h>
+#ifdef HAVE_CONFIG_H
+#include "config.h"
 #endif
-
-#if defined(DMALLOC)
-#include <dmalloc.h>
-#endif
-
-#include <assert.h>
+#include "internal.h"
 
 #include "scamper_file.h"
 #include "mjl_list.h"
@@ -50,6 +28,8 @@ static const char rcsid[] =
 #define OPT_VERSION     0x0020
 #define OPT_DEBUG       0x0040
 #define OPT_PRIORITY    0x0080
+#define OPT_DAEMON      0x0100
+#define OPT_COMMAND     0x0200
 
 static uint32_t               options       = 0;
 static char                  *infile        = NULL;
@@ -67,6 +47,7 @@ static int                    data_left     = 0;
 static int                    more          = 0;
 static slist_t               *commands      = NULL;
 static char                  *lastcommand   = NULL;
+static char                  *opt_command   = NULL;
 static int                    done          = 0;
 
 static void cleanup(void)
@@ -119,8 +100,8 @@ static void cleanup(void)
 static void usage(uint32_t opt_mask)
 {
   fprintf(stderr,
-	  "usage: sc_attach [-?dv] [-i infile] [-o outfile] [-p port]\n"
-	  "                 [-P priority]\n");
+	  "usage: sc_attach [-?dDv] [-c command] [-i infile] [-o outfile]\n"
+	  "                 [-p port] [-P priority]\n");
 
   if(opt_mask == 0) return;
 
@@ -132,11 +113,17 @@ static void usage(uint32_t opt_mask)
   if(opt_mask & OPT_DEBUG)
     fprintf(stderr, "     -d output debugging information to stderr\n");
 
+  if(opt_mask & OPT_DAEMON)
+    fprintf(stderr, "     -D operate as a daemon\n");
+
   if(opt_mask & OPT_VERSION)
     fprintf(stderr, "     -v give the version string of sc_attach\n");
 
+  if(opt_mask & OPT_COMMAND)
+    fprintf(stderr, "     -c command to use with addresses in input file\n");
+
   if(opt_mask & OPT_INFILE)
-    fprintf(stderr, "     -i input command file\n");
+    fprintf(stderr, "     -i input file\n");
 
   if(opt_mask & OPT_OUTFILE)
     fprintf(stderr, "     -o output warts file\n");
@@ -154,7 +141,7 @@ static int check_options(int argc, char *argv[])
 {
   int       ch;
   long      lo;
-  char     *opts = "di:o:p:P:v?";
+  char     *opts = "c:dDi:o:p:P:v?";
   char     *opt_port = NULL, *opt_priority = NULL;
   uint32_t  mandatory = OPT_INFILE | OPT_OUTFILE | OPT_PORT;
 
@@ -162,8 +149,16 @@ static int check_options(int argc, char *argv[])
     {
       switch(ch)
 	{
+	case 'c':
+	  opt_command = optarg;
+	  break;
+
 	case 'd':
 	  options |= OPT_DEBUG;
+	  break;
+
+	case 'D':
+	  options |= OPT_DAEMON;
 	  break;
 
 	case 'i':
@@ -197,7 +192,7 @@ static int check_options(int argc, char *argv[])
 	  break;
 
 	case 'v':
-	  printf("$Id: sc_attach.c,v 1.13 2012/04/05 18:00:55 mjl Exp $\n");
+	  printf("$Id: sc_attach.c,v 1.14 2013/09/04 19:19:47 mjl Exp $\n");
 	  return -1;
 
 	case '?':
@@ -233,6 +228,36 @@ static int check_options(int argc, char *argv[])
       priority = lo;
     }
 
+  if((options & OPT_DAEMON) != 0 &&
+     ((options & (OPT_STDOUT|OPT_DEBUG)) != 0 || stdin_fd != -1))
+    {
+      usage(OPT_DAEMON);
+      return -1;
+    }
+
+  return 0;
+}
+
+static int command_new(char *line, void *param)
+{
+  char *tmp = NULL, buf[512];
+  size_t off = 0;
+
+  if(line[0] == '#' || line[0] == '\0')
+    return 0;
+
+  if(opt_command != NULL)
+    string_concat(buf, sizeof(buf), &off, "%s %s\n", opt_command, line);
+  else
+    string_concat(buf, sizeof(buf), &off, "%s\n", line);
+
+  if((tmp=memdup(buf,off+1)) == NULL || slist_tail_push(commands,tmp) == NULL)
+    {
+      fprintf(stderr, "could not push command onto list\n");
+      if(tmp != NULL) free(tmp);
+      return -1;
+    }
+
   return 0;
 }
 
@@ -243,12 +268,6 @@ static int check_options(int argc, char *argv[])
  */
 static int do_infile(void)
 {
-  struct stat sb;
-  size_t off, start;
-  char *readbuf = NULL;
-  char *command;
-  int fd = -1;
-
   if((commands = slist_alloc()) == NULL)
     {
       fprintf(stderr, "could not alloc commands list\n");
@@ -256,86 +275,9 @@ static int do_infile(void)
     }
 
   if(infile == NULL)
-    {
-      return 0;
-    }
+    return 0;
 
-  if((fd = open(infile, O_RDONLY)) < 0)
-    {
-      fprintf(stderr, "could not open %s\n", infile);
-      goto err;
-    }
-
-  if(fstat(fd, &sb) != 0)
-    {
-      fprintf(stderr, "could not fstat %s\n", infile);
-      goto err;
-    }
-  if(sb.st_size == 0)
-    {
-      fprintf(stderr, "zero length file %s\n", infile);
-      goto err;
-    }
-  if((readbuf = malloc(sb.st_size+1)) == NULL)
-    {
-      fprintf(stderr, "could not malloc %d bytes to read %s\n",
-	      (int)sb.st_size, infile);
-      goto err;
-    }
-  if(read_wrap(fd, readbuf, NULL, sb.st_size) != 0)
-    {
-      fprintf(stderr, "could not read %d bytes from %s\n",
-	      (int)sb.st_size, infile);
-      goto err;
-    }
-  readbuf[sb.st_size] = '\0';
-  close(fd); fd = -1;
-
-  /* parse the contents of the file */
-  start = 0; off = 0;
-  while(off < sb.st_size+1)
-    {
-      if(readbuf[off] == '\n' || readbuf[off] == '\0')
-	{
-	  if(start == off || readbuf[start] == '#')
-	    {
-	      start = ++off;
-	      continue;
-	    }
-
-	  readbuf[off] = '\0';
-
-	  if((command = malloc(off-start+2)) == NULL)
-	    {
-	      fprintf(stderr, "could not malloc command\n");
-	      goto err;
-	    }
-	  memcpy(command, readbuf+start, off-start);
-	  command[off-start+0] = '\n';
-	  command[off-start+1] = '\0';
-
-	  if(slist_tail_push(commands, command) == NULL)
-	    {
-	      fprintf(stderr, "could not push command onto list\n");
-	      free(command);
-	      goto err;
-	    }
-
-	  start = ++off;
-	}
-      else
-	{
-	  ++off;
-	}
-    }
-
-  free(readbuf);
-  return 0;
-
- err:
-  if(readbuf != NULL) free(readbuf);
-  if(fd != -1) close(fd);
-  return -1;
+  return file_lines(infile, command_new, NULL);
 }
 
 /*
@@ -721,6 +663,11 @@ int main(int argc, char *argv[])
 
   if(check_options(argc, argv) != 0)
     return -1;
+
+#ifdef HAVE_DAEMON
+  if((options & OPT_DAEMON) != 0 && daemon(1, 0) != 0)
+    return -1;
+#endif
 
   /*
    * read the list of addresses in the address list file.

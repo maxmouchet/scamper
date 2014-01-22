@@ -1,7 +1,7 @@
 /*
  * warts-dump
  *
- * $Id: sc_wartsdump.c,v 1.180 2013/08/04 22:20:19 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.183 2013/10/07 23:57:17 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartsdump.c,v 1.180 2013/08/04 22:20:19 mjl Exp $";
+  "$Id: sc_wartsdump.c,v 1.183 2013/10/07 23:57:17 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -650,12 +650,14 @@ static void dump_ping_reply(const scamper_ping_t *ping,
   char buf[256];
   struct timeval txoff;
 
-  timeval_diff_tv(&txoff, &ping->start, &reply->tx);
-
-  printf("reply from %s, attempt: %d, tx: %d.%06ds, rtt: %d.%06ds\n",
-	 scamper_addr_tostr(reply->addr, buf, sizeof(buf)), reply->probe_id+1,
-	 (int)txoff.tv_sec, (int)txoff.tv_usec,
-	 (int)reply->rtt.tv_sec, (int)reply->rtt.tv_usec);
+  printf("reply from %s, attempt: %d",
+	 scamper_addr_tostr(reply->addr, buf, sizeof(buf)), reply->probe_id+1);
+  if(timeval_cmp(&reply->tx, &ping->start) >= 0)
+    {
+      timeval_diff_tv(&txoff, &ping->start, &reply->tx);
+      printf(", tx: %d.%06ds", (int)txoff.tv_sec, (int)txoff.tv_usec);
+    }
+  printf(", rtt: %d.%06ds\n", (int)reply->rtt.tv_sec, (int)reply->rtt.tv_usec);
 
   printf(" size: %d", reply->reply_size);
   if(reply->flags & SCAMPER_PING_REPLY_FLAG_REPLY_TTL)
@@ -934,9 +936,6 @@ static void dump_dealias(scamper_dealias_t *dealias)
   printf(" user-id: %d\n", dealias->userid);
   dump_timeval("start", &dealias->start);
 
-  printf(" probes: %d, result: %s\n", dealias->probec,
-	 scamper_dealias_result_tostr(dealias, buf, sizeof(buf)));
-
   /* method headers */
   printf(" method: ");
   if(dealias->method == SCAMPER_DEALIAS_METHOD_MERCATOR)
@@ -1031,6 +1030,12 @@ static void dump_dealias(scamper_dealias_t *dealias)
     {
       printf("%d\n", dealias->method);
     }
+
+  printf(" probes: %d, result: %s", dealias->probec,
+	 scamper_dealias_result_tostr(dealias, buf, sizeof(buf)));
+  if(ps->flags & SCAMPER_DEALIAS_PREFIXSCAN_FLAG_CSA)
+    printf(", csa");
+  printf("\n");
 
   for(i=0; i<dealias->probec; i++)
     {

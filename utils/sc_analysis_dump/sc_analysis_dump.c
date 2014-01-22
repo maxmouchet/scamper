@@ -1,7 +1,7 @@
 /*
  * sc_analysis_dump
  *
- * $Id: sc_analysis_dump.c,v 1.58 2013/07/08 22:22:42 mjl Exp $
+ * $Id: sc_analysis_dump.c,v 1.59 2013/08/31 00:12:49 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_analysis_dump.c,v 1.58 2013/07/08 22:22:42 mjl Exp $";
+  "$Id: sc_analysis_dump.c,v 1.59 2013/08/31 00:12:49 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -95,9 +95,8 @@ static void usage(void)
 
 static int check_options(int argc, char *argv[])
 {
-  int i;
+  int i, ch;
   char opts[48];
-  char ch;
   snprintf(opts, sizeof(opts), "oeCsdlctrHpiS:D:?UQMT");
 
 #ifdef HAVE_NETACUITY

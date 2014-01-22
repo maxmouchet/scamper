@@ -1,7 +1,7 @@
 /*
  * scamper_dealias.c
  *
- * $Id: scamper_dealias.c,v 1.41 2013/08/04 23:26:10 mjl Exp $
+ * $Id: scamper_dealias.c,v 1.45 2013/08/30 00:05:49 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2012-2013 The Regents of the University of California
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias.c,v 1.41 2013/08/04 23:26:10 mjl Exp $";
+  "$Id: scamper_dealias.c,v 1.45 2013/08/30 00:05:49 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -520,9 +520,9 @@ static int dealias_ipid16_bo(scamper_dealias_probe_t **probes, int probec)
     return -1;
   array_qsort((void **)s, probec, (array_cmp_t)dealias_probe_def_cmp);
 
-  for(i=0; i<probec-1; i++)
+  for(i=0; i<probec; i++)
     {
-      if(s[i]->def != s[i+1]->def)
+      if(i+1 == probec || s[i]->def != s[i+1]->def)
 	{
 	  if(c >= 3)
 	    {
@@ -581,27 +581,11 @@ static int dealias_ipid16_inseq(scamper_dealias_probe_t **probes,
       return 0;
     }
 
-  for(i=0; i+2<probec; i+=2)
+  for(i=0; i+2<probec; i++)
     {
       a = probes[i+0]->replies[0]->ipid;
       b = probes[i+1]->replies[0]->ipid;
       c = probes[i+2]->replies[0]->ipid;
-      if(bs != 0)
-	{
-	  a = byteswap16(a);
-	  b = byteswap16(b);
-	  c = byteswap16(c);
-	}
-      if(dealias_ipid16_inseq3(a, b, c, fudge) == 0)
-	return 0;
-    }
-
-  /* check stragglers */
-  if(probec - i > 1)
-    {
-      a = probes[probec-3]->replies[0]->ipid;
-      b = probes[probec-2]->replies[0]->ipid;
-      c = probes[probec-1]->replies[0]->ipid;
       if(bs != 0)
 	{
 	  a = byteswap16(a);
@@ -625,9 +609,9 @@ static int dealias_ipid32_bo(scamper_dealias_probe_t **probes, int probec)
     return -1;
   array_qsort((void **)s, probec, (array_cmp_t)dealias_probe_def_cmp);
 
-  for(i=0; i<probec-1; i++)
+  for(i=0; i<probec; i++)
     {
-      if(s[i]->def != s[i+1]->def)
+      if(i+1 == probec || s[i]->def != s[i+1]->def)
 	{
 	  if(c >= 3)
 	    {
@@ -686,27 +670,11 @@ static int dealias_ipid32_inseq(scamper_dealias_probe_t **probes,
       return 0;
     }
 
-  for(i=0; i+2<probec; i+=2)
+  for(i=0; i+2<probec; i++)
     {
       a = probes[i+0]->replies[0]->ipid32;
       b = probes[i+1]->replies[0]->ipid32;
       c = probes[i+2]->replies[0]->ipid32;
-      if(bs != 0)
-	{
-	  a = byteswap32(a);
-	  b = byteswap32(b);
-	  c = byteswap32(c);
-	}
-      if(dealias_ipid32_inseq3(a, b, c, fudge) == 0)
-	return 0;
-    }
-
-  /* check stragglers */
-  if(probec - i > 1)
-    {
-      a = probes[probec-3]->replies[0]->ipid32;
-      b = probes[probec-2]->replies[0]->ipid32;
-      c = probes[probec-1]->replies[0]->ipid32;
       if(bs != 0)
 	{
 	  a = byteswap32(a);
@@ -743,14 +711,14 @@ int scamper_dealias_ipid_inseq(scamper_dealias_probe_t **probes,
   else
     return -1;
 
-  if(bs == 3)
+  if(bs == 3 && fudge == 0)
     {
       if((i = bo[x](probes, probec)) == -1)
 	return -1;
       return inseq[x](probes, probec, fudge, i);
     }
 
-  if(bs == 2)
+  if(bs == 2 || bs == 3)
     {
       if(inseq[x](probes, probec, fudge, 0) == 1)
 	return 1;
@@ -1075,6 +1043,7 @@ const char *scamper_dealias_result_tostr(const scamper_dealias_t *d, char *b, si
     "aliases",
     "not-aliases",
     "halted",
+    "ipid-echo",
   };
   if(d->result > sizeof(t) / sizeof(char *) || t[d->result] == NULL)
     {

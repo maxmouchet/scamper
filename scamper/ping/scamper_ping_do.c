@@ -1,7 +1,7 @@
 /*
  * scamper_do_ping.c
  *
- * $Id: scamper_ping_do.c,v 1.138 2013/08/04 21:53:40 mjl Exp $
+ * $Id: scamper_ping_do.c,v 1.139 2013/09/04 23:32:44 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_do.c,v 1.138 2013/08/04 21:53:40 mjl Exp $";
+  "$Id: scamper_ping_do.c,v 1.139 2013/09/04 23:32:44 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -463,7 +463,8 @@ static void do_ping_handle_icmp(scamper_task_t *task, scamper_icmp_resp_t *ir)
     {
       if(SCAMPER_ICMP_RESP_IS_UNREACH(ir) == 0 &&
 	 SCAMPER_ICMP_RESP_IS_TTL_EXP(ir) == 0 &&
-	 SCAMPER_ICMP_RESP_IS_PACKET_TOO_BIG(ir) == 0)
+	 SCAMPER_ICMP_RESP_IS_PACKET_TOO_BIG(ir) == 0 &&
+	 SCAMPER_ICMP_RESP_IS_PARAMPROB(ir) == 0)
 	{
 	  return;
 	}

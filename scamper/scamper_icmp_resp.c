@@ -1,11 +1,11 @@
 /*
  * scamper_icmp_resp.c
  *
- * $Id: scamper_icmp_resp.c,v 1.31 2013/07/08 17:48:31 mjl Exp $
+ * $Id: scamper_icmp_resp.c,v 1.32 2013/09/04 23:32:44 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2012-2013 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmp_resp.c,v 1.31 2013/07/08 17:48:31 mjl Exp $";
+  "$Id: scamper_icmp_resp.c,v 1.32 2013/09/04 23:32:44 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -128,6 +128,23 @@ void scamper_icmp_resp_print(const scamper_icmp_resp_t *ir)
 	  snprintf(cbuf, sizeof(cbuf), "id %d seq %d",
 		   ir->ir_icmp_id, ir->ir_icmp_seq);
 	  c = cbuf;
+	  break;
+
+	case ICMP_PARAMPROB:
+	  t = "paramprob";
+	  switch(ir->ir_icmp_code)
+	    {
+	    case ICMP_PARAMPROB_ERRATPTR:
+	      snprintf(cbuf, sizeof(cbuf), "erratptr %u", ir->ir_icmp_pptr);
+	      c = cbuf;
+	      break;
+	    case ICMP_PARAMPROB_OPTABSENT: c = "optabsent"; break;
+	    case ICMP_PARAMPROB_LENGTH:    c = "length"; break;
+	    default:
+	      snprintf(cbuf, sizeof(cbuf), "code %d", ir->ir_icmp_code);
+	      c = cbuf;
+	      break;
+	    }
 	  break;
         }
     }
@@ -356,7 +373,8 @@ void scamper_icmp_resp_handle(scamper_icmp_resp_t *resp)
 
   if(SCAMPER_ICMP_RESP_IS_TTL_EXP(resp) ||
      SCAMPER_ICMP_RESP_IS_UNREACH(resp) ||
-     SCAMPER_ICMP_RESP_IS_PACKET_TOO_BIG(resp))
+     SCAMPER_ICMP_RESP_IS_PACKET_TOO_BIG(resp) ||
+     SCAMPER_ICMP_RESP_IS_PARAMPROB(resp))
     {
       /* the probe signature is embedded in the response */
       if(!SCAMPER_ICMP_RESP_INNER_IS_SET(resp))

@@ -1,7 +1,7 @@
 /*
  * scamper_do_dealias.c
  *
- * $Id: scamper_dealias_do.c,v 1.146 2013/08/04 22:20:19 mjl Exp $
+ * $Id: scamper_dealias_do.c,v 1.151 2013/08/28 05:23:47 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012-2013 The Regents of the University of California
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_do.c,v 1.146 2013/08/04 22:20:19 mjl Exp $";
+  "$Id: scamper_dealias_do.c,v 1.151 2013/08/28 05:23:47 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -207,6 +207,7 @@ typedef struct dealias_probedef
   uint32_t                     tcp_ack;
   uint16_t                     pktbuf_len;
   uint8_t                      flags;
+  uint8_t                      echo;
 } dealias_probedef_t;
 
 typedef struct dealias_ptb
@@ -1207,6 +1208,7 @@ static int dealias_prefixscan_next(scamper_task_t *task)
 		(array_cmp_t)scamper_addr_cmp) != NULL)
     {
       prefixscan->ab = scamper_addr_use(def->dst);
+      prefixscan->flags |= SCAMPER_DEALIAS_PREFIXSCAN_FLAG_CSA;
       dealias_result(task, SCAMPER_DEALIAS_RESULT_ALIASES);
       return 0;
     }
@@ -1258,6 +1260,7 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
   scamper_dealias_prefixscan_t *prefixscan = dealias->data;
   dealias_prefixscan_t *pfstate = state->methodstate;
   scamper_dealias_probe_t **probes = NULL;
+  dealias_probedef_t *pd = state->pds[probe->def->id];
   uint32_t defid;
   int p, s, seq;
 
@@ -1268,6 +1271,14 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
   /* if the reply is not the first reply for this probe */
   if(probe->replyc != 1)
     return;
+
+  if(probe->ipid == reply->ipid && ++pd->echo >= 2)
+    {
+      if(probe->def->id != 0)
+	goto prefixscan_next;
+      dealias_result(task, SCAMPER_DEALIAS_RESULT_IPIDECHO);
+      return;
+    }
 
   /*
    * if we are currently waiting for our turn to probe, then for now
@@ -1321,6 +1332,7 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
 			reply->src, (array_cmp_t)scamper_addr_cmp) != NULL)
 	    {
 	      prefixscan->ab = scamper_addr_use(probe->def->dst);
+	      prefixscan->flags |= SCAMPER_DEALIAS_PREFIXSCAN_FLAG_CSA;
 	      dealias_result(task, SCAMPER_DEALIAS_RESULT_ALIASES);
 	      return;
 	    }
@@ -1374,21 +1386,19 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
   probes[seq-1] = probe;
 
   /* if the reply was not for the first probe, then skip over earlier probes */
-  p = dealias->probec-2; defid = probes[seq-1]->def->id;
+  p = dealias->probec-2; defid = probe->def->id;
   while(p >= 0 && dealias->probes[p]->def->id == defid)
     p--;
-  if(p<0)
-    goto err;
 
   for(s=seq-1; s>0; s--)
     {
+      if(p < 0)
+	goto err;
+
       if(probes[s]->def->id == 0)
 	defid = state->probedefc - 1;
       else
 	defid = 0;
-
-      if(p < 0)
-	goto err;
 
       while(p >= 0)
 	{
@@ -1443,6 +1453,7 @@ static void dealias_prefixscan_handlereply(scamper_task_t *task,
       return;
     }
 
+ prefixscan_next:
   /* if there are no other addresses to try, then finish */
   if(state->probedefc-1 == pfstate->probedefc)
     {

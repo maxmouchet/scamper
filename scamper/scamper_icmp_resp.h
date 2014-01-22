@@ -1,7 +1,7 @@
 /*
  * scamper_icmp_resp.h
  *
- * $Id: scamper_icmp_resp.h,v 1.29 2013/07/23 23:05:26 mjl Exp $
+ * $Id: scamper_icmp_resp.h,v 1.30 2013/09/04 23:32:44 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -53,6 +53,9 @@
 #define SCAMPER_ICMP_RESP_IS_PACKET_TOO_BIG(ir) ( \
  (ir->ir_af == AF_INET && ir->ir_icmp_type == 3 && ir->ir_icmp_code == 4) || \
  (ir->ir_af == AF_INET6 && ir->ir_icmp_type == 2))
+
+#define SCAMPER_ICMP_RESP_IS_PARAMPROB(ir) ( \
+ (ir->ir_af == AF_INET && ir->ir_icmp_type == 12))
 
 /* this macro checks to see if the inner structs are valid */
 #define SCAMPER_ICMP_RESP_INNER_IS_SET(ir) ( \
@@ -157,6 +160,7 @@ typedef struct scamper_icmp_resp
   uint16_t          ir_icmp_id;
   uint16_t          ir_icmp_seq;
   uint16_t          ir_icmp_nhmtu;
+  uint8_t           ir_icmp_pptr;
   uint32_t          ir_icmp_tso;
   uint32_t          ir_icmp_tsr;
   uint32_t          ir_icmp_tst;

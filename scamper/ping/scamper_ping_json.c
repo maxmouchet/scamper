@@ -8,7 +8,7 @@
  * Copyright (c) 2013      The Regents of the University of California
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_ping_json.c,v 1.6 2013/08/23 20:44:46 mjl Exp $
+ * $Id: scamper_ping_json.c,v 1.7 2013/10/10 21:22:30 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_json.c,v 1.6 2013/08/23 20:44:46 mjl Exp $";
+  "$Id: scamper_ping_json.c,v 1.7 2013/10/10 21:22:30 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -56,6 +56,9 @@ static char *ping_header(const scamper_ping_t *ping)
 		scamper_addr_tostr(ping->src, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off, ", \"dst\":\"%s\"",
 		scamper_addr_tostr(ping->dst, tmp, sizeof(tmp)));
+  string_concat(buf, sizeof(buf), &off,
+		", \"start\":{\"sec\":%u,\"usec\":%u}",
+		ping->start.tv_sec, ping->start.tv_usec);
   string_concat(buf, sizeof(buf), &off,
 		", \"ping_sent\":%d, \"probe_size\":%d"
 		", \"userid\":%d, \"wait\":%d, \"ttl\":%d",

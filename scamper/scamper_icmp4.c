@@ -1,10 +1,11 @@
 /*
  * scamper_icmp4.c
  *
- * $Id: scamper_icmp4.c,v 1.108 2013/08/07 20:45:59 mjl Exp $
+ * $Id: scamper_icmp4.c,v 1.109 2013/09/04 23:32:44 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2013      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmp4.c,v 1.108 2013/08/07 20:45:59 mjl Exp $";
+  "$Id: scamper_icmp4.c,v 1.109 2013/09/04 23:32:44 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -269,15 +270,11 @@ static uint16_t icmp4_quote_ip_len(const struct icmp *icmp)
   if(icmp->icmp_type == ICMP_TIMXCEED)
     {
       if(icmp->icmp_code <= 1)
-	{
-	  len = icmp->icmp_ip.ip_len;
-	}
+	len = icmp->icmp_ip.ip_len;
       else
-	{
-	  len = ntohs(icmp->icmp_ip.ip_len);
-	}
+	len = ntohs(icmp->icmp_ip.ip_len);
     }
-  else
+  else if(icmp->icmp_type == ICMP_UNREACH)
     {
       switch(icmp->icmp_code)
 	{
@@ -306,6 +303,17 @@ static uint16_t icmp4_quote_ip_len(const struct icmp *icmp)
 	default:
 	  len = ntohs(icmp->icmp_ip.ip_len);
 	}
+    }
+  else if(icmp->icmp_type == ICMP_PARAMPROB)
+    {
+      if(icmp->icmp_code <= 1)
+	len = icmp->icmp_ip.ip_len;
+      else
+	len = ntohs(icmp->icmp_ip.ip_len);
+    }
+  else
+    {
+      len = icmp->icmp_ip.ip_len;
     }
 #else
   len = icmp->icmp_ip.ip_len;
@@ -631,7 +639,7 @@ int scamper_icmp4_recv(int fd, scamper_icmp_resp_t *resp)
   /* check to see if the ICMP type / code is what we want */
   if((type != ICMP_TIMXCEED || code != ICMP_TIMXCEED_INTRANS) &&
      type != ICMP_UNREACH && type != ICMP_ECHOREPLY &&
-     type != ICMP_TSTAMPREPLY)
+     type != ICMP_TSTAMPREPLY && type != ICMP_PARAMPROB)
     {
       scamper_debug(__func__, "type %d, code %d not wanted", type, code);
       return -1;
@@ -706,6 +714,9 @@ int scamper_icmp4_recv(int fd, scamper_icmp_resp_t *resp)
 
       if(type == ICMP_UNREACH && code == ICMP_UNREACH_NEEDFRAG)
 	resp->ir_icmp_nhmtu = ntohs(icmp->icmp_nextmtu);
+
+      if(type == ICMP_PARAMPROB && code == ICMP_PARAMPROB_ERRATPTR)
+	resp->ir_icmp_pptr = icmp->icmp_pptr;
 
       if(resp->ir_inner_ip_off == 0)
 	{
@@ -862,7 +873,8 @@ int scamper_icmp4_open(const void *addr)
   filter.data = ~((1 << ICMP_DEST_UNREACH)  |
 		  (1 << ICMP_TIME_EXCEEDED) |
 		  (1 << ICMP_ECHOREPLY) |
-		  (1 << ICMP_TSTAMPREPLY)
+		  (1 << ICMP_TSTAMPREPLY) |
+		  (1 << ICMP_PARAMPROB)
 		  );
   if(setsockopt(fd, SOL_RAW, ICMP_FILTER, &filter, sizeof(filter)) == -1)
     {

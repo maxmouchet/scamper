@@ -1,7 +1,7 @@
 /*
  * sc_speedtrap
  *
- * $Id: sc_speedtrap.c,v 1.16 2013/08/24 15:18:13 mjl Exp $
+ * $Id: sc_speedtrap.c,v 1.18 2013/08/31 04:43:33 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_speedtrap.c,v 1.16 2013/08/24 15:18:13 mjl Exp $";
+  "$Id: sc_speedtrap.c,v 1.18 2013/08/31 04:43:33 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -247,13 +247,12 @@ static void usage(uint32_t opt_mask)
 static int check_options(int argc, char *argv[])
 {
   char hostname[255+1];
-  char ch;
   long lo;
   char *opts = "?a:A:d:Il:o:p:s:S:U:w:";
   char *opt_port = NULL, *opt_unix = NULL, *opt_log = NULL;
   char *opt_aliasfile = NULL, *opt_dump = NULL;
   time_t tt;
-  int i;
+  int i, ch;
 
   while((ch = getopt(argc, argv, opts)) != -1)
     {
@@ -2440,6 +2439,9 @@ static int speedtrap_data(void)
     return -1;
   if(do_files() != 0)
     return -1;
+
+  gettimeofday_wrap(&tv);
+  srandom(tv.tv_usec);
 
   slist_shuffle(probelist);
 

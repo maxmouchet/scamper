@@ -5,7 +5,7 @@
  * Copyright (c) 2013 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_json.c,v 1.4 2013/08/14 18:21:33 mjl Exp $
+ * $Id: scamper_dealias_json.c,v 1.6 2013/08/29 21:48:46 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_json.c,v 1.4 2013/08/14 18:21:33 mjl Exp $";
+  "$Id: scamper_dealias_json.c,v 1.6 2013/08/29 21:48:46 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -40,8 +40,34 @@ static const char rcsid[] =
 
 #include "utils.h"
 
+static char *dealias_flags_encode(char *buf, size_t len, uint8_t flags,
+				  const char **f2s, size_t f2sc)
+{
+  size_t off = 0;
+  int i, f = 0;
+  uint8_t u8;
+
+  string_concat(buf, len, &off, ", \"flags\":[");
+  for(i=0; i<8; i++)
+    {
+      if((u8 = flags & (0x1 << i)) == 0) continue;
+      if(f > 0) string_concat(buf, len, &off, ",");
+      if(i < f2sc)
+	string_concat(buf, len, &off, "\"%s\"", f2s[i]);
+      else
+	string_concat(buf, len, &off, "%u", u8);
+      f++;
+    }
+  string_concat(buf, len, &off, "]");
+
+  return buf;
+}
+
 static char *dealias_header_tostr(const scamper_dealias_t *dealias)
 {
+  static const char *pf_flags[] = {"nobs", "csa"};
+  static const char *rg_flags[] = {"nobs"};
+  static const char *ally_flags[] = {"nobs"};
   scamper_dealias_mercator_t *mc;
   scamper_dealias_ally_t *ally;
   scamper_dealias_radargun_t *rg;
@@ -52,7 +78,7 @@ static char *dealias_header_tostr(const scamper_dealias_t *dealias)
   uint16_t u16;
 
   string_concat(buf, sizeof(buf), &off,
-		"{\"version\":\"0.1\", \"type\":\"dealias\", \"method\":\"%s\"",
+		"{\"version\":\"0.2\", \"type\":\"dealias\", \"method\":\"%s\"",
 		scamper_dealias_method_tostr(dealias, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off, ", \"userid\":%u, \"result\":\"%s\"",
 		dealias->userid,
@@ -75,16 +101,26 @@ static char *dealias_header_tostr(const scamper_dealias_t *dealias)
 		    ally->wait_probe, ally->wait_timeout);
       string_concat(buf, sizeof(buf), &off, ", \"attempts\":%u, \"fudge\":%u",
 		    ally->attempts, ally->fudge);
-      /* XXX: flags */
+      if(ally->flags != 0)
+	{
+	  dealias_flags_encode(tmp, sizeof(tmp), ally->flags, ally_flags,
+			       sizeof(ally_flags)/sizeof(char *));
+	  string_concat(buf, sizeof(buf), &off, "%s", tmp);
+	}
     }
   else if(SCAMPER_DEALIAS_METHOD_IS_RADARGUN(dealias))
     {
       rg = dealias->data;
-      string_concat(buf, sizeof(buf), &off, ", \"attempts\":%u, \"wait_probe\":%u",
+      string_concat(buf, sizeof(buf), &off,
+		    ", \"attempts\":%u, \"wait_probe\":%u",
 		    rg->attempts, rg->wait_probe);
-      string_concat(buf, sizeof(buf), &off, ", \"wait_round\":%u, \"wait_timeout\":%u",
+      string_concat(buf, sizeof(buf), &off,
+		    ", \"wait_round\":%u, \"wait_timeout\":%u",
 		    rg->wait_round, rg->wait_timeout);
-      /* XXX: flags */
+      if(rg->flags != 0)
+	string_concat(buf, sizeof(buf), &off, "%s",
+		      dealias_flags_encode(tmp,sizeof(tmp),rg->flags,rg_flags,
+					   sizeof(rg_flags)/sizeof(char *)));
     }
   else if(SCAMPER_DEALIAS_METHOD_IS_PREFIXSCAN(dealias))
     {
@@ -112,7 +148,10 @@ static char *dealias_header_tostr(const scamper_dealias_t *dealias)
       string_concat(buf, sizeof(buf), &off,
 		    ", \"wait_probe\":%u, \"wait_timeout\":%u",
 		    pf->wait_probe, pf->wait_timeout);
-      /* XXX: flags */
+      if(pf->flags != 0)
+	string_concat(buf, sizeof(buf), &off, "%s",
+		      dealias_flags_encode(tmp,sizeof(tmp),pf->flags,pf_flags,
+					   sizeof(pf_flags)/sizeof(char *)));
     }
   else if(SCAMPER_DEALIAS_METHOD_IS_BUMP(dealias))
     {
@@ -131,15 +170,18 @@ static char *dealias_probedef_tostr(const scamper_dealias_probedef_t *def)
   size_t off = 0;
   string_concat(buf, sizeof(buf), &off, "{\"id\":%u, \"src\":\"%s\"",
 		def->id, scamper_addr_tostr(def->src, tmp, sizeof(tmp)));
-  string_concat(buf, sizeof(buf), &off, ", \"dst\":\"%s\", \"ttl\":%u, \"size\":%u",
-		scamper_addr_tostr(def->dst, tmp, sizeof(tmp)), def->ttl, def->size);
+  string_concat(buf, sizeof(buf), &off,
+		", \"dst\":\"%s\", \"ttl\":%u, \"size\":%u",
+		scamper_addr_tostr(def->dst, tmp, sizeof(tmp)), def->ttl,
+		def->size);
   string_concat(buf, sizeof(buf), &off, ", \"method\":\"%s\"",
 		scamper_dealias_probedef_method_tostr(def, tmp, sizeof(tmp)));
   if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(def))
     string_concat(buf, sizeof(buf), &off, ", \"icmp_id\":%u, \"icmp_csum\":%u",
 		  def->un.icmp.id, def->un.icmp.csum);
   else if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP(def))
-    string_concat(buf, sizeof(buf), &off, ", \"udp_sport\":%u, \"udp_dport\":%u",
+    string_concat(buf, sizeof(buf), &off,
+		  ", \"udp_sport\":%u, \"udp_dport\":%u",
 		  def->un.udp.sport, def->un.udp.dport);
   else if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP(def))
     string_concat(buf, sizeof(buf), &off,
@@ -210,7 +252,8 @@ static char *dealias_reply_tostr(const scamper_dealias_reply_t *reply)
 
   if(SCAMPER_DEALIAS_REPLY_IS_ICMP(reply))
     {
-      string_concat(buf, sizeof(buf), &off, ", \"icmp_type\":%u, \"icmp_code\":%u",
+      string_concat(buf, sizeof(buf), &off,
+		    ", \"icmp_type\":%u, \"icmp_code\":%u",
 		    reply->icmp_type, reply->icmp_code);
 
       if(SCAMPER_DEALIAS_REPLY_IS_ICMP_UNREACH(reply) ||
@@ -220,7 +263,8 @@ static char *dealias_reply_tostr(const scamper_dealias_reply_t *reply)
     }
   else if(SCAMPER_DEALIAS_REPLY_IS_TCP(reply))
     {
-      string_concat(buf, sizeof(buf), &off, ", \"tcp_flags\":%u", reply->tcp_flags);
+      string_concat(buf, sizeof(buf), &off, ", \"tcp_flags\":%u",
+		    reply->tcp_flags);
     }
 
   string_concat(buf, sizeof(buf), &off, "}");
@@ -237,7 +281,8 @@ static char *dealias_probe_tostr(const scamper_dealias_probe_t *probe)
 		"{\"probedef_id\":%u, \"seq\":%u, \"tx\":{\"sec\":%u, \"usec\":%u}",
 		probe->def->id, probe->seq, probe->tx.tv_sec, probe->tx.tv_usec);
   if(SCAMPER_ADDR_TYPE_IS_IPV4(probe->def->dst))
-    string_concat(header, sizeof(header), &header_len, ", \"ipid\":%u", probe->ipid);
+    string_concat(header, sizeof(header), &header_len,
+		  ", \"ipid\":%u", probe->ipid);
   string_concat(header, sizeof(header), &header_len, ", \"replies\":[");
   len = header_len;
   if(probe->replyc > 0)

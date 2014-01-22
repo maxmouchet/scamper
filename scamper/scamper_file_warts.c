@@ -3,7 +3,7 @@
  *
  * the WAND ARTS file format replacement
  *
- * $Id: scamper_file_warts.c,v 1.238 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.239 2014/01/10 18:13:32 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_warts.c,v 1.238 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_file_warts.c,v 1.239 2014/01/10 18:13:32 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -193,6 +193,7 @@ uint32_t warts_addr_size(warts_addrtable_t *t, scamper_addr_t *addr)
 {
   warts_addr_t f, *wa;
 
+  memset(&f, 0, sizeof(f));
   f.addr = addr;
   if(array_find((void **)t->addrs, t->addrc, &f,
 		(array_cmp_t)warts_addr_cmp) != NULL)

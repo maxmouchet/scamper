@@ -1,7 +1,7 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.166 2013/08/02 19:04:10 mjl Exp $
+ * $Id: utils.c,v 1.167 2013/12/14 21:49:38 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.166 2013/08/02 19:04:10 mjl Exp $";
+  "$Id: utils.c,v 1.167 2013/12/14 21:49:38 mjl Exp $";
 #endif
 
 #if defined(_MSC_VER)
@@ -220,7 +220,7 @@ int sockaddr_compose_un(struct sockaddr *sa, const char *file)
 
   if(strlen(file) + 1 > sizeof(sn->sun_path))
     return -1;
-  memset(sn, 0, sizeof(sn));
+  memset(sn, 0, sizeof(struct sockaddr_un));
   sn->sun_family = AF_UNIX;
   snprintf(sn->sun_path, sizeof(sn->sun_path), "%s", file);
 
