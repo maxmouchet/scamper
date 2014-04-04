@@ -1,7 +1,7 @@
 /*
  * scamper_dealias.c
  *
- * $Id: scamper_sting.c,v 1.9 2011/10/25 00:55:47 mjl Exp $
+ * $Id: scamper_sting.c,v 1.10 2014/04/04 22:03:05 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -14,7 +14,7 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, version 2.
  *
- * This program is distributed in the replye that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sting.c,v 1.9 2011/10/25 00:55:47 mjl Exp $";
+  "$Id: scamper_sting.c,v 1.10 2014/04/04 22:03:05 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

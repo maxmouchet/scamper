@@ -3,10 +3,10 @@
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012-2013 The Regents of the University of California
+ * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping_warts.c,v 1.11 2013/08/07 18:30:08 mjl Exp $
+ * $Id: scamper_ping_warts.c,v 1.12 2014/03/06 20:24:37 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_warts.c,v 1.11 2013/08/07 18:30:08 mjl Exp $";
+  "$Id: scamper_ping_warts.c,v 1.12 2014/03/06 20:24:37 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -74,6 +74,7 @@ static const char rcsid[] =
 #define WARTS_PING_PROBE_ICMPSUM  25
 #define WARTS_PING_REPLY_PMTU     26
 #define WARTS_PING_PROBE_TIMEOUT  27
+#define WARTS_PING_PROBE_WAIT_US  28
 
 static const warts_var_t ping_vars[] =
 {
@@ -104,6 +105,7 @@ static const warts_var_t ping_vars[] =
   {WARTS_PING_PROBE_ICMPSUM,  2, -1},
   {WARTS_PING_REPLY_PMTU,     2, -1},
   {WARTS_PING_PROBE_TIMEOUT,  1, -1},
+  {WARTS_PING_PROBE_WAIT_US,  4, -1},
 };
 #define ping_vars_mfb WARTS_VAR_MFB(ping_vars)
 
@@ -510,7 +512,8 @@ static void warts_ping_params(const scamper_ping_t *ping,
 	 (var->id == WARTS_PING_PROBE_DPORT   && ping->probe_dport == 0) ||
 	 (var->id == WARTS_PING_FLAGS         && ping->flags == 0) ||
 	 (var->id == WARTS_PING_REPLY_PMTU    && ping->reply_pmtu == 0) ||
-	 (var->id == WARTS_PING_PROBE_TIMEOUT && ping->probe_timeout == ping->probe_wait))
+	 (var->id == WARTS_PING_PROBE_TIMEOUT && ping->probe_timeout == ping->probe_wait) ||
+	 (var->id == WARTS_PING_PROBE_WAIT_US && ping->probe_wait_us == 0))
 	{
 	  continue;
 	}
@@ -638,6 +641,7 @@ static int warts_ping_params_read(scamper_ping_t *ping, warts_state_t *state,
     {&ping->probe_icmpsum, (wpr_t)extract_uint16,          NULL},
     {&ping->reply_pmtu,    (wpr_t)extract_uint16,          NULL},
     {&ping->probe_timeout, (wpr_t)extract_byte,            NULL},
+    {&ping->probe_wait_us, (wpr_t)extract_uint32,          NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
   uint32_t o = *off;
@@ -689,6 +693,7 @@ static int warts_ping_params_write(const scamper_ping_t *ping,
     {&ping->probe_icmpsum, (wpw_t)insert_uint16,          NULL},
     {&ping->reply_pmtu,    (wpw_t)insert_uint16,          NULL},
     {&ping->probe_timeout, (wpw_t)insert_byte,            NULL},
+    {&ping->probe_wait_us, (wpw_t)insert_uint32,          NULL},
   };
 
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);

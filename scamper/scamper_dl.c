@@ -1,7 +1,7 @@
 /*
  * scamper_dl: manage BPF/PF_PACKET datalink instances for scamper
  *
- * $Id: scamper_dl.c,v 1.179 2013/07/08 17:48:31 mjl Exp $
+ * $Id: scamper_dl.c,v 1.180 2014/03/12 00:17:44 mjl Exp $
  *
  *          Matthew Luckie
  *          Ben Stasiewicz added fragmentation support.
@@ -34,7 +34,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dl.c,v 1.179 2013/07/08 17:48:31 mjl Exp $";
+  "$Id: scamper_dl.c,v 1.180 2014/03/12 00:17:44 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1133,8 +1133,8 @@ static int dl_linux_read(const int fd, scamper_dl_t *node)
   /* sanity check the packet length */
   if(len > readbuf_len) len = readbuf_len;
 
-  /* reset the flags */
-  dl.dl_flags = 0;
+  /* reset the datalink record */
+  memset(&dl, 0, sizeof(dl));
 
   /* record the ifindex now, as the cb routine may need it */
   if(scamper_fd_ifindex(node->fdn, &dl.dl_ifindex) != 0)
@@ -1524,6 +1524,7 @@ static int dl_dlpi_read(const int fd, scamper_dl_t *node)
     {
       sbh = (struct sb_hdr *)buf;
 
+      memset(&dl, 0, sizeof(dl));
       dl.dl_flags = SCAMPER_DL_REC_FLAG_TIMESTAMP;
 
       if(node->dlt_cb(&dl, buf + sizeof(struct sb_hdr), sbh->sbh_msglen))

@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.235 2013/07/18 04:35:58 mjl Exp $
+ * $Id: scamper.c,v 1.236 2014/02/20 17:57:28 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper.c,v 1.235 2013/07/18 04:35:58 mjl Exp $";
+  "$Id: scamper.c,v 1.236 2014/02/20 17:57:28 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1485,7 +1485,7 @@ int main(int argc, char *argv[])
    */
 #if defined(DMALLOC)
   free(malloc(1));
-#elif !defined (NDEBUG) && defined(__FreeBSD__) && __FreeBSD_version >= 500000
+#elif !defined (NDEBUG) && defined(__FreeBSD__) && __FreeBSD_version >= 500014 && __FreeBSD_version < 1000011
   _malloc_options = "AJ";
 #endif
 

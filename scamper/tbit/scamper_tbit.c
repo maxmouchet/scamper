@@ -7,7 +7,7 @@
  * Copyright (C) 2012      The Regents of the University of California
  * Authors: Ben Stasiewicz, Matthew Luckie
  *
- * $Id: scamper_tbit.c,v 1.24 2013/08/07 21:30:02 mjl Exp $
+ * $Id: scamper_tbit.c,v 1.25 2014/04/04 22:03:05 mjl Exp $
  *
  * This file implements algorithms described in the tbit-1.0 source code,
  * as well as the papers:
@@ -21,7 +21,7 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, version 2.
  *
- * This program is distributed in the replye that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
@@ -34,7 +34,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit.c,v 1.24 2013/08/07 21:30:02 mjl Exp $";
+  "$Id: scamper_tbit.c,v 1.25 2014/04/04 22:03:05 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

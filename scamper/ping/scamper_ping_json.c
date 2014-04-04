@@ -5,10 +5,10 @@
  * Copyright (c) 2006-2011 The University of Waikato
  * Copyright (c) 2011-2013 Internap Network Services Corporation
  * Copyright (c) 2013      Matthew Luckie
- * Copyright (c) 2013      The Regents of the University of California
+ * Copyright (c) 2013-2014 The Regents of the University of California
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_ping_json.c,v 1.7 2013/10/10 21:22:30 mjl Exp $
+ * $Id: scamper_ping_json.c,v 1.8 2014/03/06 20:24:37 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_json.c,v 1.7 2013/10/10 21:22:30 mjl Exp $";
+  "$Id: scamper_ping_json.c,v 1.8 2014/03/06 20:24:37 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -60,10 +60,15 @@ static char *ping_header(const scamper_ping_t *ping)
 		", \"start\":{\"sec\":%u,\"usec\":%u}",
 		ping->start.tv_sec, ping->start.tv_usec);
   string_concat(buf, sizeof(buf), &off,
-		", \"ping_sent\":%d, \"probe_size\":%d"
-		", \"userid\":%d, \"wait\":%d, \"ttl\":%d",
+		", \"ping_sent\":%u, \"probe_size\":%u"
+		", \"userid\":%u, \"ttl\":%u, \"wait\":%u",
 		ping->ping_sent, ping->probe_size,
-		ping->userid, ping->probe_wait, ping->probe_ttl);
+		ping->userid, ping->probe_ttl, ping->probe_wait);
+  if(ping->probe_wait_us != 0)
+    string_concat(buf, sizeof(buf), &off,
+		  ", \"wait_us\":%u", ping->probe_wait_us);
+  string_concat(buf, sizeof(buf), &off,
+		", \"timeout\":%u", ping->probe_timeout);
 
   if(SCAMPER_PING_METHOD_IS_UDP(ping) || SCAMPER_PING_METHOD_IS_TCP(ping))
     string_concat(buf, sizeof(buf), &off, ", \"sport\":%u, \"dport\":%u",

@@ -1,7 +1,7 @@
 /*
  * scamper_dealias.c
  *
- * $Id: scamper_dealias.c,v 1.45 2013/08/30 00:05:49 mjl Exp $
+ * $Id: scamper_dealias.c,v 1.47 2014/04/04 22:03:05 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2012-2013 The Regents of the University of California
@@ -15,7 +15,7 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, version 2.
  *
- * This program is distributed in the replye that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias.c,v 1.45 2013/08/30 00:05:49 mjl Exp $";
+  "$Id: scamper_dealias.c,v 1.47 2014/04/04 22:03:05 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -560,7 +560,7 @@ static int dealias_ipid16_inseq(scamper_dealias_probe_t **probes,
   int i;
 
   /*
-   * do a preliminary check to see if the ipids could in in sequence with
+   * do a preliminary check to see if the ipids could be in sequence with
    * two samples.
    */
   if(probec == 2)
@@ -649,7 +649,7 @@ static int dealias_ipid32_inseq(scamper_dealias_probe_t **probes,
   int i;
 
   /*
-   * do a preliminary check to see if the ipids could in insequence with
+   * do a preliminary check to see if the ipids could be in sequence with
    * two samples.
    */
   if(probec == 2)

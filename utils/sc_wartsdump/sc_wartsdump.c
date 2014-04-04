@@ -1,14 +1,14 @@
 /*
  * warts-dump
  *
- * $Id: sc_wartsdump.c,v 1.183 2013/10/07 23:57:17 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.184 2014/03/06 20:24:37 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012-2013 The Regents of the University of California
+ * Copyright (C) 2012-2014 The Regents of the University of California
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartsdump.c,v 1.183 2013/10/07 23:57:17 mjl Exp $";
+  "$Id: sc_wartsdump.c,v 1.184 2014/03/06 20:24:37 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -742,6 +742,7 @@ static void dump_ping(scamper_ping_t *ping)
 {
   scamper_ping_reply_t *reply;
   char buf[256];
+  uint32_t u32;
   int i;
 
   scamper_addr_tostr(ping->src, buf, sizeof(buf));
@@ -762,8 +763,15 @@ static void dump_ping(scamper_ping_t *ping)
   printf(", size: %d", ping->probe_size);
   if(ping->reply_pmtu > 0)
     printf(", reply-pmtu: %d", ping->reply_pmtu);
-  printf(", wait: %u, timeout: %u, ttl: %u",
-	 ping->probe_wait, ping->probe_timeout, ping->probe_ttl);
+  printf(", wait: %u", ping->probe_wait);
+  if(ping->probe_wait_us > 0)
+    {
+      u32 = ping->probe_wait_us;
+      while((u32 % 10) == 0)
+	u32 /= 10;
+      printf(".%u", u32);
+    }
+  printf(", timeout: %u, ttl: %u", ping->probe_timeout, ping->probe_ttl);
   printf("\n");
 
   printf(" method: %s", scamper_ping_method2str(ping, buf, sizeof(buf)));

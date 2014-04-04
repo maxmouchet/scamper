@@ -1,7 +1,7 @@
 /*
  * scamper_outfiles: hold a collection of output targets together
  *
- * $Id: scamper_outfiles.h,v 1.17 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_outfiles.h,v 1.18 2014/03/12 00:01:52 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
@@ -23,7 +23,7 @@
  */
 
 #ifndef __SCAMPER_OUTFILES_H
-#define __SCAMPER_OUTFILES_h
+#define __SCAMPER_OUTFILES_H
 
 typedef struct scamper_outfile scamper_outfile_t;
 

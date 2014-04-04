@@ -1,10 +1,10 @@
 /*
  * scamper_do_dealias.c
  *
- * $Id: scamper_dealias_do.c,v 1.151 2013/08/28 05:23:47 mjl Exp $
+ * $Id: scamper_dealias_do.c,v 1.152 2014/03/25 03:23:00 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
- * Copyright (C) 2012-2013 The Regents of the University of California
+ * Copyright (C) 2012-2014 The Regents of the University of California
  * Copyright (C) 2012-2013 Matthew Luckie
  * Author: Matthew Luckie
  *
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_do.c,v 1.151 2013/08/28 05:23:47 mjl Exp $";
+  "$Id: scamper_dealias_do.c,v 1.152 2014/03/25 03:23:00 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -2899,7 +2899,7 @@ static int dealias_alloc_radargun(scamper_dealias_t *d, dealias_options_t *o)
 	      scamper_debug(__func__, "mixed address familys");
 	      goto err;
 	    }
-	  pd0.id = i;
+	  pd[i].id = i;
 	}
       probedefc = o->probedefc;
     }

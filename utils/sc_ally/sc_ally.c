@@ -2,9 +2,10 @@
  * sc_ally : scamper driver to collect data on candidate aliases using the
  *           Ally method.
  *
- * $Id: sc_ally.c,v 1.9 2013/08/07 22:16:02 mjl Exp $
+ * $Id: sc_ally.c,v 1.20 2014/03/24 19:44:16 mjl Exp $
  *
  * Copyright (C) 2009-2011 The University of Waikato
+ * Copyright (C) 2013-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_ally.c,v 1.9 2013/08/07 22:16:02 mjl Exp $";
+  "$Id: sc_ally.c,v 1.20 2014/03/24 19:44:16 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -122,11 +123,10 @@ static char                   cmd[512];
 static int                    more          = 0;
 static int                    probing       = 0;
 static int                    waittime      = 5;
-static int                    attempts      = 4;
-static char                   cmd[512];
+static int                    attempts      = 5;
+static int                    probe_wait    = 1000;
+static int                    fudge         = 5000;
 static struct timeval         now;
-static struct timeval         next;
-static int                    nextgap       = 600;
 static FILE                  *text          = NULL;
 static splaytree_t           *targets       = NULL;
 static splaytree_t           *ipidseqs      = NULL;
@@ -142,12 +142,16 @@ static heap_t                *waiting       = NULL;
 #define OPT_DAEMON      0x0040
 #define OPT_ATTEMPTS    0x0080
 #define OPT_WAIT        0x0100
+#define OPT_PROBEWAIT   0x0200
+#define OPT_FUDGE       0x0400
+#define OPT_NOBS        0x0800
 
 static void usage(uint32_t opt_mask)
 {
   fprintf(stderr,
 	  "usage: sc_ally [-D?] [-a infile] [-o outfile] [-p port] [-U unix]\n"
-	  "               [-w waittime] [-q attempts] [-t log]\n");
+	  "               [-i waitprobe] [-f fudge] [-q attempts]\n"
+	  "               [-t log] [-w waittime]\n");
 
   if(opt_mask == 0) return;
 
@@ -171,8 +175,14 @@ static void usage(uint32_t opt_mask)
   if(opt_mask & OPT_DAEMON)
     fprintf(stderr, "     -D start as daemon\n");
 
+  if(opt_mask & OPT_PROBEWAIT)
+    fprintf(stderr, "     -i inter-probe gap\n");
+
+  if(opt_mask & OPT_FUDGE)
+    fprintf(stderr, "     -f fudge\n");
+
   if(opt_mask & OPT_ATTEMPTS)
-    fprintf(stderr, "     -q attempts\n");
+    fprintf(stderr, "     -q number of probes for ally\n");
 
   if(opt_mask & OPT_TEXT)
     fprintf(stderr, "     -t logfile\n");
@@ -187,8 +197,8 @@ static int check_options(int argc, char *argv[])
 {
   int       ch;
   long      lo;
-  char     *opts = "a:Do:p:q:t:U:w:?";
-  char     *opt_port = NULL;
+  char     *opts = "a:Di:o:O:p:q:t:U:w:?";
+  char     *opt_port = NULL, *opt_probewait = NULL;
   char     *opt_text = NULL, *opt_attempts = NULL, *opt_wait = NULL;
 
   while((ch = getopt(argc, argv, opts)) != -1)
@@ -204,9 +214,19 @@ static int check_options(int argc, char *argv[])
 	  options |= OPT_DAEMON;
 	  break;
 
+	case 'i':
+	  options |= OPT_PROBEWAIT;
+	  opt_probewait = optarg;
+	  break;
+
 	case 'o':
 	  options |= OPT_OUTFILE;
 	  outfile_name = optarg;
+	  break;
+
+	case '0':
+	  if(strcasecmp(optarg, "nobs") == 0)
+	    options |= OPT_NOBS;
 	  break;
 
 	case 'p':
@@ -279,6 +299,17 @@ static int check_options(int argc, char *argv[])
       waittime = lo;
     }
 
+  if(options & OPT_PROBEWAIT)
+    {
+      /* probe gap between 200 and 2000ms */
+      if(string_tolong(opt_probewait, &lo) != 0 || lo < 200 || lo > 2000)
+	{
+	  usage(OPT_PROBEWAIT);
+	  return -1;
+	}
+      probe_wait = lo;
+    }
+
   if(opt_text != NULL)
     {
       if((text = fopen(opt_text, "w")) == NULL)
@@ -346,9 +377,7 @@ static sc_test_t *sc_test_alloc(int type, void *data)
 
 static void sc_test_free(sc_test_t *test)
 {
-  if(test == NULL)
-    return;
-  free(test);
+  if(test != NULL) free(test);
   return;
 }
 
@@ -475,6 +504,8 @@ static sc_target_t *sc_target_findaddr(scamper_addr_t *addr)
 
 static int sc_target_add(sc_target_t *target)
 {
+  assert(target->node == NULL);
+  assert(target->test != NULL);
   if((target->node = splaytree_insert(targets, target)) == NULL)
     {
       fprintf(stderr, "could not add target to tree\n");
@@ -568,11 +599,8 @@ static void sc_pingtest_free(sc_pingtest_t *pt)
 {
   if(pt == NULL)
     return;
-
   if(pt->target != NULL)
     sc_target_free(pt->target);
-  //if(pt->addr != NULL) scamper_addr_free(pt->addr);
-
   free(pt);
   return;
 }
@@ -619,7 +647,7 @@ static sc_test_t *sc_pingtest_new(scamper_addr_t *addr)
   return NULL;
 }
 
-static int sc_allytest_new(char *buf)
+static int sc_allytest_new(char *buf, void *param)
 {
   sc_allytest_t *ally = NULL;
   sc_test_t *test = NULL;
@@ -646,6 +674,7 @@ static int sc_allytest_new(char *buf)
   if((test = sc_test_alloc(TEST_ALLY, ally)) == NULL)
     goto err;
   ally->a->test = test;
+  ally->b->test = test;
 
   slist_tail_push(virgin, test);
   return 0;
@@ -654,104 +683,116 @@ static int sc_allytest_new(char *buf)
   return -1;
 }
 
+static int ping_classify(scamper_ping_t *ping)
+{
+  scamper_ping_reply_t *rx;
+  int rc = -1, echo = 0, bs = 0, nobs = 0;
+  int i, samples[65536];
+  uint32_t u32, f, n0, n1;
+  slist_t *list = NULL;
+  slist_node_t *ln0, *ln1;
+
+  if(ping->stop_reason == SCAMPER_PING_STOP_NONE ||
+     ping->stop_reason == SCAMPER_PING_STOP_ERROR)
+    return IPID_UNRESP;
+
+  if((list = slist_alloc()) == NULL)
+    goto done;
+
+  memset(samples, 0, sizeof(samples));
+  for(i=0; i<ping->ping_sent; i++)
+    {
+      if((rx = ping->ping_replies[i]) != NULL &&
+	 SCAMPER_PING_REPLY_FROM_TARGET(ping, rx))
+	{
+	  /*
+	   * if at least two of four samples have the same ipid as what was
+	   * sent, then declare it echos.  this handles the observed case
+	   * where some responses echo but others increment.
+	   */
+	  if(rx->probe_ipid == rx->reply_ipid && ++echo > 1)
+	    {
+	      rc = IPID_ECHO;
+	      goto done;
+	    }
+
+	  /*
+	   * if two responses have the same IPID value, declare that it
+	   * replies with a constant IPID
+	   */
+	  if(++samples[rx->reply_ipid] > 1)
+	    {
+	      rc = IPID_CONST;
+	      goto done;
+	    }
+
+	  if(slist_tail_push(list, rx) == NULL)
+	    goto done;
+	}
+    }
+  if(slist_count(list) < attempts)
+    {
+      rc = IPID_UNRESP;
+      goto done;
+    }
+
+  f = (fudge == 0) ? 5000 : fudge;
+
+  ln0 = slist_head_node(list);
+  ln1 = slist_node_next(ln0);
+  while(ln1 != NULL)
+    {
+      rx = slist_node_item(ln0); n0 = rx->reply_ipid;
+      rx = slist_node_item(ln1); n1 = rx->reply_ipid;
+
+      if(n0 < n1)
+	u32 = n1 - n0;
+      else
+	u32 = (n1 + 0x10000) - n0;
+      if(u32 <= f)
+	nobs++;
+
+      if((options & OPT_NOBS) == 0)
+	{
+	  n0 = byteswap16(n0);
+	  n1 = byteswap16(n1);
+	  if(n0 < n1)
+	    u32 = n1 - n0;
+	  else
+	    u32 = (n1 + 0x10000) - n0;
+	  if(u32 <= f)
+	    bs++;
+	}
+
+      ln0 = ln1;
+      ln1 = slist_node_next(ln0);
+    }
+
+  if(nobs != attempts-1 && bs != attempts-1)
+    rc = IPID_RAND;
+  else
+    rc = IPID_INCR;
+
+ done:
+  if(list != NULL) slist_free(list);
+  return rc;
+}
+
 static int process_ping(sc_test_t *test, scamper_ping_t *ping)
 {
   sc_pingtest_t *pt = test->data;
   sc_ipidseq_t *seq;
-  scamper_ping_reply_t *r[4], *rx;
-  uint32_t u32;
   char addr[64], icmp[10], tcp[10], udp[10];
-  int class, i, j, rc;
-  int samples[65536];
+  int class;
 
   assert(ping != NULL);
 
   if((seq = sc_ipidseq_get(pt->target->addr)) == NULL &&
      (seq = sc_ipidseq_alloc(pt->target->addr)) == NULL)
-    {
-      return -1;
-    }
+    goto err;
 
-  if(ping->stop_reason == SCAMPER_PING_STOP_NONE ||
-     ping->stop_reason == SCAMPER_PING_STOP_ERROR)
-    {
-      class = IPID_UNRESP;
-      goto done;
-    }
+  class = ping_classify(ping);
 
-  rc = 0;
-  for(j=0; j<ping->ping_sent && rc < 4; j++)
-    {
-      if((rx = ping->ping_replies[j]) == NULL)
-	continue;
-
-      if(ping->probe_ttl != 255)
-	{
-	  assert(pt->step == 3);
-	  if(SCAMPER_PING_REPLY_IS_ICMP_TTL_EXP(rx) &&
-	     scamper_addr_cmp(rx->addr, pt->target->addr) == 0)
-	    r[rc++] = rx;
-	}
-      else if(SCAMPER_PING_REPLY_FROM_TARGET(ping, rx))
-	{
-	  r[rc++] = rx;
-	}
-    }
-
-  if(rc < 4)
-    {
-      class = IPID_UNRESP;
-      goto done;
-    }
-
-  /*
-   * if at least two of four samples have the same ipid as what was sent,
-   * then declare it echos.  this handles the observed case where some
-   * responses echo but others increment.
-   */
-  u32 = 0;
-  for(i=0; i<4; i++)
-    {
-      if(r[i]->probe_ipid == r[i]->reply_ipid)
-	u32++;
-    }
-  if(u32 > 1)
-    {
-      class = IPID_ECHO;
-      goto done;
-    }
-
-  u32 = 0;
-  memset(samples, 0, sizeof(samples));
-  for(i=0; i<4; i++)
-    {
-      samples[r[i]->reply_ipid]++;
-      if(samples[r[i]->reply_ipid] > 1)
-	u32++;
-    }
-  if(u32 > 1)
-    {
-      class = IPID_CONST;
-      goto done;
-    }
-
-  for(i=0; i<3; i++)
-    {
-      if(r[i+0]->reply_ipid < r[i+1]->reply_ipid)
-	u32 = r[i+1]->reply_ipid - r[i-0]->reply_ipid;
-      else
-	u32 = (r[i+1]->reply_ipid + 0x10000) - r[i+0]->reply_ipid;
-
-      if(u32 > 5000)
-	break;
-    }
-
-  if(i == 3)
-    class = IPID_INCR;
-  else
-    class = IPID_RAND;
-
- done:
   if(SCAMPER_PING_METHOD_IS_UDP(ping))
     seq->udp = class;
   else if(SCAMPER_PING_METHOD_IS_TCP(ping))
@@ -768,7 +809,6 @@ static int process_ping(sc_test_t *test, scamper_ping_t *ping)
     {
       if(sc_waittest(test) != 0)
 	goto err;
-
       status("wait ping %s step %d", addr, pt->step);
       return 0;
     }
@@ -921,17 +961,18 @@ static int sc_test_ping(sc_test_t *test, char *cmd, size_t len)
     }
 
   string_concat(cmd, len, &off, "ping -P ");
-
   if(pt->step == 0)
-    string_concat(cmd, len, &off, "udp-dport -m 255");
+    string_concat(cmd, len, &off, "udp-dport");
   else if(pt->step == 1)
-    string_concat(cmd, len, &off, "icmp-echo -m 255");
+    string_concat(cmd, len, &off, "icmp-echo");
   else if(pt->step == 2)
-    string_concat(cmd, len, &off, "tcp-ack-sport -m 255");
+    string_concat(cmd, len, &off, "tcp-ack-sport");
   else
     return -1;
-
-  string_concat(cmd, len, &off, " -c 6 -o 4 %s\n",
+  string_concat(cmd, len, &off, " -i %d", probe_wait / 1000);
+  if((probe_wait % 1000) != 0)
+    string_concat(cmd, len, &off, "%.d", probe_wait % 1000);
+  string_concat(cmd, len, &off, " -c %d -o %d %s\n", attempts + 2, attempts,
 		scamper_addr_tostr(dst, buf, sizeof(buf)));
 
   return off;
@@ -1016,16 +1057,22 @@ static int sc_test_ally(sc_test_t *test, char *cmd, size_t len)
      (sc_target_find(at->b) == NULL && sc_target_add(at->b) != 0))
     return -1;
 
-  string_concat(cmd, len, &off,
-		"dealias -m ally -O inseq -W 1000 -p '-P %s' %s %s\n",
-		method,
+  string_concat(cmd, len, &off, "dealias -m ally");
+  if(fudge == 0)
+    string_concat(cmd, len, &off, " -O inseq");
+  else
+    string_concat(cmd, len, &off, " -f %d", fudge);
+  if(options & OPT_NOBS)
+    string_concat(cmd, len, &off, " -O nobs");
+  string_concat(cmd, len, &off, " -W %d -q %d -p '-P %s' %s %s\n",
+		probe_wait, attempts, method,
 		scamper_addr_tostr(at->a->addr, ab, sizeof(ab)),
 		scamper_addr_tostr(at->b->addr, bb, sizeof(bb)));
 
   return off;
 }
 
-static void do_method(void)
+static int do_method(void)
 {
   static int (*const func[])(sc_test_t *, char *, size_t) = {
     sc_test_ping,     /* TEST_PING */
@@ -1033,11 +1080,10 @@ static void do_method(void)
   };
   sc_waittest_t *wt;
   sc_test_t *test;
-  char cmd[512];
   int off;
 
-  if(more < 1 || timeval_cmp(&now, &next) < 0)
-    return;
+  if(more < 1)
+    return 0;
 
   for(;;)
     {
@@ -1050,20 +1096,19 @@ static void do_method(void)
 	}
       else if((test = slist_head_pop(virgin)) == NULL)
 	{
-	  return;
+	  return 0;
 	}
 
       /* something went wrong */
       if((off = func[test->type-1](test, cmd, sizeof(cmd))) == -1)
 	{
 	  fprintf(stderr, "something went wrong\n");
-	  break;
+	  return -1;
 	}
 
       /* got a command, send it */
       if(off != 0)
 	{
-	  timeval_add_ms(&next, &now, nextgap);
 	  write_wrap(scamper_fd, cmd, NULL, off);
 	  probing++;
 	  more--;
@@ -1075,84 +1120,7 @@ static void do_method(void)
 	}
     }
 
-  return;
-}
-
-/*
- * do_addressfile
- *
- * read the contents of the addressfile in one hit, and then initialise the
- * set of tracetests.
- */
-static int do_addressfile(void)
-{
-  struct stat sb;
-  size_t off, start;
-  char *readbuf = NULL;
-  int fd = -1;
-
-  if((fd = open(addressfile, O_RDONLY)) < 0)
-    {
-      fprintf(stderr, "could not open %s\n", addressfile);
-      goto err;
-    }
-
-  if(fstat(fd, &sb) != 0)
-    {
-      fprintf(stderr, "could not fstat %s\n", addressfile);
-      goto err;
-    }
-  if(sb.st_size == 0)
-    {
-      fprintf(stderr, "zero length file %s\n", addressfile);
-      goto err;
-    }
-  if((readbuf = malloc(sb.st_size+1)) == NULL)
-    {
-      fprintf(stderr, "could not malloc %d bytes to read %s\n",
-	      (int)sb.st_size, addressfile);
-      goto err;
-    }
-  if(read_wrap(fd, readbuf, NULL, sb.st_size) != 0)
-    {
-      fprintf(stderr, "could not read %d bytes from %s\n",
-	      (int)sb.st_size, addressfile);
-      goto err;
-    }
-  readbuf[sb.st_size] = '\0';
-  close(fd); fd = -1;
-
-  /* parse the contents of the file */
-  start = 0; off = 0;
-  while(off < sb.st_size+1)
-    {
-      if(readbuf[off] == '\n' || readbuf[off] == '\0')
-	{
-	  if(start == off || readbuf[start] == '#')
-	    {
-	      start = ++off;
-	      continue;
-	    }
-	  readbuf[off] = '\0';
-
-	  if(sc_allytest_new(readbuf+start) != 0)
-	    goto err;
-
-	  start = ++off;
-	}
-      else
-	{
-	  ++off;
-	}
-    }
-
-  free(readbuf);
   return 0;
-
- err:
-  if(readbuf != NULL) free(readbuf);
-  if(fd != -1) close(fd);
-  return -1;
 }
 
 /*
@@ -1168,7 +1136,7 @@ static int do_files(void)
   uint16_t types[] = {SCAMPER_FILE_OBJ_DEALIAS, SCAMPER_FILE_OBJ_PING};
   mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
   int flags = O_WRONLY | O_CREAT | O_TRUNC;
-  int  pair[2];
+  int pair[2];
 
   if((decode_filter = scamper_file_filter_alloc(types, 2)) == NULL)
     {
@@ -1355,7 +1323,8 @@ static int do_scamperread(void)
 	  else if(linelen == 4 && strncasecmp(head, "MORE", linelen) == 0)
 	    {
 	      more++;
-	      do_method();
+	      if(do_method() != 0)
+		goto err;
 	    }
 	  /* new piece of data */
 	  else if(linelen > 5 && strncasecmp(head, "DATA ", 5) == 0)
@@ -1497,12 +1466,9 @@ int main(int argc, char *argv[])
     return -1;
   if((waiting = heap_alloc(sc_waittest_cmp)) == NULL)
     return -1;
-
-  /*
-   * read the list of addresses in the address list file.
-   */
-  if(do_addressfile() != 0)
+  if(file_lines(addressfile, sc_allytest_new, NULL) != 0)
     {
+      fprintf(stderr, "could not read %s\n", addressfile);
       return -1;
     }
 
@@ -1521,8 +1487,6 @@ int main(int argc, char *argv[])
     {
       return -1;
     }
-
-  gettimeofday_wrap(&next);
 
   /* attach */
   snprintf(cmd, sizeof(cmd), "attach\n");
@@ -1561,37 +1525,30 @@ int main(int argc, char *argv[])
 	{
 	  gettimeofday_wrap(&now);
 
-	  if(nextgap > 0 && timeval_cmp(&now, &next) < 0)
+	  /*
+	   * if there is something ready to probe now, then try and
+	   * do it.
+	   */
+	  wait = heap_head_item(waiting);
+	  if(slist_count(virgin) > 0 ||
+	     (wait != NULL && timeval_cmp(&wait->tv, &now) <= 0))
 	    {
-	      timeval_diff_tv(&tv, &now, &next);
-	      tv_ptr = &tv;
+	      if(do_method() != 0)
+		return -1;
 	    }
-	  else
-	    {
-	      /*
-	       * if there is something ready to probe now, then try and
-	       * do it.
-	       */
-	      wait = heap_head_item(waiting);
-	      if(slist_count(virgin) > 0 ||
-		 (wait != NULL && timeval_cmp(&wait->tv, &now) <= 0))
-		{
-		  do_method();
-		}
 
-	      /*
-	       * if we could not send a new command just yet, but scamper
-	       * wants one, then wait for an appropriate length of time.
-	       */
-	      wait = heap_head_item(waiting);
-	      if(more > 0 && tv_ptr == NULL && wait != NULL)
-		{
-		  tv_ptr = &tv;
-		  if(timeval_cmp(&wait->tv, &now) > 0)
-		    timeval_diff_tv(&tv, &now, &wait->tv);
-		  else
-		    memset(&tv, 0, sizeof(tv));
-		}
+	  /*
+	   * if we could not send a new command just yet, but scamper
+	   * wants one, then wait for an appropriate length of time.
+	   */
+	  wait = heap_head_item(waiting);
+	  if(more > 0 && tv_ptr == NULL && wait != NULL)
+	    {
+	      tv_ptr = &tv;
+	      if(timeval_cmp(&wait->tv, &now) > 0)
+		timeval_diff_tv(&tv, &now, &wait->tv);
+	      else
+		memset(&tv, 0, sizeof(tv));
 	    }
 	}
 
@@ -1612,7 +1569,8 @@ int main(int argc, char *argv[])
 
       if(more > 0)
 	{
-	  do_method();
+	  if(do_method() != 0)
+	    return -1;
 	}
 
       if(scamper_fd >= 0 && FD_ISSET(scamper_fd, &rfds))

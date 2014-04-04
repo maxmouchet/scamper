@@ -1,11 +1,11 @@
 /*
  * scamper_ping.h
  *
- * $Id: scamper_ping.h,v 1.44 2013/08/04 21:53:40 mjl Exp $
+ * $Id: scamper_ping.h,v 1.45 2014/03/06 20:24:37 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012-2013 The Regents of the University of California
+ * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -251,10 +251,11 @@ typedef struct scamper_ping
   uint16_t               probe_count;   /* -c */
   uint16_t               probe_size;    /* -s */
   uint8_t                probe_method;  /* -P */
-  uint8_t                probe_wait;    /* -i */
   uint8_t                probe_ttl;     /* -m */
   uint8_t                probe_tos;     /* -z */
   uint8_t                probe_timeout; /* -W */
+  uint8_t                probe_wait;    /* -i */
+  uint32_t               probe_wait_us; /* -i */
   uint16_t               probe_sport;   /* -F */
   uint16_t               probe_dport;   /* -d */
   uint16_t               probe_icmpsum; /* -C */
