@@ -1,7 +1,7 @@
 /*
  * scamper_fds: manage events and file descriptors
  *
- * $Id: scamper_fds.c,v 1.82 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_fds.c,v 1.83 2014/05/19 21:19:49 mjl Exp $
  *
  *          Matthew Luckie
  *
@@ -14,7 +14,7 @@
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
- * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2012-2014 The Regents of the University of California
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,7 +33,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_fds.c,v 1.82 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_fds.c,v 1.83 2014/05/19 21:19:49 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1064,7 +1064,6 @@ static scamper_fd_t *fd_find(scamper_fd_t *findme)
  *
  * allocate a file descriptor of a specified type.
  */
-#ifndef _WIN32
 static scamper_fd_t *fd_null(int type)
 {
   scamper_fd_t *fdn = NULL, findme;
@@ -1077,9 +1076,24 @@ static scamper_fd_t *fd_null(int type)
       return fdn;
     }
 
-  if(type == SCAMPER_FD_TYPE_RTSOCK) fd = scamper_rtsock_open();
-  else if(type == SCAMPER_FD_TYPE_IFSOCK) fd = socket(AF_INET, SOCK_DGRAM, 0);
-  else if(type == SCAMPER_FD_TYPE_IP4) fd = scamper_ip4_openraw();
+  switch(type)
+    {
+#if defined(SCAMPER_FD_TYPE_RTSOCK)
+    case SCAMPER_FD_TYPE_RTSOCK:
+      fd = scamper_rtsock_open();
+      break;
+#endif
+
+#if defined(SCAMPER_FD_TYPE_IFSOCK)
+    case SCAMPER_FD_TYPE_IFSOCK:
+      fd = socket(AF_INET, SOCK_DGRAM, 0);
+      break;
+#endif
+
+    case SCAMPER_FD_TYPE_IP4:
+      fd = scamper_ip4_openraw();
+      break;
+    }
 
   if(fd == -1 || (fdn = fd_alloc(type, fd)) == NULL ||
      (fdn->fd_tree_node = splaytree_insert(fd_tree, fdn)) == NULL ||
@@ -1093,17 +1107,28 @@ static scamper_fd_t *fd_null(int type)
  err:
   if(fd != -1)
     {
-      if(type == SCAMPER_FD_TYPE_RTSOCK)
-	scamper_rtsock_close(fd);
-      else if(type == SCAMPER_FD_TYPE_IFSOCK)
-	close(fd);
-      else if(type == SCAMPER_FD_TYPE_IP4)
-	scamper_ip4_close(fd);
+      switch(type)
+	{
+#if defined(SCAMPER_FD_TYPE_RTSOCK)
+	case SCAMPER_FD_TYPE_RTSOCK:
+	  scamper_rtsock_close(fd);
+	  break;
+#endif
+
+#if defined(SCAMPER_FD_TYPE_IFSOCK)
+	case SCAMPER_FD_TYPE_IFSOCK:
+	  close(fd);
+	  break;
+#endif
+
+	case SCAMPER_FD_TYPE_IP4:
+	  scamper_ip4_close(fd);
+	  break;
+	}
     }
   if(fdn != NULL) fd_free(fdn);
   return NULL;
 }
-#endif
 
 static scamper_fd_t *fd_icmp(int type, void *addr)
 {

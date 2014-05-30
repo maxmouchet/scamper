@@ -8,7 +8,7 @@
  * Copyright (c) 2013-2014 The Regents of the University of California
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_ping_json.c,v 1.8 2014/03/06 20:24:37 mjl Exp $
+ * $Id: scamper_ping_json.c,v 1.9 2014/04/07 21:31:29 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_json.c,v 1.8 2014/03/06 20:24:37 mjl Exp $";
+  "$Id: scamper_ping_json.c,v 1.9 2014/04/07 21:31:29 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -45,12 +45,15 @@ static const char rcsid[] =
 
 static char *ping_header(const scamper_ping_t *ping)
 {
+  static const char *flags[] = {
+    "v4rr", "spoof", "payload", "tsonly", "tsandaddr", "icmpsum", "dl", "8"
+  };
   char buf[512], tmp[64];
   size_t off = 0;
-  uint8_t u8;
+  uint8_t u8, c;
 
   string_concat(buf, sizeof(buf), &off,
-		"{\"version\":\"0.2\", \"type\":\"ping\", \"method\":\"%s\"",
+		"{\"version\":\"0.3\", \"type\":\"ping\", \"method\":\"%s\"",
 		scamper_ping_method2str(ping, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off, ", \"src\":\"%s\"",
 		scamper_addr_tostr(ping->src, tmp, sizeof(tmp)));
@@ -73,6 +76,22 @@ static char *ping_header(const scamper_ping_t *ping)
   if(SCAMPER_PING_METHOD_IS_UDP(ping) || SCAMPER_PING_METHOD_IS_TCP(ping))
     string_concat(buf, sizeof(buf), &off, ", \"sport\":%u, \"dport\":%u",
 		  ping->probe_sport, ping->probe_dport);
+
+  if(ping->flags != 0)
+    {
+      c = 0;
+      string_concat(buf, sizeof(buf), &off, ", \"flags\":[");
+      for(u8=0; u8<8; u8++)
+	{
+	  if((ping->flags & (0x1 << u8)) == 0)
+	    continue;
+	  if(c > 0)
+	    string_concat(buf, sizeof(buf), &off, ",");
+	  string_concat(buf, sizeof(buf), &off, "\"%s\"", flags[u8]);
+	  c++;
+	}
+      string_concat(buf, sizeof(buf), &off, "]");
+    }
 
   if(SCAMPER_PING_METHOD_IS_ICMP(ping) &&
      (ping->flags & SCAMPER_PING_FLAG_ICMPSUM) != 0)

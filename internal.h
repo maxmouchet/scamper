@@ -1,7 +1,7 @@
 /*
  * internal.h
  *
- * $Id: internal.h,v 1.25 2013/09/04 23:32:44 mjl Exp $
+ * $Id: internal.h,v 1.26 2014/05/19 20:20:12 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -30,6 +30,7 @@ typedef unsigned __int8 uint8_t;
 typedef unsigned __int16 uint16_t;
 typedef unsigned __int32 uint32_t;
 typedef unsigned __int64 uint64_t;
+typedef __int8 int8_t;
 typedef __int16 int16_t;
 typedef int ssize_t;
 typedef int pid_t;
@@ -221,6 +222,7 @@ typedef unsigned short sa_family_t;
 #ifdef _WIN32
 #define SHUT_RDWR SD_BOTH
 #define STDIN_FILENO 0
+#define STDOUT_FILENO 1
 #define S_IRUSR _S_IREAD
 #define S_IWUSR _S_IWRITE
 #define S_IFIFO _S_IFIFO
@@ -293,8 +295,13 @@ struct icmp
   uint8_t   icmp_type;
   uint8_t   icmp_code;
   uint16_t  icmp_cksum;
-  uint16_t  icmp_id;
-  uint16_t  icmp_seq;
+  union {
+	  uint8_t pptr;
+	  struct idseq {
+		  uint16_t id;
+		  uint16_t seq;
+	  } idseq;
+  } icmpun;
   struct ip icmp_ip;
 };
 struct icmp6_hdr
@@ -331,7 +338,10 @@ struct iovec
   void   *iov_base;
   size_t  iov_len;
 };
-#define icmp_nextmtu icmp_seq
+#define icmp_id      icmpun.idseq.id
+#define icmp_seq     icmpun.idseq.seq
+#define icmp_nextmtu icmpun.idseq.seq
+#define icmp_pptr    icmpun.pptr
 #define ip6_vfc      ip6un.vfc
 #define ip6_flow     ip6un.hdr.flow
 #define ip6_plen     ip6un.hdr.plen

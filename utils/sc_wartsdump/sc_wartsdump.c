@@ -1,7 +1,7 @@
 /*
  * warts-dump
  *
- * $Id: sc_wartsdump.c,v 1.184 2014/03/06 20:24:37 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.185 2014/04/10 21:18:27 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartsdump.c,v 1.184 2014/03/06 20:24:37 mjl Exp $";
+  "$Id: sc_wartsdump.c,v 1.185 2014/04/10 21:18:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -740,9 +740,13 @@ static void dump_ping_reply(const scamper_ping_t *ping,
 
 static void dump_ping(scamper_ping_t *ping)
 {
+  static const char *flags[] = {
+    "v4rr", "spoof", "payload", "tsonly", "tsandaddr", "icmpsum", "dl", "8"
+  };
   scamper_ping_reply_t *reply;
   char buf[256];
   uint32_t u32;
+  uint8_t u8;
   int i;
 
   scamper_addr_tostr(ping->src, buf, sizeof(buf));
@@ -773,6 +777,22 @@ static void dump_ping(scamper_ping_t *ping)
     }
   printf(", timeout: %u, ttl: %u", ping->probe_timeout, ping->probe_ttl);
   printf("\n");
+
+  if(ping->flags != 0)
+    {
+      printf(" flags:");
+      u32 = 0;
+      for(i=0; i<8; i++)
+	{
+	  if((ping->flags & (0x1 << i)) == 0)
+	    continue;
+	  if(u32 > 0)
+	    printf(",");
+	  printf(" %s", flags[i]);
+	  u32++;
+	}
+      printf("\n");
+    }
 
   printf(" method: %s", scamper_ping_method2str(ping, buf, sizeof(buf)));
   switch(ping->probe_method)

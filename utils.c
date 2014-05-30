@@ -1,7 +1,7 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.167 2013/12/14 21:49:38 mjl Exp $
+ * $Id: utils.c,v 1.168 2014/05/19 20:28:36 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.167 2013/12/14 21:49:38 mjl Exp $";
+  "$Id: utils.c,v 1.168 2014/05/19 20:28:36 mjl Exp $";
 #endif
 
 #if defined(_MSC_VER)
@@ -92,6 +92,8 @@ typedef int ssize_t;
 #include <io.h>
 #include <direct.h>
 #define snprintf _snprintf
+#define open _open
+#define close _close
 #define read _read
 #define write _write
 #define strdup _strdup
@@ -235,7 +237,7 @@ int sockaddr_compose_un(struct sockaddr *sa, const char *file)
 #endif
 }
 
-#if defined(AF_LINK)
+#if defined(AF_LINK) && !defined(_WIN32)
 static char *link_tostr(const struct sockaddr_dl *sdl,
 			char *buf, const size_t len)
 {
@@ -336,7 +338,7 @@ char *sockaddr_tostr(const struct sockaddr *sa, char *buf, const size_t len)
       snprintf(buf, len, "%s.%d", addr,
 	       ((const struct sockaddr_in6 *)sa)->sin6_port);
     }
-#if defined(AF_LINK)
+#if defined(AF_LINK) && !defined(_WIN32)
   else if(sa->sa_family == AF_LINK)
     {
       return link_tostr((const struct sockaddr_dl *)sa, buf, len);
@@ -1254,7 +1256,7 @@ char *string_concat(char *str, size_t len, size_t *off, const char *fs, ...)
 void mem_concat(void *dst,const void *src,size_t len,size_t *off,size_t size)
 {
   assert(*off + len <= size);
-  memcpy(dst + *off, src, len);
+  memcpy(((uint8_t *)dst) + *off, src, len);
   *off += len;
   return;
 }

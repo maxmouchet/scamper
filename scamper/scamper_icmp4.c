@@ -1,7 +1,7 @@
 /*
  * scamper_icmp4.c
  *
- * $Id: scamper_icmp4.c,v 1.109 2013/09/04 23:32:44 mjl Exp $
+ * $Id: scamper_icmp4.c,v 1.110 2014/05/15 23:05:38 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmp4.c,v 1.109 2013/09/04 23:32:44 mjl Exp $";
+  "$Id: scamper_icmp4.c,v 1.110 2014/05/15 23:05:38 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -265,6 +265,8 @@ static uint16_t icmp4_quote_ip_len(const struct icmp *icmp)
   uint16_t len;
 
 #if defined(__linux__) || defined(__OpenBSD__) || defined(__sun__) || defined(_WIN32)
+  len = ntohs(icmp->icmp_ip.ip_len);
+#elif defined(__FreeBSD__) && __FreeBSD_version >= 1000022
   len = ntohs(icmp->icmp_ip.ip_len);
 #elif defined(__FreeBSD__) || defined(__NetBSD__) || defined(__APPLE__) || defined(__DragonFly__)
   if(icmp->icmp_type == ICMP_TIMXCEED)

@@ -1,11 +1,11 @@
 /*
  * scamper_addr.c
  *
- * $Id: scamper_addr.c,v 1.56 2013/07/25 18:02:51 mjl Exp $
+ * $Id: scamper_addr.c,v 1.57 2014/05/19 21:05:10 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2013      The Regents of the University of California
+ * Copyright (C) 2013-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_addr.c,v 1.56 2013/07/25 18:02:51 mjl Exp $";
+  "$Id: scamper_addr.c,v 1.57 2014/05/19 21:05:10 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -491,9 +491,15 @@ static int ipv6_prefix(const scamper_addr_t *sa, const scamper_addr_t *sb)
 {
   const struct in6_addr *a = sa->addr;
   const struct in6_addr *b = sb->addr;
-  uint32_t ua, ub;
   int i, j, x = 0;
 
+#ifndef _WIN32
+  uint32_t ua, ub;
+#else
+  uint16_t ua, ub;
+#endif
+
+#ifndef _WIN32
   for(i=0; i<4; i++)
     {
       ua = a->s6_addr32[i];
@@ -512,6 +518,26 @@ static int ipv6_prefix(const scamper_addr_t *sa, const scamper_addr_t *sb)
 	  x++;
 	}
     }
+#else
+  for(i=0; i<8; i++)
+    {
+      ua = a->u.Word[i];
+      ub = b->u.Word[i];
+
+      if(ua == ub)
+	{
+	  x += 16;
+	  continue;
+	}
+
+      for(j=0; j<16; j++)
+	{
+	  if(((ua ^ ub) & htons(uint16_mask[j])) != 0)
+	    return x;
+	  x++;
+	}
+    }
+#endif
 
   return x;
 }
@@ -539,6 +565,7 @@ static int ipv6_netaddr(const scamper_addr_t *sa, void *net, int nl)
     return -1;
   memset(&p, 0, sizeof(p));
 
+#ifndef _WIN32
   for(i=0; i<4; i++)
     {
       if(nl >= 32)
@@ -550,6 +577,18 @@ static int ipv6_netaddr(const scamper_addr_t *sa, void *net, int nl)
 	break;
       nl -= 32;
     }
+#else
+  for(i=0; i<8; i++)
+    {
+      if(nl >= 16)
+	p.u.Word[i] = a->u.Word[i];
+      else
+	p.u.Word[i] = htons(ntohs(a->u.Word[i]) & uint16_mask[nl-1]);
+      if(nl <= 16)
+	break;
+      nl -= 16;
+    }
+#endif
 
   memcpy(net, &p, sizeof(p));
   return 0;
