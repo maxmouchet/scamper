@@ -1,7 +1,7 @@
 /*
  * scamper_dl: manage BPF/PF_PACKET datalink instances for scamper
  *
- * $Id: scamper_dl.c,v 1.180 2014/03/12 00:17:44 mjl Exp $
+ * $Id: scamper_dl.c,v 1.181 2014/06/12 19:59:48 mjl Exp $
  *
  *          Matthew Luckie
  *          Ben Stasiewicz added fragmentation support.
@@ -16,6 +16,7 @@
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
+ * Copyright (C) 2014      The Regents of the University of California
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,7 +35,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dl.c,v 1.180 2014/03/12 00:17:44 mjl Exp $";
+  "$Id: scamper_dl.c,v 1.181 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -2086,7 +2087,7 @@ int scamper_dl_init()
     }
 #elif defined(__linux__)
   readbuf_len = 128;
-  if((readbuf = malloc(readbuf_len)) == NULL)
+  if((readbuf = malloc_zero(readbuf_len)) == NULL)
     {
       printerror(errno, strerror, __func__, "could not malloc readbuf");
       readbuf_len = 0;
@@ -2094,7 +2095,7 @@ int scamper_dl_init()
     }
 #elif defined(HAVE_DLPI)
   readbuf_len = 65536; /* magic obtained from pcap-dlpi.c */
-  if((readbuf = malloc(readbuf_len)) == NULL)
+  if((readbuf = malloc_zero(readbuf_len)) == NULL)
     {
       printerror(errno, strerror, __func__, "could not malloc readbuf");
       readbuf_len = 0;

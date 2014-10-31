@@ -8,7 +8,7 @@
  * Copyright (c) 2013-2014 The Regents of the University of California
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_ping_json.c,v 1.9 2014/04/07 21:31:29 mjl Exp $
+ * $Id: scamper_ping_json.c,v 1.11 2014/09/17 03:25:08 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_json.c,v 1.9 2014/04/07 21:31:29 mjl Exp $";
+  "$Id: scamper_ping_json.c,v 1.11 2014/09/17 03:25:08 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -53,7 +53,7 @@ static char *ping_header(const scamper_ping_t *ping)
   uint8_t u8, c;
 
   string_concat(buf, sizeof(buf), &off,
-		"{\"version\":\"0.3\", \"type\":\"ping\", \"method\":\"%s\"",
+		"{\"version\":\"0.4\", \"type\":\"ping\", \"method\":\"%s\"",
 		scamper_ping_method2str(ping, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off, ", \"src\":\"%s\"",
 		scamper_addr_tostr(ping->src, tmp, sizeof(tmp)));
@@ -146,6 +146,12 @@ static char *ping_reply(const scamper_ping_t *ping,
       string_concat(buf, sizeof(buf), &off,
 		    ", \"probe_ipid\":%u, \"reply_ipid\":%u",
 		    reply->probe_ipid, reply->reply_ipid);
+    }
+  else if(SCAMPER_ADDR_TYPE_IS_IPV6(reply->addr) &&
+	  (reply->flags & SCAMPER_PING_REPLY_FLAG_REPLY_IPID) != 0)
+    {
+      string_concat(buf, sizeof(buf), &off,
+		    ", \"reply_ipid\":%u", reply->reply_ipid32);
     }
 
   if(SCAMPER_PING_REPLY_IS_ICMP(reply))
@@ -302,7 +308,7 @@ int scamper_file_json_ping_write(const scamper_file_t *sf,
     len += (stats_len = strlen(stats));
   len += 2; /* }\n */
 
-  if((str = malloc(len)) == NULL)
+  if((str = malloc_zero(len)) == NULL)
     goto cleanup;
   memcpy(str+wc, header, header_len); wc += header_len;
   memcpy(str+wc, ", \"responses\":[", 15); wc += 15;

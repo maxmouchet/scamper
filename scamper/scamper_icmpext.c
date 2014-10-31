@@ -1,10 +1,11 @@
 /*
  * scamper_icmpext.c
  *
- * $Id: scamper_icmpext.c,v 1.8 2012/11/26 20:54:46 mjl Exp $
+ * $Id: scamper_icmpext.c,v 1.9 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
+ * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmpext.c,v 1.8 2012/11/26 20:54:46 mjl Exp $";
+  "$Id: scamper_icmpext.c,v 1.9 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -40,29 +41,15 @@ scamper_icmpext_t *scamper_icmpext_alloc(uint8_t cn, uint8_t ct, uint16_t dl,
 {
   scamper_icmpext_t *ie;
 
-  if((ie = malloc(sizeof(scamper_icmpext_t))) == NULL)
+  if((ie = malloc_zero(sizeof(scamper_icmpext_t))) == NULL)
+    return NULL;
+
+  if(dl != 0 && (ie->ie_data = memdup(data, dl)) == NULL)
     {
+      free(ie);
       return NULL;
     }
 
-  if(dl != 0)
-    {
-      if((ie->ie_data = malloc(dl)) != NULL)
-	{
-	  memcpy(ie->ie_data, data, dl);
-	}
-      else
-	{
-	  free(ie);
-	  return NULL;
-	}
-    }
-  else
-    {
-      ie->ie_data = NULL;
-    }
-
-  ie->ie_next = NULL;
   ie->ie_cn = cn;
   ie->ie_ct = ct;
   ie->ie_dl = dl;

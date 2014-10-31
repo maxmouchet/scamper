@@ -1,9 +1,10 @@
 /*
  * scamper_options.c: code to handle parsing of options
  *
- * $Id: scamper_options.c,v 1.12 2010/09/11 22:10:42 mjl Exp $
+ * $Id: scamper_options.c,v 1.13 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2006-2010 The University of Waikato
+ * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_options.c,v 1.12 2010/09/11 22:10:42 mjl Exp $";
+  "$Id: scamper_options.c,v 1.13 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -49,23 +50,17 @@ static int opt_add(scamper_option_out_t **head, scamper_option_out_t **tail,
   if(*tail == NULL)
     {
       assert(*head == NULL);
-
-      if((*head = malloc(sizeof(scamper_option_out_t))) == NULL)
-	{
-	  return -1;
-	}
+      if((*head = malloc_zero(sizeof(scamper_option_out_t))) == NULL)
+	return -1;
       *tail = *head;
     }
   else
     {
-      if(((*tail)->next = malloc(sizeof(scamper_option_out_t))) == NULL)
-	{
-	  return -1;
-	}
+      if(((*tail)->next = malloc_zero(sizeof(scamper_option_out_t))) == NULL)
+	return -1;
       *tail = (*tail)->next;
     }
 
-  (*tail)->next = NULL;
   (*tail)->id   = opt->id;
   (*tail)->type = opt->type;
   (*tail)->str  = str;

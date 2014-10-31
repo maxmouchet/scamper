@@ -1,7 +1,7 @@
 /*
  * scamper_writebuf.h: use in combination with select to send without blocking
  *
- * $Id: scamper_writebuf.h,v 1.11 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_writebuf.h,v 1.13 2014/09/05 03:34:11 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
@@ -27,6 +27,10 @@
 
 typedef struct scamper_writebuf scamper_writebuf_t;
 
+typedef void (*scamper_writebuf_error_t)(void *param, int err);
+typedef void (*scamper_writebuf_drained_t)(void *param);
+typedef int  (*scamper_writebuf_consume_t)(void *param);
+
 scamper_writebuf_t *scamper_writebuf_alloc(void);
 void scamper_writebuf_free(scamper_writebuf_t *wb);
 
@@ -34,8 +38,11 @@ void scamper_writebuf_free(scamper_writebuf_t *wb);
 int scamper_writebuf_send(scamper_writebuf_t *wb, const void *data,size_t len);
 
 /* get the writebuf to ask for data to send */
-int scamper_writebuf_consume(scamper_writebuf_t *wb, void *param,
-			     int cfunc(void *param));
+int scamper_writebuf_consume(scamper_writebuf_t *wb,
+			     scamper_writebuf_consume_t cfunc);
+
+/* write the data currently buffered to the socket */
+void scamper_writebuf_write(int fd, scamper_writebuf_t *wb);
 
 /* return the count of bytes buffered */
 size_t scamper_writebuf_len(const scamper_writebuf_t *wb);
@@ -43,22 +50,18 @@ size_t scamper_writebuf_len2(const scamper_writebuf_t *, char *, size_t);
 
 /*
  * out of convenience, some routines are provided that has the data queued
- * on the writebuf to be sent as required using the scamper_fd routines.
+ * on the writebuf to be sent as required.
  *
  *  scamper_writebuf_attach:
- *   manage the scamper_fd_t write path based on data being queued to be sent
+ *   manage the write path based on data being queued to be sent
  *
  *  scamper_writebuf_detach:
- *   don't manage the scamper_fd_t write path any more
+ *   don't manage the write path any more
  *
- *  scamper_writebuf_flush:
- *   flush all the data that can be written out now to the scamper_fd_t
  */
-void scamper_writebuf_attach(scamper_writebuf_t *wb,
-			     scamper_fd_t *fdn, void *param,
-			     void (*efunc)(void *, int, scamper_writebuf_t *),
-			     void (*dfunc)(void *, scamper_writebuf_t *));
+void scamper_writebuf_attach(scamper_writebuf_t *wb, void *param,
+			     scamper_writebuf_error_t efunc,
+			     scamper_writebuf_drained_t dfunc);
 void scamper_writebuf_detach(scamper_writebuf_t *wb);
-int scamper_writebuf_flush(scamper_writebuf_t *wb);
 
 #endif

@@ -1,7 +1,7 @@
 /*
  * scamper_do_dealias.c
  *
- * $Id: scamper_dealias_do.c,v 1.152 2014/03/25 03:23:00 mjl Exp $
+ * $Id: scamper_dealias_do.c,v 1.153 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_do.c,v 1.152 2014/03/25 03:23:00 mjl Exp $";
+  "$Id: scamper_dealias_do.c,v 1.153 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1214,7 +1214,7 @@ static int dealias_prefixscan_next(scamper_task_t *task)
     }
 
   /* remember the probedef used with each probe */
-  if((defids = malloc(sizeof(uint32_t) * dealias->probec)) == NULL)
+  if((defids = malloc_zero(sizeof(uint32_t) * dealias->probec)) == NULL)
     {
       printerror(errno, strerror, __func__, "could not malloc defids");
       goto err;
@@ -2049,6 +2049,7 @@ static int dealias_radargun_alloc(scamper_dealias_radargun_t *rg,
 {
   dealias_radargun_t *rgstate = NULL;
   uint32_t i;
+  size_t size;
 
   if((rgstate = malloc_zero(sizeof(dealias_radargun_t))) == NULL)
     {
@@ -2060,7 +2061,8 @@ static int dealias_radargun_alloc(scamper_dealias_radargun_t *rg,
   /* if the probe order is to be shuffled, then shuffle it */
   if((rg->flags & SCAMPER_DEALIAS_RADARGUN_FLAG_SHUFFLE))
     {
-      if((rgstate->order = malloc(sizeof(uint32_t) * rg->probedefc)) == NULL)
+      size = sizeof(uint32_t) * rg->probedefc;
+      if((rgstate->order = malloc_zero(size)) == NULL)
 	{
 	  printerror(errno, strerror, __func__, "could not malloc order");
 	  return -1;

@@ -1,11 +1,11 @@
 /*
  * scamper_dealias_json.c
  *
- * Copyright (c) 2013 The Regents of the University of California
- * Copyright (c) 2013 Matthew Luckie
+ * Copyright (c) 2013      Matthew Luckie
+ * Copyright (c) 2013-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_json.c,v 1.6 2013/08/29 21:48:46 mjl Exp $
+ * $Id: scamper_dealias_json.c,v 1.7 2014/06/12 19:59:48 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_json.c,v 1.6 2013/08/29 21:48:46 mjl Exp $";
+  "$Id: scamper_dealias_json.c,v 1.7 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -301,7 +301,7 @@ static char *dealias_probe_tostr(const scamper_dealias_probe_t *probe)
     }
   len += 3; /* ]}\0 */
 
-  if((str = malloc(len)) == NULL)
+  if((str = malloc_zero(len)) == NULL)
     goto done;
   memcpy(str, header, header_len); wc += header_len;
   if(probe->replyc > 0)
@@ -396,7 +396,7 @@ int scamper_file_json_dealias_write(const scamper_file_t *sf,
 	}
     }
 
-  if((str = malloc(len)) == NULL)
+  if((str = malloc_zero(len)) == NULL)
     goto cleanup;
   memcpy(str+wc, header, header_len); wc += header_len;
   memcpy(str+wc, ", \"probedefs\":[", 15); wc += 15;

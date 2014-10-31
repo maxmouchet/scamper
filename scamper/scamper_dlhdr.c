@@ -1,10 +1,11 @@
 /*
  * scamper_dlhdr.c
  *
- * $Id: scamper_dlhdr.c,v 1.15 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_dlhdr.c,v 1.16 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
+ * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dlhdr.c,v 1.15 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_dlhdr.c,v 1.16 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -46,7 +47,7 @@ static const char rcsid[] =
 
 static void dlhdr_ethmake(scamper_dlhdr_t *dlhdr, scamper_addr_t *mac)
 {
-  if((dlhdr->buf = malloc(14)) == NULL)
+  if((dlhdr->buf = malloc_zero(14)) == NULL)
     {
       dlhdr->error = errno;
       return;

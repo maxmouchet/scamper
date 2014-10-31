@@ -1,9 +1,10 @@
 /*
  * scamper_osinfo.c
  *
- * $Id: scamper_osinfo.c,v 1.1 2012/05/08 17:27:22 mjl Exp $
+ * $Id: scamper_osinfo.c,v 1.2 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2006 Matthew Luckie
+ * Copyright (C) 2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_osinfo.c,v 1.1 2012/05/08 17:27:22 mjl Exp $";
+  "$Id: scamper_osinfo.c,v 1.2 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -95,7 +96,7 @@ int scamper_osinfo_init(void)
 	}
       str++;
     }
-  if((osinfo->os_rel = malloc(osinfo->os_rel_dots * sizeof(long))) == NULL)
+  if((osinfo->os_rel = malloc_zero(osinfo->os_rel_dots * sizeof(long))) == NULL)
     goto err;
   str = utsname.release;
   for(i=0; i < osinfo->os_rel_dots; i++)

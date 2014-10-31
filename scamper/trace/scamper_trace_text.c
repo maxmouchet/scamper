@@ -3,9 +3,10 @@
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_text.c,v 1.19 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_trace_text.c,v 1.20 2014/06/12 19:59:48 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_text.c,v 1.19 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_trace_text.c,v 1.20 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -236,7 +237,7 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
 	  snprintf(str_hop, sizeof(str_hop), "%2d  *", h+1);
 	  str = strdup(str_hop);
 	}
-      else if((str = malloc((len = 4 + (2 * trace->attempts)))) != NULL)
+      else if((str = malloc_zero((len = 4 + (2 * trace->attempts)))) != NULL)
 	{
 	  snprintf(str, len, "%2d  ", h+1);
 	  for(i=0; i<trace->attempts; i++)
@@ -290,7 +291,7 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
        */
       addr_str(hop->hop_addr, str_addr, sizeof(str_addr));
       len = strlen(str_addr);
-      if((str_addrs[i] = malloc(len+1)) == NULL)
+      if((str_addrs[i] = malloc_zero(len+1)) == NULL)
 	goto out;
       memcpy(str_addrs[i], str_addr, len+1);
       len_addrs[i] = len;
@@ -302,7 +303,7 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
       timeval_tostr(&hop->hop_rtt, str_rtt, sizeof(str_rtt));
       icmp_tostr(hop, str_icmp, sizeof(str_icmp));
       len = strlen(str_rtt) + 3 + strlen(str_icmp);
-      if((str_rtts[i] = malloc(len+1)) == NULL)
+      if((str_rtts[i] = malloc_zero(len+1)) == NULL)
 	goto out;
       snprintf(str_rtts[i],len+1,"%s ms%s",str_rtt,str_icmp);
       len_rtts[i] = len;
@@ -341,7 +342,7 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
     }
 
   /* allocate a string long enough to store the hop data */
-  if((str = malloc(len)) == NULL)
+  if((str = malloc_zero(len)) == NULL)
     goto out;
 
   /* build the string up */
@@ -696,7 +697,7 @@ int scamper_file_text_trace_write(const scamper_file_t *sf,
   len += trace->hop_count; /* \n on each line */
   len += 1; /* final \0 */
 
-  if((str = malloc(len)) == NULL)
+  if((str = malloc_zero(len)) == NULL)
     goto cleanup;
 
   off = 0;

@@ -86,7 +86,7 @@ The format of the address is
 .Bd -literal -offset indent
   Warts header   ID Modulo    Type     Address
 +--------------+-----------+--------+----//----+
-| 12 bytes     |  1 byte   | 1 byte |          |
+| 8 bytes      |  1 byte   | 1 byte |          |
 | type = 5     |           |        |          |
 +--------------+-----------+--------+----//----+
 .Ed
@@ -172,7 +172,7 @@ A set of ICMP extension records is written in the following format:
 The format of a list structure is:
 .Bl -dash -offset 2n -compact -width 1n
 .It
-12 bytes: Warts header, type 0x0001
+8 bytes: Warts header, type 0x0001
 .It
 Variable: Flags
 .It
@@ -198,7 +198,7 @@ cycle stop record, denoting the end point for a cycle.
 The format of the cycle start and definition structures is:
 .Bl -dash -offset 2n -compact -width 1n
 .It
-12 bytes: Warts header, type 0x0002 or 0x0003
+8 bytes: Warts header, type 0x0002 or 0x0003
 .It
 uint32_t: Cycle ID, assigned by warts from a counter
 .It
@@ -221,7 +221,7 @@ String: Hostname at cycle start point, included if flag 2 is set
 The format of the cycle stop structure is:
 .Bl -dash -offset 2n -compact -width 1n
 .It
-12 bytes: Warts header, type 0x0004
+8 bytes: Warts header, type 0x0004
 .It
 uint32_t: Cycle ID, assigned by warts from a counter, referencing the
 cycle structure that is being updated.
@@ -237,7 +237,7 @@ invokation.
 The general form of a traceroute recorded in warts is as follows:
 .Bl -dash -offset 2n -compact -width 1n
 .It
-12 bytes: Warts header, type 0x0006
+8 bytes: Warts header, type 0x0006
 .It
 Variable: Flags describing traceroute parameters and high-level outcomes
 .It

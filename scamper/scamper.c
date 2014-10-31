@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.236 2014/02/20 17:57:28 mjl Exp $
+ * $Id: scamper.c,v 1.239 2014/10/09 18:29:19 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -9,6 +9,7 @@
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
+ * Copyright (C) 2014      The Regents of the University of California
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper.c,v 1.236 2014/02/20 17:57:28 mjl Exp $";
+  "$Id: scamper.c,v 1.239 2014/10/09 18:29:19 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -169,22 +170,27 @@ typedef struct scamper_multicall
   const char *(*usage)(void);
 } scamper_multicall_t;
 
-static void usage_str(char c, char *str)
-{
-  fprintf(stderr, "            -%c %s\n", c, str);
-  return;
-}
-
 static void version(void)
 {
   fprintf(stderr, "scamper version %s\n", SCAMPER_VERSION);
   return;
 }
 
+static void usage_str(char c, const char *str)
+{
+  fprintf(stderr, "            -%c %s\n", c, str);
+  return;
+}
+
+static void usage_line(const char *str)
+{
+  fprintf(stderr, "               %s\n", str);
+  return;
+}
+
 static void usage(uint32_t opt_mask)
 {
   char buf[256];
-  size_t off;
 
   fprintf(stderr,
     "usage: scamper [-?Dv] [-c command] [-p pps] [-w window]\n"
@@ -247,33 +253,39 @@ static void usage(uint32_t opt_mask)
 
   if((opt_mask & OPT_OPTION) != 0)
     {
-      off = 0;
-      string_concat(buf, sizeof(buf), &off, "specify options [warts | text | json");
-      string_concat(buf, sizeof(buf), &off, " | outcopy | tsps | dlts");
-      string_concat(buf, sizeof(buf), &off, " | rawtcp");
-#ifndef WITHOUT_DEBUGFILE
-      string_concat(buf, sizeof(buf), &off, " | debugfileappend");
-#endif
-#ifndef _WIN32
-      string_concat(buf, sizeof(buf), &off, " | select");
-#endif
-#ifdef HAVE_KQUEUE
-      string_concat(buf, sizeof(buf), &off, " | kqueue");
-#endif
-#ifdef HAVE_EPOLL
-      string_concat(buf, sizeof(buf), &off, " | epoll");
-#endif
-      string_concat(buf, sizeof(buf), &off, " | planetlab]");
+      usage_str('O', "specify options to use:");
+      usage_line("text: output results in plain text for interactive use");
+      usage_line("warts: output results in warts format for science");
+      usage_line("json: output results in json format, better to use warts");
+      usage_line("outcopy: output copy of all results collected to file");
+      usage_line("dlts: use timestamps from datalink layer where possible");
+      usage_line("tsps: input file for ping -T tsprespec=%s");
+      usage_line("rawtcp: use raw socket to send IPv4 TCP probes");
+      usage_line("planetlab: necessary to use safe raw sockets on planetlab");
+      usage_line("noinitndc: do not initialise neighbour discovery cache");
 
-      usage_str('O', buf);
+#ifndef WITHOUT_DEBUGFILE
+      usage_line("debugfileappend: append to debugfile, rather than truncate");
+#endif
+
+#ifndef _WIN32
+      usage_line("select: use select(2) rather than poll(2)");
+#endif
+
+#ifdef HAVE_KQUEUE
+      usage_line("kqueue: use kqueue(2) rather than poll(2)");
+#endif
+
+#ifdef HAVE_EPOLL
+      usage_line("epoll: use epoll(7) rather than poll(2)");
+#endif
     }
 
   if((opt_mask & OPT_PPS) != 0)
     {
-      off = 0;
-      string_concat(buf, sizeof(buf), &off,
-		    "number of packets per second to send (%d <= pps <= %d)",
-		    SCAMPER_PPS_MIN, SCAMPER_PPS_MAX);
+      snprintf(buf, sizeof(buf),
+	       "number of packets per second to send (%d <= pps <= %d)",
+	       SCAMPER_PPS_MIN, SCAMPER_PPS_MAX);
       usage_str('p', buf);
     }
 
@@ -326,7 +338,7 @@ static int multicall_do(const scamper_multicall_t *mc, int argc, char *argv[])
     {
       len += strlen(argv[i]) + 1;
     }
-  if((str = malloc(len)) == NULL)
+  if((str = malloc_zero(len)) == NULL)
     {
       printerror(errno, strerror, __func__,
 		 "could not assemble %s command", mc->cmd);
@@ -1491,6 +1503,7 @@ int main(int argc, char *argv[])
 
 #ifdef _WIN32
   WSAStartup(MAKEWORD(2,2), &wsaData);
+  timeBeginPeriod(1);
 #endif
 
 #ifndef _WIN32
@@ -1516,6 +1529,7 @@ int main(int argc, char *argv[])
   cleanup();
 
 #ifdef _WIN32
+  timeEndPeriod(1);
   WSACleanup();
 #endif
 

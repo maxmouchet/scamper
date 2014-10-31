@@ -4,10 +4,10 @@
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2011-2013 Internap Network Services Corporation
- * Copyright (C) 2013      The Regents of the University of California
+ * Copyright (C) 2013-2014 The Regents of the University of California
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_trace_json.c,v 1.5 2014/01/10 18:05:40 mjl Exp $
+ * $Id: scamper_trace_json.c,v 1.6 2014/06/12 19:59:48 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_json.c,v 1.5 2014/01/10 18:05:40 mjl Exp $";
+  "$Id: scamper_trace_json.c,v 1.6 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -188,7 +188,7 @@ int scamper_file_json_trace_write(const scamper_file_t *sf,
     }
   len += 4; /* {}\n\0 */
 
-  if((str = malloc(len)) == NULL)
+  if((str = malloc_zero(len)) == NULL)
     goto cleanup;
 
   string_concat(str, len, &off, "{%s", header);

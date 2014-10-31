@@ -1,12 +1,13 @@
 /*
  * scamper_file_arts.c
  *
- * $Id: scamper_file_arts.c,v 1.60 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_file_arts.c,v 1.61 2014/06/12 19:59:48 mjl Exp $
  *
  * code to read the legacy arts data file format into scamper_hop structures.
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_arts.c,v 1.60 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_file_arts.c,v 1.61 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -133,13 +134,8 @@ static int arts_read_hdr(const scamper_file_t *sf, arts_header_t *ah)
   attr_len = ntohl(junk32);
 
   /* allocate a large enough buffer, if necessary */
-  if(attr_len > sizeof(buf))
-    {
-      if((tmp = malloc(attr_len)) == NULL)
-	{
-	  goto err;
-	}
-    }
+  if(attr_len > sizeof(buf) && (tmp = malloc_zero(attr_len)) == NULL)
+    goto err;
 
   /* read the arts attributes into a buffer */
   if(attr_len > 0 && (ret = read_wrap(fd, tmp, &rc, attr_len)) != 0)
@@ -406,7 +402,7 @@ static scamper_trace_t *arts_read_trace(const scamper_file_t *sf,
   uint8_t              destination_replied;
   size_t               rc;
 
-  if((buf = malloc(ah->data_length)) == NULL)
+  if((buf = malloc_zero(ah->data_length)) == NULL)
     {
       fprintf(stderr, "arts_read_trace: malloc %d for trace object failed\n",
 	      ah->data_length);

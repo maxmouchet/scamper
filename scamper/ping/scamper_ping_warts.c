@@ -6,7 +6,7 @@
  * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping_warts.c,v 1.12 2014/03/06 20:24:37 mjl Exp $
+ * $Id: scamper_ping_warts.c,v 1.13 2014/06/12 19:59:48 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_warts.c,v 1.12 2014/03/06 20:24:37 mjl Exp $";
+  "$Id: scamper_ping_warts.c,v 1.13 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -835,7 +835,7 @@ int scamper_file_warts_ping_write(const scamper_file_t *sf,
 	}
     }
 
-  if((buf = malloc(len)) == NULL)
+  if((buf = malloc_zero(len)) == NULL)
     {
       goto err;
     }

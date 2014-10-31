@@ -1,13 +1,14 @@
 /*
  * scamper_do_tbit.c
  *
- * $Id: scamper_tbit_do.c,v 1.102 2013/08/07 21:55:29 mjl Exp $
+ * $Id: scamper_tbit_do.c,v 1.103 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2009-2010 Stephen Eichler
- * Copyright (C) 2010-2011 University of Waikato
- * Copyright (C) 2012      The Regents of the University of California
  * Copyright (C) 2012      Matthew Luckie
+ * Copyright (C) 2010-2011 University of Waikato
+ * Copyright (C) 2012-2014 The Regents of the University of California
+ *
  * Authors: Matthew Luckie, Ben Stasiewicz, Stephen Eichler
  *
  * This file implements algorithms described in the tbit-1.0 source code,
@@ -35,7 +36,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_do.c,v 1.102 2013/08/07 21:55:29 mjl Exp $";
+  "$Id: scamper_tbit_do.c,v 1.103 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -670,7 +671,7 @@ static int tbit_reassemble(scamper_task_t *task, scamper_dl_rec_t **out,
     }
 
   frag = frags->frags[frags->fragc-1];
-  if((data = malloc(frag->off + frag->datalen)) == NULL)
+  if((data = malloc_zero(frag->off + frag->datalen)) == NULL)
     {
       printerror(errno, strerror, __func__, "could not malloc data");
       goto err;
@@ -925,7 +926,7 @@ static int tbit_app_smtp_rx(scamper_task_t *task, uint8_t *data, uint16_t dlen)
   /* From the 220, can we determine which MTA we are dealing with? */
   if(dlen >= 3 && strncmp((char*)data, "220", 3) == 0)
     {
-      if((data_cpy = malloc(dlen + 1)) == NULL)
+      if((data_cpy = malloc_zero(dlen + 1)) == NULL)
 	goto quit;
       memcpy(data_cpy, data, dlen);
       data_cpy[dlen] = '\0';

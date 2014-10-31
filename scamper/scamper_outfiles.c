@@ -1,7 +1,7 @@
 /*
  * scamper_outfiles: hold a collection of output targets together
  *
- * $Id: scamper_outfiles.c,v 1.42 2012/03/21 21:23:28 mjl Exp $
+ * $Id: scamper_outfiles.c,v 1.43 2014/06/13 03:34:39 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_outfiles.c,v 1.42 2012/03/21 21:23:28 mjl Exp $";
+  "$Id: scamper_outfiles.c,v 1.43 2014/06/13 03:34:39 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -228,6 +228,7 @@ scamper_outfile_t *scamper_outfile_open(char *name, char *file, char *mo)
   mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
 #else
   mode = _S_IREAD | _S_IWRITE;
+  flags |= O_BINARY;
 #endif
 
 #if defined(WITHOUT_PRIVSEP)
@@ -279,6 +280,7 @@ static int outfile_opendef(char *filename, char *type)
   mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
 #else
   mode = _S_IREAD | _S_IWRITE;
+  flags |= O_BINARY;
 #endif
 
   if(strcmp(filename, "-") == 0)

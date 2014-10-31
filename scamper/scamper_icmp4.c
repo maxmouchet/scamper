@@ -1,11 +1,11 @@
 /*
  * scamper_icmp4.c
  *
- * $Id: scamper_icmp4.c,v 1.110 2014/05/15 23:05:38 mjl Exp $
+ * $Id: scamper_icmp4.c,v 1.111 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2013      The Regents of the University of California
+ * Copyright (C) 2013-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmp4.c,v 1.110 2014/05/15 23:05:38 mjl Exp $";
+  "$Id: scamper_icmp4.c,v 1.111 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -386,12 +386,12 @@ static void ip_quote_ts(scamper_icmp_resp_t *ir, int fl,
 
   if(fl == 1 || fl == 3)
     {
-      ir->ir_inner_ipopt_tsips = malloc(sizeof(struct in_addr) * tsc);
+      ir->ir_inner_ipopt_tsips = malloc_zero(sizeof(struct in_addr) * tsc);
       if(ir->ir_inner_ipopt_tsips == NULL)
 	return;
     }
 
-  if((ir->ir_inner_ipopt_tstss = malloc(sizeof(uint32_t) * tsc)) == NULL)
+  if((ir->ir_inner_ipopt_tstss = malloc_zero(sizeof(uint32_t) * tsc)) == NULL)
     return;
 
   for(i=0; i<tsc; i++)
@@ -413,6 +413,7 @@ static void ip_ts(scamper_icmp_resp_t *ir, int fl, const uint8_t *buf, int len)
 {
   const uint8_t *ptr = buf;
   uint8_t i, tsc;
+  size_t size;
 
   ir->ir_flags |= SCAMPER_ICMP_RESP_FLAG_IPOPT_TS;
 
@@ -421,11 +422,12 @@ static void ip_ts(scamper_icmp_resp_t *ir, int fl, const uint8_t *buf, int len)
 
   if(fl == 1 || fl == 3)
     {
-      if((ir->ir_ipopt_tsips = malloc(sizeof(struct in_addr) * tsc)) == NULL)
+      size = sizeof(struct in_addr) * tsc;
+      if((ir->ir_ipopt_tsips = malloc_zero(size)) == NULL)
 	return;
     }
 
-  if((ir->ir_ipopt_tstss = malloc(sizeof(uint32_t) * tsc)) == NULL)
+  if((ir->ir_ipopt_tstss = malloc_zero(sizeof(uint32_t) * tsc)) == NULL)
     return;
 
   for(i=0; i<tsc; i++)

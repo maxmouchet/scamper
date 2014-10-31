@@ -7,7 +7,7 @@
 .\" Copyright (c) 2007-2011 University of Waikato
 .\"                         All rights reserved
 .\"
-.\" $Id: scamper.1,v 1.51 2014/03/11 23:58:28 mjl Exp $
+.\" $Id: scamper.1,v 1.52 2014/10/09 18:29:04 mjl Exp $
 .\"
 .\"  nroff -man scamper.1
 .\"  groff -man -Tascii scamper.1 | man2html -title scamper.1
@@ -161,29 +161,35 @@ allows scamper's behaviour to be further tailored.
 The current choices for this option are:
 .Bl -dash -offset 2n -compact -width 1n
 .It
-.Sy text
-output results using plain text.  Suitable for interactive use.
+.Sy text:
+output results in plain text.  Suitable for interactive use.
 .It
-.Sy warts
-output results to a warts binary file.  Suitable for archiving measurement
+.Sy warts:
+output results in warts format.  Suitable for archiving measurement
 results and for use by researchers as it records details that cannot be
 easily represented with the text option.
 .It
-.Sy planetlab
+.Sy json:
+output results in json format.  Suitable for processing measurement
+results with a scripting langage.  A better approach is to output
+results in warts format, and to use
+.Xr sc_warts2json 1 .
+.It
+.Sy planetlab:
 tell scamper it is running on a planetlab system.  Necessary to use
 planetlab's safe raw sockets.
 .It
-.Sy rawtcp
+.Sy rawtcp:
 tell scamper to use IPPROTO_RAW socket to send IPv4 TCP probes, rather than
 a datalink socket.
 .It
-.Sy select
+.Sy select:
 tell scamper to use
 .Xr select 2
 rather than
 .Xr poll 2
 .It
-.Sy kqueue
+.Sy kqueue:
 tell scamper to use
 .Xr kqueue 2
 rather than
@@ -192,7 +198,7 @@ on systems where
 .Xr kqueue 2
 is available.
 .It
-.Sy epoll
+.Sy epoll:
 tell scamper to use
 .Xr epoll 7
 rather than
@@ -201,20 +207,23 @@ on systems where
 .Xr epoll 7
 is available.
 .It
-.Sy tsps
+.Sy tsps:
 the input file consists of a sequence of IP addresses for pre-specified
 IP timestamps.
 .It
-.Sy cmdfile
+.Sy cmdfile:
 the input file consists of complete commands.
 .It
-.Sy dlts
+.Sy dlts:
 use timestamps from the datalink layer, if possible.
 .It
-.Sy outcopy
+.Sy noinitndc:
+do not initialise the neighbour discovery cache.
+.It
+.Sy outcopy:
 write a copy of all data written by scamper with the default output method.
 .It
-.Sy debugfileappend
+.Sy debugfileappend:
 append to the debugfile specified with the
 .Fl d
 option.  The default is to truncate the debugfile.

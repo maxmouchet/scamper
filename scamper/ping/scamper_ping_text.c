@@ -3,10 +3,10 @@
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012-2013 The Regents of the University of California
+ * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping_text.c,v 1.11 2013/08/07 20:40:54 mjl Exp $
+ * $Id: scamper_ping_text.c,v 1.12 2014/06/12 19:59:48 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_text.c,v 1.11 2013/08/07 20:40:54 mjl Exp $";
+  "$Id: scamper_ping_text.c,v 1.12 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -245,7 +245,7 @@ int scamper_file_text_ping_write(const scamper_file_t *sf,
     len += (stats_len = strlen(stats));
 
   /* allocate a string long enough to combine the above strings */
-  if((str = malloc(len)) == NULL)
+  if((str = malloc_zero(len)) == NULL)
     goto cleanup;
 
   /* combine the strings created above */

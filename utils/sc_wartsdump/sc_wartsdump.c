@@ -1,7 +1,7 @@
 /*
- * warts-dump
+ * sc_wartsdump
  *
- * $Id: sc_wartsdump.c,v 1.185 2014/04/10 21:18:27 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.186 2014/10/10 03:13:44 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartsdump.c,v 1.185 2014/04/10 21:18:27 mjl Exp $";
+  "$Id: sc_wartsdump.c,v 1.186 2014/10/10 03:13:44 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -746,7 +746,6 @@ static void dump_ping(scamper_ping_t *ping)
   scamper_ping_reply_t *reply;
   char buf[256];
   uint32_t u32;
-  uint8_t u8;
   int i;
 
   scamper_addr_tostr(ping->src, buf, sizeof(buf));

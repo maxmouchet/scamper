@@ -1,14 +1,18 @@
 /*
  * scamper_dealias.c
  *
- * $Id: scamper_sting.c,v 1.10 2014/04/04 22:03:05 mjl Exp $
+ * $Id: scamper_sting.c,v 1.11 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
+ * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
- * This code implements alias resolution techniques published by others
- * which require the network to be probed; the author of each technique
- * is detailed with its data structures.
+ * This file implements algorithms described in the sting-0.7 source code,
+ * as well as the paper:
+ *
+ *  Sting: a TCP-based Network Measurement Tool
+ *  by Stefan Savage
+ *  1999 USENIX Symposium on Internet Technologies and Systems
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +31,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sting.c,v 1.10 2014/04/04 22:03:05 mjl Exp $";
+  "$Id: scamper_sting.c,v 1.11 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -74,15 +78,10 @@ void scamper_sting_pkt_free(scamper_sting_pkt_t *pkt)
 
 int scamper_sting_data(scamper_sting_t *sting,const uint8_t *data,uint16_t len)
 {
+  if(len == 0 || (sting->data = memdup(data, len)) == NULL)
+    return -1;
   sting->datalen = len;
-
-  if(len != 0 && (sting->data = malloc(len)) != NULL)
-    {
-      memcpy(sting->data, data, len);
-      return 0;
-    }
-
-  return -1;
+  return 0;
 }
 
 int scamper_sting_pkt_record(scamper_sting_t *sting, scamper_sting_pkt_t *pkt)

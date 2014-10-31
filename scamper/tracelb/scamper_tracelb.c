@@ -1,7 +1,7 @@
 /*
  * scamper_tracelb.c
  *
- * $Id: scamper_tracelb.c,v 1.54 2012/03/29 00:01:12 mjl Exp $
+ * $Id: scamper_tracelb.c,v 1.55 2014/06/12 17:32:08 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2012      The Regents of the University of California
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb.c,v 1.54 2012/03/29 00:01:12 mjl Exp $";
+  "$Id: scamper_tracelb.c,v 1.55 2014/06/12 17:32:08 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -490,9 +490,7 @@ int scamper_tracelb_probe_reply(scamper_tracelb_probe_t *probe,
   /* extend the replies array and store the reply in it */
   len = (probe->rxc + 1) * sizeof(scamper_tracelb_reply_t *);
   if(realloc_wrap((void **)&probe->rxs, len) != 0)
-    {
-      return -1;
-    }
+    return -1;
   probe->rxs[probe->rxc++] = reply;
   return 0;
 }
@@ -511,9 +509,7 @@ int scamper_tracelb_probeset_add(scamper_tracelb_probeset_t *probeset,
 {
   size_t len = (probeset->probec + 1) * sizeof(scamper_tracelb_probe_t *);
   if(realloc_wrap((void **)&probeset->probes, len) != 0)
-    {
-      return -1;
-    }
+    return -1;
   probeset->probes[probeset->probec++] = probe;
   return 0;
 }
@@ -536,7 +532,6 @@ void scamper_tracelb_probeset_free(scamper_tracelb_probeset_t *set)
     {
       for(i=0; i<set->probec; i++)
 	scamper_tracelb_probe_free(set->probes[i]);
-
       free(set->probes);
     }
 
@@ -664,9 +659,7 @@ int scamper_tracelb_nodes_alloc(scamper_tracelb_t *trace, uint16_t count)
 {
   size_t size = sizeof(scamper_tracelb_node_t *) * count;
   if((trace->nodes = malloc_zero(size)) != NULL)
-    {
-      return 0;
-    }
+    return 0;
   return -1;
 }
 
@@ -674,9 +667,7 @@ int scamper_tracelb_links_alloc(scamper_tracelb_t *trace, uint16_t count)
 {
   size_t size = sizeof(scamper_tracelb_link_t *) * count;
   if((trace->links = malloc_zero(size)) != NULL)
-    {
-      return 0;
-    }
+    return 0;
   return -1;
 }
 
@@ -685,9 +676,7 @@ int scamper_tracelb_node_links_alloc(scamper_tracelb_node_t *node,
 {
   size_t size = sizeof(scamper_tracelb_link_t *) * count;
   if((node->links = malloc_zero(size)) != NULL)
-    {
-      return 0;
-    }
+    return 0;
   return -1;
 }
 
@@ -696,9 +685,7 @@ int scamper_tracelb_probe_replies_alloc(scamper_tracelb_probe_t *probe,
 {
   size_t size = sizeof(scamper_tracelb_reply_t *) * count;
   if((probe->rxs = malloc_zero(size)) != NULL)
-    {
-      return 0;
-    }
+    return 0;
   return -1;
 }
 
@@ -734,16 +721,15 @@ int scamper_tracelb_sort(scamper_tracelb_t *trace)
   scamper_tracelb_node_t **nodes = NULL;
   scamper_tracelb_node_t **nq = NULL;
   int i, k, n, q, qt;
+  size_t size;
   uint16_t j;
 
   if(trace->nodec == 0)
     return 0;
 
-  if((nodes = malloc(sizeof(scamper_tracelb_node_t *)*trace->nodec)) == NULL ||
-     (nq    = malloc(sizeof(scamper_tracelb_node_t *)*trace->nodec)) == NULL)
-    {
-      goto err;
-    }
+  size = sizeof(scamper_tracelb_node_t *) * trace->nodec;
+  if((nodes = malloc_zero(size)) == NULL || (nq = malloc_zero(size)) == NULL)
+    goto err;
 
   n = 0;
   q = 0;
@@ -814,7 +800,6 @@ void scamper_tracelb_free(scamper_tracelb_t *trace)
     {
       for(i=0; i<trace->linkc; i++)
 	scamper_tracelb_link_free(trace->links[i]);
-
       free(trace->links);
     }
 
@@ -822,7 +807,6 @@ void scamper_tracelb_free(scamper_tracelb_t *trace)
     {
       for(i=0; i<trace->nodec; i++)
 	scamper_tracelb_node_free(trace->nodes[i]);
-
       free(trace->nodes);
     }
 

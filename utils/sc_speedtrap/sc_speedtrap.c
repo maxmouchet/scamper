@@ -1,7 +1,7 @@
 /*
  * sc_speedtrap
  *
- * $Id: sc_speedtrap.c,v 1.18 2013/08/31 04:43:33 mjl Exp $
+ * $Id: sc_speedtrap.c,v 1.20 2014/10/10 03:18:29 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_speedtrap.c,v 1.18 2013/08/31 04:43:33 mjl Exp $";
+  "$Id: sc_speedtrap.c,v 1.20 2014/10/10 03:18:29 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1214,7 +1214,7 @@ static int pairwise_all(slist_t *targets, slist_t *sets)
   sc_targetset_t *ts, *tsa, *tsb;
   sc_addr2ptr_t *a2ts, *a2ts_a, *a2ts_b;
   splaytree_t *tree;
-  dlist_t *list;
+  dlist_t *list = NULL;
   char a[64], b[64];
 
   if((tree = splaytree_alloc((splaytree_cmp_t)sc_addr2ptr_cmp)) == NULL ||
@@ -2559,12 +2559,28 @@ static int speedtrap_read(void)
   char *filename;
   uint16_t type;
   void *data;
-  int i;
+  int i, stdin_used=0;
 
   for(i=0; i<dump_filec; i++)
     {
       filename = dump_files[i]; dump_stop = 0;
-      if((in = scamper_file_open(filename, 'r', NULL)) == NULL)
+
+      if(strcmp(filename, "-") == 0)
+	{
+	  if(stdin_used == 1)
+	    {
+	      fprintf(stderr, "stdin already used\n");
+	      return -1;
+	    }
+	  stdin_used++;
+	  in = scamper_file_openfd(STDIN_FILENO, "-", 'r', "warts");
+	}
+      else
+	{
+	  in = scamper_file_open(filename, 'r', NULL);
+	}
+
+      if(in == NULL)
 	{
 	  fprintf(stderr,"could not open %s: %s\n", filename, strerror(errno));
 	  return -1;

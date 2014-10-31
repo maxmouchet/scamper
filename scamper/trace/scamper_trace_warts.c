@@ -3,9 +3,10 @@
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_warts.c,v 1.15 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_trace_warts.c,v 1.16 2014/06/12 19:59:48 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_warts.c,v 1.15 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_trace_warts.c,v 1.16 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -858,7 +859,7 @@ static int warts_trace_pmtud_state(const scamper_trace_t *trace,
     {
       /* allocate an array of address indexes for the pmtud hop addresses */
       size = state->hopc * sizeof(warts_trace_hop_t);
-      if((state->hops = (warts_trace_hop_t *)malloc(size)) == NULL)
+      if((state->hops = (warts_trace_hop_t *)malloc_zero(size)) == NULL)
 	return -1;
 
       /* record hop state for each pmtud hop */
@@ -870,7 +871,7 @@ static int warts_trace_pmtud_state(const scamper_trace_t *trace,
   if(trace->pmtud->notec > 0)
     {
       size = trace->pmtud->notec * sizeof(warts_trace_pmtud_n_t);
-      if((state->notes = (warts_trace_pmtud_n_t *)malloc(size)) == NULL)
+      if((state->notes = (warts_trace_pmtud_n_t *)malloc_zero(size)) == NULL)
 	return -1;
       for(i=0; i<trace->pmtud->notec; i++)
 	{
@@ -1318,7 +1319,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
   if((hop_recs = scamper_trace_hop_count(trace)) > 0)
     {
       size = hop_recs * sizeof(warts_trace_hop_t);
-      if((hop_state = (warts_trace_hop_t *)malloc(size)) == NULL)
+      if((hop_state = (warts_trace_hop_t *)malloc_zero(size)) == NULL)
 	{
 	  goto err;
 	}
@@ -1356,7 +1357,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
 
       /* allocate an array of hop state structs for the lastditch hops */
       size = ld_recs * sizeof(warts_trace_hop_t);
-      if((ld_state = (warts_trace_hop_t *)malloc(size)) == NULL)
+      if((ld_state = (warts_trace_hop_t *)malloc_zero(size)) == NULL)
 	goto err;
 
       /* need to record count of lastditch hops and a single zero flags byte */
@@ -1381,7 +1382,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
 
   len += 2; /* EOF */
 
-  if((buf = malloc(len)) == NULL)
+  if((buf = malloc_zero(len)) == NULL)
     {
       goto err;
     }

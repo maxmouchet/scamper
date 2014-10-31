@@ -3,11 +3,11 @@
  *
  * the WAND ARTS file format replacement
  *
- * $Id: scamper_file_warts.c,v 1.239 2014/01/10 18:13:32 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.241 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_warts.c,v 1.239 2014/01/10 18:13:32 mjl Exp $";
+  "$Id: scamper_file_warts.c,v 1.241 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -515,7 +515,7 @@ int extract_bytes_alloc(const uint8_t *buf, uint32_t *off,
     }
   else
     {
-      if((*out = malloc(*req)) == NULL)
+      if((*out = malloc_zero(*req)) == NULL)
 	{
 	  return -1;
 	}
@@ -860,7 +860,7 @@ int warts_read(scamper_file_t *sf, uint8_t **buf, size_t len)
     }
 
   /* no data left over, reading from scratch */
-  if((tmp = malloc(len)) == NULL)
+  if((tmp = malloc_zero(len)) == NULL)
     return -1;
 
   /* try and read.  if we read the whole amount, everything is good */
@@ -1289,7 +1289,7 @@ int warts_list_write(const scamper_file_t *sf, scamper_list_t *list,
   if(params_len != 0) len += 2;
 
   /* allocate the record */
-  if((buf = malloc(len)) == NULL)
+  if((buf = malloc_zero(len)) == NULL)
     {
       goto err;
     }
@@ -1607,7 +1607,7 @@ int warts_cycle_write(const scamper_file_t *sf, scamper_cycle_t *cycle,
   /* allocate a temporary buf for recording the cycle */
   len = 8 + 4 + 4 + 4 + 4 + flags_len + params_len;
   if(params_len != 0) len += 2;
-  if((buf = malloc(len)) == NULL)
+  if((buf = malloc_zero(len)) == NULL)
     {
       goto err;
     }
@@ -1782,7 +1782,7 @@ int warts_cycle_stop_write(const scamper_file_t *sf,
     }
 
   len = 8 + 4 + 4 + 1;
-  if((buf = malloc(len)) == NULL)
+  if((buf = malloc_zero(len)) == NULL)
     {
       goto err;
     }
@@ -2044,7 +2044,7 @@ int scamper_file_warts_read(scamper_file_t *sf, scamper_file_filter_t *filter,
  err:
   fprintf(stderr,
 	  "off 0x%s magic 0x%04x type 0x%04x len 0x%08x\n",
-	  offt_tostr(offs, sizeof(offs), state->off, 8, 'x'),
+	  offt_tostr(offs, sizeof(offs), state->off - hdr.len, 8, 'x'),
 	  hdr.magic, hdr.type, hdr.len);
   return -1;
 }
@@ -2080,7 +2080,7 @@ int scamper_file_warts_init_read(scamper_file_t *sf)
     }
 
   size = sizeof(scamper_addr_t *) * WARTS_ADDR_TABLEGROW;
-  if((state->addr_table = malloc(size)) == NULL)
+  if((state->addr_table = malloc_zero(size)) == NULL)
     {
       goto err;
     }
@@ -2088,7 +2088,7 @@ int scamper_file_warts_init_read(scamper_file_t *sf)
   state->addr_count = 1;
 
   size = sizeof(warts_list_t *) * WARTS_LIST_TABLEGROW;
-  if((state->list_table = malloc(size)) == NULL)
+  if((state->list_table = malloc_zero(size)) == NULL)
     {
       goto err;
     }
@@ -2096,7 +2096,7 @@ int scamper_file_warts_init_read(scamper_file_t *sf)
   state->list_count = 1;
 
   size = sizeof(warts_cycle_t *) * WARTS_CYCLE_TABLEGROW;
-  if((state->cycle_table = malloc(size)) == NULL)
+  if((state->cycle_table = malloc_zero(size)) == NULL)
     {
       goto err;
     }

@@ -1,11 +1,11 @@
 /*
  * scamper_privsep.c: code that does root-required tasks
  *
- * $Id: scamper_privsep.c,v 1.74 2013/08/07 20:33:17 mjl Exp $
+ * $Id: scamper_privsep.c,v 1.75 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2013      The Regents of the University of California
+ * Copyright (C) 2013-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -31,7 +31,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_privsep.c,v 1.74 2013/08/07 20:33:17 mjl Exp $";
+  "$Id: scamper_privsep.c,v 1.75 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #include "internal.h"
@@ -904,7 +904,7 @@ static int privsep_do(void)
       /* if there is more data to read, read it now */
       if(msg.plen != 0)
 	{
-	  if((data = malloc(msg.plen)) == NULL)
+	  if((data = malloc_zero(msg.plen)) == NULL)
 	    {
 	      printerror(errno, strerror, __func__, "couldnt malloc data");
 	      ret = (-errno);
@@ -1061,7 +1061,7 @@ int scamper_privsep_open_file(const char *file,
     return -1;
 
   /* allocate the parameter */
-  if((param = malloc(len)) == NULL)
+  if((param = malloc_zero(len)) == NULL)
     return -1;
 
   /* copy in the flags parameter, and the mode parameter if necessary */

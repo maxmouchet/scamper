@@ -1,7 +1,7 @@
 /*
  * scamper_neighbourdisc_warts.h
  *
- * $Id: scamper_neighbourdisc_warts.c,v 1.3 2011/02/21 03:59:53 mjl Exp $
+ * $Id: scamper_neighbourdisc_warts.c,v 1.4 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2009-2011 Matthew Luckie
  *
@@ -22,7 +22,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_neighbourdisc_warts.c,v 1.3 2011/02/21 03:59:53 mjl Exp $";
+  "$Id: scamper_neighbourdisc_warts.c,v 1.4 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -455,7 +455,7 @@ int scamper_file_warts_neighbourdisc_write(const scamper_file_t *sf,
 	}
     }
 
-  if((buf = malloc(len)) == NULL)
+  if((buf = malloc_zero(len)) == NULL)
     goto err;
   insert_wartshdr(buf, &off, len, SCAMPER_FILE_OBJ_NEIGHBOURDISC);
 

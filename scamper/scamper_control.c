@@ -1,11 +1,12 @@
 /*
  * scamper_control.c
  *
- * $Id: scamper_control.c,v 1.154 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_control.c,v 1.159 2014/09/05 03:34:39 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2012-2014 The Regents of the University of California
+ * Copyright (C) 2014      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_control.c,v 1.154 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_control.c,v 1.159 2014/09/05 03:34:39 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -306,9 +307,6 @@ static void client_free(client_t *client)
 
   if(client == NULL) return;
 
-  if(client->wb != NULL)
-    scamper_writebuf_detach(client->wb);
-
   /* if there's an open socket here, close it now */
   if(client->fdn != NULL)
     {
@@ -325,7 +323,11 @@ static void client_free(client_t *client)
   client->lp = NULL;
 
   /* remove the writebuf structure */
-  if(client->wb != NULL) scamper_writebuf_free(client->wb);
+  if(client->wb != NULL)
+    {
+      scamper_writebuf_detach(client->wb);
+      scamper_writebuf_free(client->wb);
+    }
   client->wb = NULL;
 
   /* remove the client from the list of clients */
@@ -380,9 +382,8 @@ static void client_free(client_t *client)
  * data is streamed this means we uuencode as necessary, making the function
  * a little complicated.
  */
-static int client_data_consume(void *param)
+static int client_data_consume(client_t *client)
 {
-  client_t *client = param;
   client_txt_t *t = NULL;
   client_obj_t *o;
   uint8_t data[8192];
@@ -396,6 +397,7 @@ static int client_data_consume(void *param)
 	{
 	  rc = scamper_writebuf_send(client->wb, t->str, t->len);
 	  client_txt_free(t); t = NULL;
+	  scamper_fd_write_unpause(client->fdn);
 	  if(rc < 0)
 	    goto err;
 	}
@@ -411,6 +413,7 @@ static int client_data_consume(void *param)
 	      printerror(errno,strerror,__func__,"could not send DATA header");
 	      goto err;
 	    }
+	  scamper_fd_write_unpause(client->fdn);
 	}
     }
   else
@@ -433,6 +436,7 @@ static int client_data_consume(void *param)
 	  printerror(errno,strerror,__func__, "could not send %d bytes", len);
 	  goto err;
 	}
+      scamper_fd_write_unpause(client->fdn);
     }
 
   return 0;
@@ -459,7 +463,7 @@ static int client_send(client_t *client, char *fs, ...)
     }
   else
     {
-      if((str = malloc((size_t)(len+1))) == NULL)
+      if((str = malloc_zero((size_t)(len+1))) == NULL)
 	{
 	  va_end(ap);
 	  goto err;
@@ -479,13 +483,15 @@ static int client_send(client_t *client, char *fs, ...)
 	goto err;
       t->str = str;
       t->len = len;
-      scamper_writebuf_consume(client->wb, client, client_data_consume);
+      scamper_writebuf_consume(client->wb,
+			       (scamper_writebuf_consume_t)client_data_consume);
     }
   else
     {
       ret = scamper_writebuf_send(client->wb, str, len);
       if(str != msg)
 	free(str);
+      scamper_fd_write_unpause(client->fdn);
     }
 
   return ret;
@@ -715,7 +721,8 @@ static int client_data_send(void *param, const void *vdata, size_t len)
     }
   obj = NULL;
 
-  scamper_writebuf_consume(client->wb, client, client_data_consume);
+  scamper_writebuf_consume(client->wb,
+			   (scamper_writebuf_consume_t)client_data_consume);
   return 0;
 
  err:
@@ -1947,24 +1954,23 @@ static int client_isdone(client_t *client)
   return 1;
 }
 
-static void client_error(void *ptr, int err, scamper_writebuf_t *wb)
+static void client_writebuf_error(client_t *client, int err)
 {
-  client_t *client = (client_t *)ptr;
   printerror(err, strerror, __func__, "fd %d", scamper_fd_fd_get(client->fdn));
   client_free(client);
   return;
 }
 
 /*
- * client_drained
+ * client_writebuf_drained
  *
  * this callback is called when the client's writebuf is empty.
  * the point being to check when the client has had all its output sent
  * and it can be cleaned up
  */
-static void client_drained(void *ptr, scamper_writebuf_t *wb)
+static void client_writebuf_drained(client_t *client)
 {
-  client_t *client = (client_t *)ptr;
+  scamper_fd_write_pause(client->fdn);
 
   if(client->mode != CLIENT_MODE_FLUSH)
     return;
@@ -2092,12 +2098,10 @@ static void client_read(const int fd, void *param)
   /* try and read more from the client */
   if((rc = read(fd, buf, sizeof(buf))) < 0)
     {
-      if(errno != EAGAIN && errno != EINTR)
-	{
-	  printerror(errno, strerror, __func__, "read failed");
-	}
+      if(errno == EAGAIN || errno == EINTR)
+	return;
 
-      /* destroy the client */
+      printerror(errno, strerror, __func__, "read failed");
       client_free(client);
       return;
     }
@@ -2179,8 +2183,12 @@ static client_t *client_alloc(struct sockaddr *sa, socklen_t slen, int fd)
     {
       goto cleanup;
     }
-  scamper_writebuf_attach(client->wb, client->fdn, client,
-			  client_error, client_drained);
+  scamper_writebuf_attach(client->wb, client,
+			  (scamper_writebuf_error_t)client_writebuf_error,
+			  (scamper_writebuf_drained_t)client_writebuf_drained);
+  scamper_fd_write_set(client->fdn,
+		       (scamper_fd_cb_t)scamper_writebuf_write,
+		       client->wb);
 
   client->mode = CLIENT_MODE_INTERACTIVE;
 
@@ -2375,7 +2383,8 @@ void scamper_control_cleanup()
       while((client = dlist_head_pop(client_list)) != NULL)
 	{
 	  client->node = NULL;
-	  scamper_writebuf_flush(client->wb);
+	  scamper_writebuf_write(scamper_fd_fd_get(client->fdn),
+				 client->wb);
 	  client_free(client);
 	}
 

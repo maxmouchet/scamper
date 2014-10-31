@@ -1,9 +1,10 @@
 /*
  * scamper_if.c
  *
- * $Id: scamper_if.c,v 1.23 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_if.c,v 1.24 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
+ * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_if.c,v 1.23 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_if.c,v 1.24 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -302,7 +303,7 @@ int scamper_if_getmac(const int ifindex, uint8_t *mac)
       return -1;
     }
 
-  if((buf = malloc(len)) == NULL)
+  if((buf = malloc_zero(len)) == NULL)
     {
       printerror(errno, strerror, __func__, "could not malloc buf");
       return -1;

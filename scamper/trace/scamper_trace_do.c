@@ -1,12 +1,12 @@
 /*
  * scamper_do_trace.c
  *
- * $Id: scamper_trace_do.c,v 1.291 2013/08/07 21:50:33 mjl Exp $
+ * $Id: scamper_trace_do.c,v 1.292 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2008      Alistair King
- * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2012-2014 The Regents of the University of California
  *
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_do.c,v 1.291 2013/08/07 21:50:33 mjl Exp $";
+  "$Id: scamper_trace_do.c,v 1.292 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -3443,7 +3443,7 @@ static int trace_state_alloc(scamper_task_t *task)
   id_max = (state->alloc_hops - trace->firsthop + 2) * trace->attempts;
 
   /* allocate enough space to store state for each probe */
-  if((state->probes = malloc(sizeof(trace_probe_t *) * id_max)) == NULL)
+  if((state->probes = malloc_zero(sizeof(trace_probe_t *) * id_max)) == NULL)
     {
       printerror(errno, strerror, __func__, "could not malloc probes");
       goto err;
@@ -4147,15 +4147,13 @@ void *scamper_do_trace_alloc(char *str)
 	case TRACE_OPT_PAYLOAD:
 	  len = strlen(opt->str);
 	  payload_len = len/2;
-	  if((payload = malloc(payload_len)) == NULL)
+	  if((payload = malloc_zero(payload_len)) == NULL)
 	    {
 	      printerror(errno,strerror,__func__, "could not malloc payload");
 	      goto err;
 	    }
 	  for(i=0; i<len; i+=2)
-	    {
-	      payload[i/2] = hex2byte(opt->str[i], opt->str[i+1]);
-	    }
+	    payload[i/2] = hex2byte(opt->str[i], opt->str[i+1]);
 	  break;
 
 	case TRACE_OPT_PMTUD:

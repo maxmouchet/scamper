@@ -1,7 +1,7 @@
 /*
  * scamper_rtsock: code to deal with a route socket or equivalent
  *
- * $Id: scamper_rtsock.c,v 1.79 2014/01/10 17:59:37 mjl Exp $
+ * $Id: scamper_rtsock.c,v 1.80 2014/06/12 19:59:48 mjl Exp $
  *
  *          Matthew Luckie
  *
@@ -23,6 +23,7 @@
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
+ * Copyright (C) 2014      The Regents of the University of California
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,7 +42,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_rtsock.c,v 1.79 2014/01/10 17:59:37 mjl Exp $";
+  "$Id: scamper_rtsock.c,v 1.80 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -157,7 +158,7 @@ static dlist_t *pairs = NULL; /* list of addresses queried with their seq */
 static rtsock_pair_t *rtsock_pair_alloc(scamper_route_t *route, int seq)
 {
   rtsock_pair_t *pair;
-  if((pair = malloc(sizeof(rtsock_pair_t))) == NULL)
+  if((pair = malloc_zero(sizeof(rtsock_pair_t))) == NULL)
     return NULL;
   pair->route = route;
   pair->seq = seq;

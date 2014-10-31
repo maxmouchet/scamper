@@ -1,7 +1,7 @@
 /*
  * scamper_file.c
  *
- * $Id: scamper_file.c,v 1.67 2013/08/02 18:33:23 mjl Exp $
+ * $Id: scamper_file.c,v 1.68 2014/09/26 01:51:05 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file.c,v 1.67 2013/08/02 18:33:23 mjl Exp $";
+  "$Id: scamper_file.c,v 1.68 2014/09/26 01:51:05 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -63,6 +63,7 @@ static const char rcsid[] =
 #include "tbit/scamper_tbit.h"
 #include "tbit/scamper_tbit_text.h"
 #include "tbit/scamper_tbit_warts.h"
+#include "tbit/scamper_tbit_json.h"
 #include "sniff/scamper_sniff.h"
 #include "sniff/scamper_sniff_warts.h"
 
@@ -211,7 +212,7 @@ static struct handler handlers[] = {
    NULL,                                   /* write_sting */
    scamper_file_json_dealias_write,        /* write_dealias */
    NULL,                                   /* write_neighbourdisc */
-   NULL,                                   /* write_tbit */
+   scamper_file_json_tbit_write,           /* write_tbit */
    NULL,                                   /* write_sniff */
    NULL,                                   /* free_state */
   },

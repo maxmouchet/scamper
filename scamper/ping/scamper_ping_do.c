@@ -1,7 +1,7 @@
 /*
  * scamper_do_ping.c
  *
- * $Id: scamper_ping_do.c,v 1.141 2014/03/06 20:24:37 mjl Exp $
+ * $Id: scamper_ping_do.c,v 1.143 2014/09/17 03:26:08 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_do.c,v 1.141 2014/03/06 20:24:37 mjl Exp $";
+  "$Id: scamper_ping_do.c,v 1.143 2014/09/17 03:26:08 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -745,7 +745,7 @@ static int ping_state_payload(scamper_ping_t *ping, ping_state_t *state)
   if(state->payload_len == 0)
     return 0;
 
-  if((state->payload = malloc(state->payload_len)) == NULL)
+  if((state->payload = malloc_zero(state->payload_len)) == NULL)
     return -1;
 
   if(SCAMPER_PING_METHOD_IS_ICMP_TIME(ping))
@@ -1032,7 +1032,7 @@ static void do_ping_probe(scamper_task_t *task)
        * as there is no point sending something into the wild that we can't
        * record
        */
-      if((pp = malloc(sizeof(ping_probe_t))) == NULL)
+      if((pp = malloc_zero(sizeof(ping_probe_t))) == NULL)
 	goto err;
 
       if(scamper_probe_task(&probe, task) != 0)
@@ -1047,14 +1047,6 @@ static void do_ping_probe(scamper_task_t *task)
       state->probes[state->seq] = pp;
       state->seq++;
       ping->ping_sent++;
-
-      if(ping->ping_sent < ping->probe_count)
-	{
-	  timeval_add_s(&wait_tv, &probe.pr_tx, ping->probe_wait);
-	  timeval_add_us(&wait_tv, &wait_tv, ping->probe_wait_us);
-	}
-      else
-	timeval_add_s(&wait_tv, &probe.pr_tx, ping->probe_timeout);
     }
   else if(state->mode == PING_MODE_PTB)
     {
@@ -1078,6 +1070,16 @@ static void do_ping_probe(scamper_task_t *task)
     {
       scamper_debug(__func__, "unknown ping mode %d", state->mode);
       goto err;
+    }
+
+  if(ping->ping_sent < ping->probe_count)
+    {
+      timeval_add_s(&wait_tv, &probe.pr_tx, ping->probe_wait);
+      timeval_add_us(&wait_tv, &wait_tv, ping->probe_wait_us);
+    }
+  else
+    {
+      timeval_add_s(&wait_tv, &probe.pr_tx, ping->probe_timeout);
     }
 
   scamper_task_queue_wait_tv(task, &wait_tv);
@@ -1430,7 +1432,7 @@ void *scamper_do_ping_alloc(char *str)
 	{
 	case PING_OPT_PAYLOAD:
 	  payload_len = (uint16_t)tmp;
-	  if(payload_len == 0 || (payload = malloc(payload_len)) == NULL)
+	  if(payload_len == 0 || (payload = malloc_zero(payload_len)) == NULL)
 	    goto err;
 	  for(i=0; i<payload_len; i++)
 	    payload[i] = hex2byte(opt->str[i*2], opt->str[(i*2)+1]);

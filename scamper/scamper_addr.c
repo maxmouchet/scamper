@@ -1,7 +1,7 @@
 /*
  * scamper_addr.c
  *
- * $Id: scamper_addr.c,v 1.57 2014/05/19 21:05:10 mjl Exp $
+ * $Id: scamper_addr.c,v 1.58 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_addr.c,v 1.57 2014/05/19 21:05:10 mjl Exp $";
+  "$Id: scamper_addr.c,v 1.58 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -660,7 +660,7 @@ scamper_addr_t *scamper_addr_alloc(const int type, const void *addr)
   assert(type-1 >= 0);
   assert((size_t)(type-1) < sizeof(handlers)/sizeof(struct handler));
 
-  if((sa = malloc(sizeof(scamper_addr_t))) != NULL)
+  if((sa = malloc_zero(sizeof(scamper_addr_t))) != NULL)
     {
       if((sa->addr = memdup(addr, handlers[type-1].size)) == NULL)
 	{
@@ -1032,11 +1032,8 @@ scamper_addrcache_t *scamper_addrcache_alloc()
   scamper_addrcache_t *ac;
   int i;
 
-  if((ac = malloc(sizeof(scamper_addrcache_t))) == NULL)
-    {
-      return NULL;
-    }
-  memset(ac, 0, sizeof(scamper_addrcache_t));
+  if((ac = malloc_zero(sizeof(scamper_addrcache_t))) == NULL)
+    return NULL;
 
   for(i=(sizeof(handlers)/sizeof(struct handler))-1; i>=0; i--)
     {

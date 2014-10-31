@@ -1,7 +1,7 @@
 /*
  * scamper_do_tracelb.c
  *
- * $Id: scamper_tracelb_do.c,v 1.270 2012/04/25 05:46:26 mjl Exp $
+ * $Id: scamper_tracelb_do.c,v 1.271 2014/06/12 17:32:08 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012      The Regents of the University of California
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb_do.c,v 1.270 2012/04/25 05:46:26 mjl Exp $";
+  "$Id: scamper_tracelb_do.c,v 1.271 2014/06/12 17:32:08 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -855,7 +855,7 @@ static int tracelb_flowids_list_add(slist_t *list, tracelb_probe_t *pr)
   assert(pr->mode != MODE_BRINGFWD0);
   assert(pr->mode != MODE_BRINGFWD);
 
-  if((tf = malloc(sizeof(tracelb_flowid_t))) == NULL)
+  if((tf = malloc_zero(sizeof(tracelb_flowid_t))) == NULL)
     {
       printerror(errno, strerror, __func__, "could not malloc flowid");
       return -1;
@@ -1083,7 +1083,7 @@ static int tracelb_link_flowid_add_tail(tracelb_link_t *link,
       return -1;
     }
 
-  if((tf = malloc(sizeof(tracelb_flowid_t))) == NULL)
+  if((tf = malloc_zero(sizeof(tracelb_flowid_t))) == NULL)
     {
       printerror(errno, strerror, __func__, "could not malloc flowid");
       return -1;

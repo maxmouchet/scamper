@@ -1,4 +1,4 @@
-# $Id: Makefile.am,v 1.23 2013/08/04 19:51:31 mjl Exp $
+# $Id: Makefile.am,v 1.24 2014/09/26 01:51:05 mjl Exp $
 
 AUTOMAKE_OPTIONS = subdir-objects
 
@@ -43,6 +43,7 @@ libscamperfile_la_SOURCES = \
 	tbit/scamper_tbit.c \
 	tbit/scamper_tbit_warts.c \
 	tbit/scamper_tbit_text.c \
+	tbit/scamper_tbit_json.c \
 	sniff/scamper_sniff.c \
 	sniff/scamper_sniff_warts.c
 
@@ -122,6 +123,7 @@ scamper_SOURCES = \
 	tbit/scamper_tbit.c \
 	tbit/scamper_tbit_warts.c \
 	tbit/scamper_tbit_text.c \
+	tbit/scamper_tbit_json.c \
 	tbit/scamper_tbit_do.c \
 	sniff/scamper_sniff.c \
 	sniff/scamper_sniff_warts.c \

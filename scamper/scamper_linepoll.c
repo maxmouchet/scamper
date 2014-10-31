@@ -1,7 +1,7 @@
 /*
  * scamper_linepoll
  *
- * $Id: scamper_linepoll.c,v 1.19 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_linepoll.c,v 1.21 2014/06/13 03:33:43 mjl Exp $
  *
  * this code takes a string chunk and splits it up into lines, calling
  * the callback for each line.  It buffers any partial lines in the
@@ -9,6 +9,7 @@
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
+ * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -28,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_linepoll.c,v 1.19 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_linepoll.c,v 1.21 2014/06/13 03:33:43 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -37,6 +38,7 @@ static const char rcsid[] =
 #include "internal.h"
 
 #include "scamper_linepoll.h"
+#include "utils.h"
 
 struct scamper_linepoll
 {
@@ -110,7 +112,7 @@ int scamper_linepoll_handle(scamper_linepoll_t *lp, uint8_t *buf, size_t len)
 	    }
 
 	  /* allocate a buffer big enough to take both segments of the line */
-	  if((bbuf = malloc(lp->len + i + 1)) == NULL)
+	  if((bbuf = malloc_zero(lp->len + i + 1)) == NULL)
 	    {
 	      return -1;
 	    }
@@ -206,7 +208,7 @@ int scamper_linepoll_handle(scamper_linepoll_t *lp, uint8_t *buf, size_t len)
 
   if(s < len)
     {
-      if((lp->buf = malloc(len - s)) == NULL)
+      if((lp->buf = malloc_zero(len - s)) == NULL)
 	{
 	  return -1;
 	}
@@ -222,17 +224,10 @@ scamper_linepoll_t *scamper_linepoll_alloc(scamper_linepoll_handler_t handler,
 					   void *param)
 {
   scamper_linepoll_t *lp;
-
-  if((lp = malloc(sizeof(scamper_linepoll_t))) == NULL)
-    {
-      return NULL;
-    }
-
+  if((lp = malloc_zero(sizeof(scamper_linepoll_t))) == NULL)
+    return NULL;
   lp->handler = handler;
   lp->param = param;
-  lp->buf = NULL;
-  lp->len = 0;
-
   return lp;
 }
 

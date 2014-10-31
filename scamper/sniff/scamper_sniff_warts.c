@@ -2,9 +2,10 @@
  * scamper_sniff_warts.c
  *
  * Copyright (C) 2011 The University of Waikato
+ * Copyright (C) 2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_sniff_warts.c,v 1.5 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_sniff_warts.c,v 1.6 2014/06/12 19:59:48 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sniff_warts.c,v 1.5 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_sniff_warts.c,v 1.6 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -371,7 +372,7 @@ int scamper_file_warts_sniff_write(const scamper_file_t *sf,
     }
 
   /* Allocate memory to store all of the data (including packets) */
-  if((buf = malloc(len)) == NULL)
+  if((buf = malloc_zero(len)) == NULL)
     goto err;
   insert_wartshdr(buf, &off, len, SCAMPER_FILE_OBJ_SNIFF);
 

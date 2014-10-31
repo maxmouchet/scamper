@@ -1,18 +1,11 @@
 /*
  * scamper_fds: manage events for file descriptors
  *
- * $Id: scamper_fds.h,v 1.20 2012/04/05 18:00:54 mjl Exp $
- *
- *          Matthew Luckie
- *
- *          Supported by:
- *           The University of Waikato
- *           NLANR Measurement and Network Analysis
- *           CAIDA
- *           The WIDE Project
+ * $Id: scamper_fds.h,v 1.21 2014/09/24 04:34:21 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2014      Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -62,6 +55,8 @@ int scamper_fd_addr(const scamper_fd_t *fdn, void *addr, size_t len);
 scamper_fd_t *scamper_fd_private(int fd,
 				 scamper_fd_cb_t read_cb, void *read_param,
 				 scamper_fd_cb_t write_cb, void *write_param);
+
+scamper_fd_t *scamper_fd_file(int fd, scamper_fd_cb_t read_cb, void *param);
 
 /*
  * this function reduces the reference count of the fdn, and closes the fd

@@ -1,10 +1,11 @@
 /*
  * scamper_source_cmdline.c
  *
- * $Id: scamper_source_cmdline.c,v 1.9 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_source_cmdline.c,v 1.10 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
+ * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_source_cmdline.c,v 1.9 2011/09/16 03:15:44 mjl Exp $";
+  "$Id: scamper_source_cmdline.c,v 1.10 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -59,7 +60,7 @@ static int command_assemble(char **out, size_t *len,
 	}
       else
 	{
-	  if((tmp = malloc(reqlen)) == NULL)
+	  if((tmp = malloc_zero(reqlen)) == NULL)
 	    {
 	      printerror(errno, strerror, __func__,
 			 "could not malloc %d bytes for tmp", reqlen);

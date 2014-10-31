@@ -1,7 +1,7 @@
 /*
  * scamper_source_tsps.c
  *
- * $Id: scamper_source_tsps.c,v 1.8 2011/10/25 00:35:16 mjl Exp $
+ * $Id: scamper_source_tsps.c,v 1.9 2014/09/24 04:34:21 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_source_tsps.c,v 1.8 2011/10/25 00:35:16 mjl Exp $";
+  "$Id: scamper_source_tsps.c,v 1.9 2014/09/24 04:34:21 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -298,7 +298,7 @@ scamper_source_t *scamper_source_tsps_alloc(scamper_source_params_t *ssp,
     }
 
   /* allocate a scamper_fd_t to monitor when new data is able to be read */
-  if((ssf->fd = scamper_fd_private(fd, ssf_read, ssf, NULL, NULL)) == NULL)
+  if((ssf->fd = scamper_fd_file(fd, ssf_read, ssf)) == NULL)
     {
       goto err;
     }

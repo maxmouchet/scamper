@@ -1,7 +1,7 @@
 /*
  * scamper_firewall.c
  *
- * $Id: scamper_firewall.c,v 1.43 2013/08/24 15:51:33 mjl Exp $
+ * $Id: scamper_firewall.c,v 1.44 2014/09/26 16:08:26 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -23,7 +23,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_firewall.c,v 1.43 2013/08/24 15:51:33 mjl Exp $";
+  "$Id: scamper_firewall.c,v 1.44 2014/09/26 16:08:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -658,7 +658,7 @@ int scamper_firewall_ipfw_del(int n, int af)
 }
 #endif /* _IPFW_H */
 
-static void firewall_rule_delete(scamper_firewall_entry_t *entry)
+static int firewall_rule_delete(scamper_firewall_entry_t *entry)
 {
 #if defined(HAVE_IPFW)
   int af;
@@ -681,13 +681,14 @@ static void firewall_rule_delete(scamper_firewall_entry_t *entry)
       printerror(errno, strerror, __func__,
 		 "could not add entry %d", entry->slot);
       firewall_entry_free(entry);
+      return -1;
     }
 
   /* free up the firewall rule associated with the entry */
   firewall_rule_free(entry->rule);
   entry->rule = NULL;
 
-  return;
+  return 0;
 }
 
 static scamper_firewall_entry_t *firewall_entry_get(void)
@@ -866,9 +867,9 @@ scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sf
 #endif /* HAVE_IPFW */
 
 #ifndef HAVE_IPFW
-static void firewall_rule_delete(scamper_firewall_entry_t *entry)
+static int firewall_rule_delete(scamper_firewall_entry_t *entry)
 {
-  return;
+  return 0;
 }
 
 scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sfw)
@@ -881,9 +882,7 @@ void scamper_firewall_entry_free(scamper_firewall_entry_t *entry)
 {
   entry->refcnt--;
   if(entry->refcnt > 0)
-    {
-      return;
-    }
+    return;
 
   /* remove the entry from the tree */
   splaytree_remove_node(entries, entry->node);
@@ -901,8 +900,6 @@ void scamper_firewall_entry_free(scamper_firewall_entry_t *entry)
 
   return;
 }
-
-
 
 void scamper_firewall_cleanup(void)
 {

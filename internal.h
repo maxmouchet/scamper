@@ -1,7 +1,7 @@
 /*
  * internal.h
  *
- * $Id: internal.h,v 1.26 2014/05/19 20:20:12 mjl Exp $
+ * $Id: internal.h,v 1.28 2014/09/24 14:36:26 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -50,6 +50,7 @@ typedef unsigned short sa_family_t;
 #include <iphlpapi.h>
 #include <process.h>
 #include <direct.h>
+#include <mmsystem.h> 
 #include "wingetopt.h"
 #define _CRT_RAND_S
 #endif

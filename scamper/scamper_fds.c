@@ -1,19 +1,11 @@
 /*
  * scamper_fds: manage events and file descriptors
  *
- * $Id: scamper_fds.c,v 1.83 2014/05/19 21:19:49 mjl Exp $
- *
- *          Matthew Luckie
- *
- *          Supported by:
- *           The University of Waikato
- *           NLANR Measurement and Network Analysis
- *           CAIDA
- *           The WIDE Project
+ * $Id: scamper_fds.c,v 1.88 2014/10/31 16:01:33 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012      Matthew Luckie
+ * Copyright (C) 2012-2014 Matthew Luckie
  * Copyright (C) 2012-2014 The Regents of the University of California
  *
  * This program is free software; you can redistribute it and/or modify
@@ -33,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_fds.c,v 1.83 2014/05/19 21:19:49 mjl Exp $";
+  "$Id: scamper_fds.c,v 1.88 2014/10/31 16:01:33 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -133,10 +125,11 @@ struct scamper_fd
 #define SCAMPER_FD_TYPE_TCP6     0x07
 #define SCAMPER_FD_TYPE_DL       0x08
 #define SCAMPER_FD_TYPE_IP4      0x09
+#define SCAMPER_FD_TYPE_FILE     0x0a
 
 #ifndef _WIN32
-#define SCAMPER_FD_TYPE_RTSOCK   0x0a
-#define SCAMPER_FD_TYPE_IFSOCK   0x0b
+#define SCAMPER_FD_TYPE_RTSOCK   0x0b
+#define SCAMPER_FD_TYPE_IFSOCK   0x0c
 #endif
 
 #define SCAMPER_FD_TYPE_IS_UDP(fd) (      \
@@ -214,6 +207,9 @@ static char *fd_tostr(scamper_fd_t *fdn)
     case SCAMPER_FD_TYPE_IP4:
       return "ip4";
 
+    case SCAMPER_FD_TYPE_FILE:
+      return "file";
+
     case SCAMPER_FD_TYPE_ICMP4:
       snprintf(buf, sizeof(buf), "icmp4%s",
 	       fd_addr_tostr(addr, sizeof(addr), AF_INET, fdn->fd_icmp_addr));
@@ -277,6 +273,7 @@ static void fd_close(scamper_fd_t *fdn)
   switch(fdn->type)
     {
     case SCAMPER_FD_TYPE_PRIVATE:
+    case SCAMPER_FD_TYPE_FILE:
       break;
 
     case SCAMPER_FD_TYPE_ICMP4:
@@ -400,7 +397,8 @@ static void fd_refcnt_0(scamper_fd_t *fdn)
    * if this is a private fd and the reference count has reached zero,
    * then the scamper_fd structure can be freed up completely now
    */
-  if(fdn->type == SCAMPER_FD_TYPE_PRIVATE)
+  if(fdn->type == SCAMPER_FD_TYPE_PRIVATE ||
+     fdn->type == SCAMPER_FD_TYPE_FILE)
     {
       fd_free(fdn);
       return;
@@ -436,7 +434,8 @@ static int fd_poll_setlist(void *item, void *param)
  * given a list of scamper_fd_poll_t structures held in a list, compose an
  * fd_set for them to pass to select.
  */
-static fd_set *fds_select_assemble(dlist_t *fds, fd_set *fdset, int *nfds)
+static int fds_select_assemble(dlist_t *fds, slist_t **file_list,
+			       fd_set *fdset, fd_set **fdsp, int *nfds)
 {
   scamper_fd_poll_t *fdp;
   dlist_node_t      *node;
@@ -468,15 +467,21 @@ static fd_set *fds_select_assemble(dlist_t *fds, fd_set *fdset, int *nfds)
 	  continue;
 	}
 
+      if(fdp->fdn->type == SCAMPER_FD_TYPE_FILE)
+	{
+	  if((*file_list == NULL && (*file_list = slist_alloc()) == NULL) ||
+	     slist_tail_push(*file_list, fdp) == NULL)
+	    return -1;
+	  continue;
+	}
+
       /* monitor this file descriptor */
       FD_SET(fdp->fdn->fd, fdset);
       count++;
 
       /* update the maxfd seen if appropriate */
       if(*nfds < fdp->fdn->fd)
-	{
-	  *nfds = fdp->fdn->fd;
-	}
+	*nfds = fdp->fdn->fd;
     }
 
   /*
@@ -484,11 +489,11 @@ static fd_set *fds_select_assemble(dlist_t *fds, fd_set *fdset, int *nfds)
    * to pass to select
    */
   if(count == 0)
-    {
-      return NULL;
-    }
+    *fdsp = NULL;
+  else
+    *fdsp = fdset;
 
-  return fdset;
+  return 0;
 }
 
 /*
@@ -532,10 +537,27 @@ static void fds_select_check(fd_set *fdset, dlist_t *fds, int *count)
   return;
 }
 
+static void fds_files_check(dlist_t *fds, slist_t *list)
+{
+  scamper_fd_poll_t *fdp;
+
+  if(list == NULL)
+    return;
+
+  dlist_lock(fds);
+  while((fdp = slist_head_pop(list)) != NULL)
+    fdp->cb(fdp->fdn->fd, fdp->param);
+  dlist_unlock(fds);
+
+  return;
+}
+
 static int fds_select(struct timeval *timeout)
 {
+  struct timeval tv;
   fd_set rfds, *rfdsp;
   fd_set wfds, *wfdsp;
+  slist_t *rfiles = NULL, *wfiles = NULL;
   int count, nfds = -1;
 
   /* concat any new fds to monitor now */
@@ -545,12 +567,20 @@ static int fds_select(struct timeval *timeout)
   dlist_concat(write_fds, write_queue);
 
   /* compose the sets of file descriptors to monitor */
-  rfdsp = fds_select_assemble(read_fds, &rfds, &nfds);
-  wfdsp = fds_select_assemble(write_fds, &wfds, &nfds);
+  if(fds_select_assemble(read_fds, &rfiles, &rfds, &rfdsp, &nfds) != 0)
+    goto err;
+  if(fds_select_assemble(write_fds, &wfiles, &wfds, &wfdsp, &nfds) != 0)
+    goto err;
+
+  if(rfiles != NULL || wfiles != NULL)
+    {
+      tv.tv_sec = 0; tv.tv_usec = 0;
+      timeout = &tv;
+    }
 
   /* find out which file descriptors have an event */
 #ifdef _WIN32
-  if(nfds == -1)
+  if(nfds == -1 && rfiles == NULL && wfiles == NULL)
     {
       if(timeout != NULL && timeout->tv_sec >= 0 && timeout->tv_usec >= 0)
 	Sleep((timeout->tv_sec * 1000) + (timeout->tv_usec / 1000));
@@ -561,7 +591,20 @@ static int fds_select(struct timeval *timeout)
   if((count = select(nfds+1, rfdsp, wfdsp, NULL, timeout)) < 0)
     {
       printerror(errno, strerror, __func__, "select failed");
-      return -1;
+      goto err;
+    }
+
+  /* read and write to files outside of select */
+  if(rfiles != NULL)
+    {
+      fds_files_check(read_fds, rfiles);
+      slist_free(rfiles); rfiles = NULL;
+    }
+
+  if(wfiles != NULL)
+    {
+      fds_files_check(write_fds, wfiles);
+      slist_free(wfiles); wfiles = NULL;
     }
 
   /* if there are fds to check, then check them */
@@ -572,6 +615,11 @@ static int fds_select(struct timeval *timeout)
     }
 
   return 0;
+
+ err:
+  if(rfiles != NULL) slist_free(rfiles);
+  if(wfiles != NULL) slist_free(wfiles);
+  return -1;
 }
 
 #ifdef HAVE_POLL
@@ -1667,6 +1715,24 @@ scamper_fd_t *scamper_fd_private(int fd,
       scamper_fd_write_set(fdn, write_cb, write_param);
       scamper_fd_write_unpause(fdn);
     }
+
+  return fdn;
+
+ err:
+  if(fdn != NULL) fd_free(fdn);
+  return NULL;
+}
+
+scamper_fd_t *scamper_fd_file(int fd, scamper_fd_cb_t read_cb, void *param)
+{
+  scamper_fd_t *fdn = NULL;
+
+  if((fdn = fd_alloc(SCAMPER_FD_TYPE_FILE, fd)) == NULL ||
+     (fdn->fd_list_node = dlist_tail_push(fd_list, fdn)) == NULL)
+    goto err;
+  fdn->read.cb = read_cb;
+  fdn->read.param = param;
+  scamper_fd_read_unpause(fdn);
 
   return fdn;
 

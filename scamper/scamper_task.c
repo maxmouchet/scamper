@@ -1,11 +1,11 @@
 /*
  * scamper_task.c
  *
- * $Id: scamper_task.c,v 1.56 2013/04/01 23:16:38 mjl Exp $
+ * $Id: scamper_task.c,v 1.57 2014/06/12 19:59:48 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012-2013 The Regents of the University of California
+ * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_task.c,v 1.56 2013/04/01 23:16:38 mjl Exp $";
+  "$Id: scamper_task.c,v 1.57 2014/06/12 19:59:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -480,7 +480,7 @@ void *scamper_task_onhold(scamper_task_t *task, void *param,
 
   if(task->onhold == NULL && (task->onhold = dlist_alloc()) == NULL)
     goto err;
-  if((toh = malloc(sizeof(task_onhold_t))) == NULL)
+  if((toh = malloc_zero(sizeof(task_onhold_t))) == NULL)
     goto err;
   if((cookie = dlist_tail_push(task->onhold, toh)) == NULL)
     goto err;
