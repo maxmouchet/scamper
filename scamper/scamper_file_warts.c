@@ -3,7 +3,7 @@
  *
  * the WAND ARTS file format replacement
  *
- * $Id: scamper_file_warts.c,v 1.241 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.242 2014/11/01 18:19:24 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_warts.c,v 1.241 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_file_warts.c,v 1.242 2014/11/01 18:19:24 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -328,6 +328,7 @@ void insert_string(uint8_t *buf, uint32_t *off, const uint32_t len,
   do
     {
       assert(len - *off > 0);
+      assert(in != NULL);
       buf[(*off)++] = c = in[i++];
     }
   while(c != '\0');

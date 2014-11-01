@@ -1,7 +1,7 @@
 /*
  * scamper_privsep.c: code that does root-required tasks
  *
- * $Id: scamper_privsep.c,v 1.75 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_privsep.c,v 1.76 2014/11/01 04:52:55 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -31,7 +31,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_privsep.c,v 1.75 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_privsep.c,v 1.76 2014/11/01 04:52:55 mjl Exp $";
 #endif
 
 #include "internal.h"
@@ -59,6 +59,10 @@ typedef struct privsep_func
 static pid_t root_pid  = -1; /* the process id of the root code */
 static int   root_fd   = -1; /* the fd the root code send/recv on */
 static int   lame_fd   = -1; /* the fd that the lame code uses */
+
+#if !defined(HAVE_ACCRIGHTS)
+static void *cmsgbuf   = NULL; /* cmsgbuf sized for one fd */
+#endif
 
 #if defined(IPPROTO_DIVERT)
 static int   divert_on =  0; /* do not allow divert sockets by default */
@@ -724,13 +728,11 @@ static int privsep_send_rc(int rc, int error, uint8_t msg_type)
  */
 static int privsep_send_fd(int fd, int error, uint8_t msg_type)
 {
-  uint8_t         buf[sizeof(int)];
   struct msghdr   msg;
   struct iovec    vec;
 
 #if !defined(HAVE_ACCRIGHTS)
   struct cmsghdr *cmsg;
-  uint8_t         tmp[CMSG_LEN(sizeof(int))];
 #endif
 
   scamper_debug(__func__, "fd: %d error: %d msg_type: 0x%02x",
@@ -739,9 +741,8 @@ static int privsep_send_fd(int fd, int error, uint8_t msg_type)
   memset(&vec, 0, sizeof(vec));
   memset(&msg, 0, sizeof(msg));
 
-  memcpy(buf, &error, sizeof(int));
-  vec.iov_base = (void *)buf;
-  vec.iov_len  = sizeof(buf);
+  vec.iov_base = (void *)&error;
+  vec.iov_len  = sizeof(error);
 
   msg.msg_iov = &vec;
   msg.msg_iovlen = 1;
@@ -752,11 +753,11 @@ static int privsep_send_fd(int fd, int error, uint8_t msg_type)
       msg.msg_accrights = (caddr_t)&fd;
       msg.msg_accrightslen = sizeof(fd);
 #else
-      msg.msg_control = (caddr_t)tmp;
-      msg.msg_controllen = CMSG_LEN(sizeof(int));
+      msg.msg_control = (caddr_t)cmsgbuf;
+      msg.msg_controllen = CMSG_SPACE(sizeof(fd));
 
       cmsg = CMSG_FIRSTHDR(&msg);
-      cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+      cmsg->cmsg_len = CMSG_LEN(sizeof(fd));
       cmsg->cmsg_level = SOL_SOCKET;
       cmsg->cmsg_type = SCM_RIGHTS;
       *(int *)CMSG_DATA(cmsg) = fd;
@@ -777,11 +778,10 @@ static int privsep_recv_fd(void)
   struct msghdr   msg;
   struct iovec    vec;
   ssize_t         rc;
-  int             fd = -1, error;
+  int             fd = -1, error = 0;
 
 #if !defined(HAVE_ACCRIGHTS)
   struct cmsghdr *cmsg;
-  uint8_t         tmp[CMSG_LEN(sizeof(int))];
 #endif
 
   memset(&vec, 0, sizeof(vec));
@@ -797,8 +797,8 @@ static int privsep_recv_fd(void)
   msg.msg_accrights = (caddr_t)&fd;
   msg.msg_accrightslen = sizeof(fd);
 #else
-  msg.msg_control = tmp;
-  msg.msg_controllen = sizeof(tmp);
+  msg.msg_control = cmsgbuf;
+  msg.msg_controllen = CMSG_SPACE(sizeof(fd));
 #endif
 
   if((rc = recvmsg(lame_fd, &msg, 0)) == -1)
@@ -1263,6 +1263,14 @@ int scamper_privsep_init()
   lame_fd = sockets[0];
   root_fd = sockets[1];
 
+#if !defined(HAVE_ACCRIGHTS)
+  if((cmsgbuf = malloc_zero(CMSG_SPACE(sizeof(int)))) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not malloc cmsgbuf");
+      return -1;
+    }
+#endif
+
   if((pid = fork()) == -1)
     {
       printerror(errno, strerror, __func__, "could not fork");
@@ -1381,6 +1389,12 @@ void scamper_privsep_cleanup()
     {
       close(lame_fd);
       lame_fd = -1;
+    }
+
+  if(cmsgbuf != NULL)
+    {
+      free(cmsgbuf);
+      cmsgbuf = NULL;
     }
 
   return;

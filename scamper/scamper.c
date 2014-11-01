@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.239 2014/10/09 18:29:19 mjl Exp $
+ * $Id: scamper.c,v 1.240 2014/11/01 15:21:35 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper.c,v 1.239 2014/10/09 18:29:19 mjl Exp $";
+  "$Id: scamper.c,v 1.240 2014/11/01 15:21:35 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1060,6 +1060,8 @@ static int scamper(int argc, char *argv[])
     }
 #endif
 
+  random_seed();
+
   if(firewall != NULL)
     {
       if(scamper_firewall_init(firewall) != 0)
@@ -1223,10 +1225,6 @@ static int scamper(int argc, char *argv[])
     }
 
   gettimeofday_wrap(&lastprobe);
-
-#ifndef _WIN32
-  srandom(lastprobe.tv_usec);
-#endif
 
   for(;;)
     {

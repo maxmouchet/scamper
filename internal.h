@@ -1,7 +1,7 @@
 /*
  * internal.h
  *
- * $Id: internal.h,v 1.28 2014/09/24 14:36:26 mjl Exp $
+ * $Id: internal.h,v 1.29 2014/11/01 15:01:46 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -50,7 +50,7 @@ typedef unsigned short sa_family_t;
 #include <iphlpapi.h>
 #include <process.h>
 #include <direct.h>
-#include <mmsystem.h> 
+#include <mmsystem.h>
 #include "wingetopt.h"
 #define _CRT_RAND_S
 #endif
@@ -59,26 +59,31 @@ typedef unsigned short sa_family_t;
 #define _BSD_SOCKLEN_T_
 #define HAVE_BPF
 #define HAVE_BSD_ROUTE_SOCKET
+#define HAVE_SOCKADDR_SA_LEN
 #endif
 
 #if defined(__FreeBSD__)
 #define HAVE_BPF
 #define HAVE_BSD_ROUTE_SOCKET
+#define HAVE_SOCKADDR_SA_LEN
 #endif
 
 #if defined(__NetBSD__)
 #define HAVE_BPF
 #define HAVE_BSD_ROUTE_SOCKET
+#define HAVE_SOCKADDR_SA_LEN
 #endif
 
 #if defined(__OpenBSD__)
 #define HAVE_BPF
 #define HAVE_BSD_ROUTE_SOCKET
+#define HAVE_SOCKADDR_SA_LEN
 #endif
 
 #if defined(__DragonFly__)
 #define HAVE_BPF
 #define HAVE_BSD_ROUTE_SOCKET
+#define HAVE_SOCKADDR_SA_LEN
 #endif
 
 #if defined(__linux__)

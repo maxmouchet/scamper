@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([scamper], [20141031], [mjl@luckie.org.nz])
+AC_INIT([scamper], [20141101], [mjl@luckie.org.nz])
 
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([scamper/scamper.c])
@@ -173,6 +173,8 @@ AC_TYPE_UINT8_T
 # Checks for library functions.
 AC_FUNC_CHOWN
 AC_FUNC_FORK
+AC_CHECK_FUNCS(arc4random)
+AC_CHECK_FUNCS(arc4random_uniform)
 AC_CHECK_FUNCS(atexit)
 AC_CHECK_FUNCS(daemon)
 AC_CHECK_FUNCS(endpwent)

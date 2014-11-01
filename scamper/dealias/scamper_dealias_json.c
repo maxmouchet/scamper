@@ -5,7 +5,7 @@
  * Copyright (c) 2013-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_json.c,v 1.7 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_dealias_json.c,v 1.9 2014/11/01 18:02:20 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_json.c,v 1.7 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_dealias_json.c,v 1.9 2014/11/01 18:02:20 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -351,8 +351,8 @@ int scamper_file_json_dealias_write(const scamper_file_t *sf,
   char    **prs         = NULL;
   size_t   *pr_lens     = NULL;
   int       i, rc       = -1;
-
-  scamper_dealias_probedef_t *defs; int defc;
+  scamper_dealias_probedef_t *defs = NULL;
+  int defc = 0;
 
   /* get current position incase trunction is required */
   if(fd != 1 && (off = lseek(fd, 0, SEEK_CUR)) == -1)

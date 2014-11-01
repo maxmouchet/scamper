@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_list.c,v 1.67 2013/08/07 22:27:06 mjl Exp $";
+  "$Id: mjl_list.c,v 1.68 2014/11/01 15:33:00 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -37,6 +37,10 @@ static const char rcsid[] =
 
 #if defined(DMALLOC)
 #include <dmalloc.h>
+#endif
+
+#if defined(HAVE_CONFIG_H)
+#include "config.h"
 #endif
 
 #include "mjl_list.h"
@@ -95,6 +99,8 @@ static int random_u32(unsigned int *r)
   if(rand_s(&ui) != 0)
     return -1;
   *r = ui;
+#elif HAVE_ARC4RANDOM
+  *r = arc4random();
 #else
   *r = random();
 #endif

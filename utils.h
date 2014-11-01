@@ -1,7 +1,7 @@
 /*
  * utils.h
  *
- * $Id: utils.h,v 1.108 2013/02/22 17:58:03 mjl Exp $
+ * $Id: utils.h,v 1.109 2014/11/01 15:21:35 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -179,6 +179,7 @@ char *offt_tostr(char *buf, size_t len, off_t off, int lz, char m);
 uint16_t in_cksum(const void *buf, size_t len);
 
 /* generate a 32-bit random number and return it */
+void random_seed(void);
 int random_u32(uint32_t *r);
 int random_u16(uint16_t *r);
 int random_u8(uint8_t *r);

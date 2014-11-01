@@ -1,7 +1,7 @@
 /*
  * sc_speedtrap
  *
- * $Id: sc_speedtrap.c,v 1.20 2014/10/10 03:18:29 mjl Exp $
+ * $Id: sc_speedtrap.c,v 1.22 2014/11/01 15:21:35 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_speedtrap.c,v 1.20 2014/10/10 03:18:29 mjl Exp $";
+  "$Id: sc_speedtrap.c,v 1.22 2014/11/01 15:21:35 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1004,15 +1004,15 @@ static int sc_skippair_new(char *line, void *param)
   if(line[0] == '#' || line[0] == '\0')
     return 0;
   astr = ptr = line;
-  while(*ptr != '\0' && isspace(*ptr) == 0)
+  while(*ptr != '\0' && isspace((int)*ptr) == 0)
     ptr++;
   if(*ptr == '\0')
     goto err;
   *ptr = '\0'; ptr++;
-  while(isspace(*ptr) != 0)
+  while(isspace((int)*ptr) != 0)
     ptr++;
   bstr = ptr;
-  while(*ptr != '\0' && isspace(*ptr) == 0)
+  while(*ptr != '\0' && isspace((int)*ptr) == 0)
     ptr++;
   *ptr = '\0';
 
@@ -2440,9 +2440,7 @@ static int speedtrap_data(void)
   if(do_files() != 0)
     return -1;
 
-  gettimeofday_wrap(&tv);
-  srandom(tv.tv_usec);
-
+  random_seed();
   slist_shuffle(probelist);
 
   /* attach */

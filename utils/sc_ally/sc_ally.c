@@ -2,7 +2,7 @@
  * sc_ally : scamper driver to collect data on candidate aliases using the
  *           Ally method.
  *
- * $Id: sc_ally.c,v 1.20 2014/03/24 19:44:16 mjl Exp $
+ * $Id: sc_ally.c,v 1.21 2014/11/01 15:21:35 mjl Exp $
  *
  * Copyright (C) 2009-2011 The University of Waikato
  * Copyright (C) 2013-2014 The Regents of the University of California
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_ally.c,v 1.20 2014/03/24 19:44:16 mjl Exp $";
+  "$Id: sc_ally.c,v 1.21 2014/11/01 15:21:35 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1455,8 +1455,7 @@ int main(int argc, char *argv[])
     }
 #endif
 
-  gettimeofday_wrap(&tv);
-  srandom(tv.tv_usec);
+  random_seed();
 
   if((targets = splaytree_alloc(sc_target_cmp)) == NULL)
     return -1;

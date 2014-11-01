@@ -1,7 +1,7 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.168 2014/05/19 20:28:36 mjl Exp $
+ * $Id: utils.c,v 1.171 2014/11/01 18:28:35 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,92 +26,13 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.168 2014/05/19 20:28:36 mjl Exp $";
+  "$Id: utils.c,v 1.171 2014/11/01 18:28:35 mjl Exp $";
 #endif
 
-#if defined(_MSC_VER)
-typedef unsigned __int8 uint8_t;
-typedef unsigned __int16 uint16_t;
-typedef unsigned __int32 uint32_t;
-typedef unsigned __int64 uint64_t;
-typedef int ssize_t;
+#ifdef HAVE_CONFIG_H
+#include "config.h"
 #endif
-
-#if defined(__APPLE__)
-#define _BSD_SOCKLEN_T_
-#define HAVE_SOCKADDR_SA_LEN
-#include <stdint.h>
-#endif
-
-#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
-#define HAVE_SOCKADDR_SA_LEN
-#endif
-
-#include <sys/types.h>
-#include <sys/stat.h>
-
-#ifndef _WIN32
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <sys/uio.h>
-#include <sys/param.h>
-#include <sys/un.h>
-#endif
-
-#if !defined(__sun__) && !defined (_WIN32) && !defined(__CYGWIN__)
-#include <sys/sysctl.h>
-#endif
-
-#ifndef _WIN32
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#endif
-
-#if defined(AF_LINK)
-#include <net/if_dl.h>
-#endif
-
-#include <stdio.h>
-#include <stdarg.h>
-#define _CRT_RAND_S
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
-#include <time.h>
-#include <fcntl.h>
-#include <ctype.h>
-#include <limits.h>
-
-#ifndef _WIN32
-#include <unistd.h>
-#endif
-
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <io.h>
-#include <direct.h>
-#define snprintf _snprintf
-#define open _open
-#define close _close
-#define read _read
-#define write _write
-#define strdup _strdup
-#define mkdir(dir,mode) _mkdir(dir)
-#endif
-
-#include <assert.h>
-
-#if defined(DMALLOC)
-#include <dmalloc.h>
-#endif
-
-#if defined(__sun__)
-# define s6_addr32 _S6_un._S6_u32
-#elif !defined(s6_addr32)
-# define s6_addr32 __u6_addr.__u6_addr32
-#endif
-
+#include "internal.h"
 #include "utils.h"
 
 #if defined(HAVE_SOCKADDR_SA_LEN)
@@ -588,12 +509,11 @@ void *array_find(void **array, int nmemb, const void *item, array_cmp_t cmp)
  */
 static int array_insert_0(void **array,int *nmemb,void *item,array_cmp_t cmp)
 {
+  assert(array != NULL);
   array[*nmemb] = item;
   *nmemb = *nmemb + 1;
-
   if(cmp != NULL)
     array_qsort(array, *nmemb, cmp);
-
   return 0;
 }
 
@@ -601,12 +521,10 @@ static int array_insert_0(void **array,int *nmemb,void *item,array_cmp_t cmp)
 int array_insert(void ***array, int *nmemb, void *item, array_cmp_t cmp)
 {
   size_t len;
-
-  assert(nmemb != NULL && *nmemb >= 0);
+  assert(nmemb != NULL); assert(*nmemb >= 0);
   len = ((*nmemb) + 1) * sizeof(void *);
   if(realloc_wrap((void **)array, len) != 0)
     return -1;
-
   return array_insert_0(*array, nmemb, item, cmp);
 }
 
@@ -1528,13 +1446,27 @@ int sysctl_wrap(int *mib, u_int len, void **buf, size_t *size)
 }
 #endif
 
+void random_seed(void)
+{
+#if defined(_WIN32) || defined(HAVE_ARC4RANDOM)
+  return;
+#else
+  struct timeval tv;
+  gettimeofday_wrap(&tv);
+  srandom(tv.tv_usec);
+  return;
+#endif
+}
+
 int random_u32(uint32_t *r)
 {
-#ifdef _WIN32
+#if defined(_WIN32)
   unsigned int ui;
   if(rand_s(&ui) != 0)
     return -1;
   *r = ui;
+#elif defined(HAVE_ARC4RANDOM)
+  *r = arc4random();
 #else
   *r = random();
 #endif
@@ -1548,6 +1480,8 @@ int random_u16(uint16_t *r)
   if(rand_s(&ui) != 0)
     return -1;
   *r = ui;
+#elif defined(HAVE_ARC4RANDOM)
+  *r = arc4random();
 #else
   *r = random();
 #endif
@@ -1561,6 +1495,8 @@ int random_u8(uint8_t *r)
   if(rand_s(&ui) != 0)
     return -1;
   *r = ui;
+#elif defined(HAVE_ARC4RANDOM)
+  *r = arc4random();
 #else
   *r = random();
 #endif

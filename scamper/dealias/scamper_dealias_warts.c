@@ -6,7 +6,7 @@
  * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_warts.c,v 1.10 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_dealias_warts.c,v 1.11 2014/11/01 05:47:30 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_warts.c,v 1.10 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_dealias_warts.c,v 1.11 2014/11/01 05:47:30 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -241,7 +241,7 @@ typedef struct warts_dealias_data
 {
   warts_dealias_probedef_t *probedefs;
   uint32_t                  probedefc;
-  uint8_t                   flags[1];
+  uint8_t                   flags[2];
   uint16_t                  flags_len;
   uint16_t                  params_len;
 } warts_dealias_data_t;
