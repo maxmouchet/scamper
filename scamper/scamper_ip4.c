@@ -1,7 +1,7 @@
 /*
  * scamper_ip4.c
  *
- * $Id: scamper_ip4.c,v 1.15 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_ip4.c,v 1.15.14.1 2015/12/06 08:25:51 mjl Exp $
  *
  * Copyright (C) 2009-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -23,7 +23,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ip4.c,v 1.15 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_ip4.c,v 1.15.14.1 2015/12/06 08:25:51 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -50,35 +50,34 @@ void scamper_ip4_close(int fd)
   return;
 }
 
-int scamper_ip4_openraw(void)
+int scamper_ip4_openraw_fd(void)
 {
-  int fd = -1;
-
-#if defined(WITHOUT_PRIVSEP)
-  int hdr = 1;
+  int fd, hdr;
   if((fd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) == -1)
     {
       printerror(errno, strerror, __func__, "could not open socket");
       goto err;
     }
+  hdr = 1;
   if(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, (void *)&hdr, sizeof(hdr)) == -1)
     {
       printerror(errno, strerror, __func__, "could not IP_HDRINCL");
       goto err;
     }
-#else
-  if((fd = scamper_privsep_open_rawip()) == -1)
-    {
-      printerror(errno, strerror, __func__, "could not open socket");
-      goto err;
-    }
-#endif
-
   return fd;
 
  err:
   if(fd != -1) scamper_ip4_close(fd);
   return -1;
+}
+
+int scamper_ip4_openraw(void)
+{
+#if defined(WITHOUT_PRIVSEP)
+  return scamper_ip4_openraw_fd();
+#else
+  return scamper_privsep_open_rawip();
+#endif
 }
 
 int scamper_ip4_hlen(scamper_probe_t *pr, size_t *hlen)

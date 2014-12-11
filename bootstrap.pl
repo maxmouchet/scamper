@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# $Id: bootstrap.pl,v 1.2.22.1 2015/10/17 05:10:22 mjl Exp $
+# $Id: bootstrap.pl,v 1.2.22.2 2015/12/06 08:57:24 mjl Exp $
 #
 # script to ship scamper with generated configure script ready to build.
 
@@ -58,6 +58,7 @@ if(!-d "m4")
 
 if(!-r "m4/ax_check_openssl.m4")
 {
+    my $cmd;
     foreach my $util ("fetch", "wget")
     {
 	my $fetch = which($util);
@@ -65,15 +66,21 @@ if(!-r "m4/ax_check_openssl.m4")
 
 	if($util eq "wget")
 	{
-	    system("wget -O m4/ax_check_openssl.m4 \"$ax_check_openssl\"");
+	    $cmd = "wget -O m4/ax_check_openssl.m4 \"$ax_check_openssl\"";
 	    last;
 	}
 	elsif($util eq "fetch")
 	{
-	    system("fetch -o m4/ax_check_openssl.m4 \"$ax_check_openssl\"");
+	    $cmd = "fetch -o m4/ax_check_openssl.m4 \"$ax_check_openssl\"";
 	    last;
 	}
     }
+    if(!defined($cmd))
+    {
+	print "could not download ax_check_openssl.m4: no download utility\n";
+	exit -1;
+    }
+    system("$cmd");
 
     my $sum;
     foreach my $util ("sha256", "sha256sum", "shasum")

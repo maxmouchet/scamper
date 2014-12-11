@@ -1,12 +1,12 @@
 /*
  * scamper_fds: manage events and file descriptors
  *
- * $Id: scamper_fds.c,v 1.88 2014/10/31 16:01:33 mjl Exp $
+ * $Id: scamper_fds.c,v 1.88.6.2 2015/12/06 08:02:40 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2014 Matthew Luckie
- * Copyright (C) 2012-2014 The Regents of the University of California
+ * Copyright (C) 2012-2015 The Regents of the University of California
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_fds.c,v 1.88 2014/10/31 16:01:33 mjl Exp $";
+  "$Id: scamper_fds.c,v 1.88.6.2 2015/12/06 08:02:40 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -75,7 +75,7 @@ typedef struct scamper_fd_poll
 struct scamper_fd
 {
   int               fd;           /* the file descriptor being polled */
-  scamper_fd_t     *pl;           /* if planetlab, a second bound socket */
+  scamper_fd_t     *raw;          /* if udp4, the raw udp socket */
   int               type;         /* the type of the file descriptor */
   int               refcnt;       /* number of references to this structure */
   scamper_fd_poll_t read;         /* if monitored for read events */
@@ -178,7 +178,6 @@ static dlist_t       *write_fds   = NULL;
 static dlist_t       *read_queue  = NULL;
 static dlist_t       *write_queue = NULL;
 static dlist_t       *refcnt_0    = NULL;
-static int            planetlab   = 0;
 static int          (*pollfunc)(struct timeval *timeout) = NULL;
 
 #ifdef HAVE_SCAMPER_DEBUG
@@ -878,7 +877,6 @@ static void fds_epoll_ctl(scamper_fd_t *fd, uint32_t ev, int op)
   else if(op == EPOLL_CTL_DEL)
     ep_fdc--;
 
-  epev.data.ptr = fd;
   epev.data.fd = fd->fd;
   epev.events = ev;
 
@@ -1389,9 +1387,9 @@ int scamper_fds_poll(struct timeval *timeout)
  */
 int scamper_fd_fd_get(const scamper_fd_t *fdn)
 {
-  if(fdn->pl == NULL)
+  if(fdn->raw == NULL)
     return fdn->fd;
-  return fdn->pl->fd;
+  return fdn->raw->fd;
 }
 
 /*
@@ -1594,15 +1592,12 @@ scamper_fd_t *scamper_fd_udp4(void *addr, uint16_t sport)
 {
   scamper_fd_t *fd;
 
-  if(planetlab == 0)
-    return fd_udp(SCAMPER_FD_TYPE_UDP4, addr, sport);
-
   if((fd = fd_udp(SCAMPER_FD_TYPE_UDP4DG, addr, sport)) == NULL)
     return NULL;
 
-  if(fd->pl == NULL)
+  if(fd->raw == NULL)
     {
-      if((fd->pl = fd_udp(SCAMPER_FD_TYPE_UDP4, addr, sport)) == NULL)
+      if((fd->raw = fd_udp(SCAMPER_FD_TYPE_UDP4, addr, sport)) == NULL)
 	{
 	  scamper_fd_free(fd);
 	  return NULL;
@@ -1690,9 +1685,8 @@ scamper_fd_t *scamper_fd_dl(int ifindex)
  * allocate a private fd for scamper to manage.  this fd is not shared amongst
  * scamper.
  */
-scamper_fd_t *scamper_fd_private(int fd,
-				 scamper_fd_cb_t read_cb, void *read_param,
-				 scamper_fd_cb_t write_cb, void *write_param)
+scamper_fd_t *scamper_fd_private(int fd, void *param, scamper_fd_cb_t read_cb,
+				 scamper_fd_cb_t write_cb)
 {
   scamper_fd_t *fdn = NULL;
 
@@ -1706,13 +1700,13 @@ scamper_fd_t *scamper_fd_private(int fd,
 
   if(read_cb != NULL)
     {
-      scamper_fd_read_set(fdn, read_cb, read_param);
+      scamper_fd_read_set(fdn, read_cb, param);
       scamper_fd_read_unpause(fdn);
     }
 
   if(write_cb != NULL)
     {
-      scamper_fd_write_set(fdn, write_cb, write_param);
+      scamper_fd_write_set(fdn, write_cb, param);
       scamper_fd_write_unpause(fdn);
     }
 
@@ -1834,10 +1828,10 @@ void scamper_fd_free(scamper_fd_t *fdn)
 
   if(--fdn->refcnt == 0)
     {
-      if(fdn->pl != NULL)
+      if(fdn->raw != NULL)
 	{
-	  scamper_fd_free(fdn->pl);
-	  fdn->pl = NULL;
+	  scamper_fd_free(fdn->raw);
+	  fdn->raw = NULL;
 	}
       fd_refcnt_0(fdn);
     }
@@ -1911,7 +1905,6 @@ int scamper_fds_init()
       return -1;
     }
 
-  planetlab = scamper_option_planetlab();
   return 0;
 }
 

@@ -2,6 +2,7 @@ SUBDIRS = \
 	sc_ally \
 	sc_analysis_dump \
 	sc_attach \
+	sc_filterpolicy \
 	sc_ipiddump \
 	sc_speedtrap \
 	sc_tracediff \

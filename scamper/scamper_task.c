@@ -1,11 +1,11 @@
 /*
  * scamper_task.c
  *
- * $Id: scamper_task.c,v 1.57 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_task.c,v 1.57.6.1 2015/12/03 08:15:49 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012-2014 The Regents of the University of California
+ * Copyright (C) 2012-2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_task.c,v 1.57 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_task.c,v 1.57.6.1 2015/12/03 08:15:49 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -130,7 +130,7 @@ static int tx_nd_cmp(const void *va, const void *vb)
 static void tx_ip_check(scamper_dl_rec_t *dl)
 {
   scamper_task_sig_t sig;
-  scamper_addr_t addr;
+  scamper_addr_t addr, addr2buf, *addr2 = NULL;
   s2t_t fm, *s2t;
 
   if(SCAMPER_DL_IS_IPV4(dl))
@@ -166,6 +166,12 @@ static void tx_ip_check(scamper_dl_rec_t *dl)
       else
 	return;
     }
+  else if(SCAMPER_DL_IS_UDP(dl))
+    {
+      addr.addr = dl->dl_ip_dst;
+      addr2buf.type = addr.type;
+      addr2buf.addr = dl->dl_ip_src; addr2 = &addr2buf;
+    }
   else
     {
       addr.addr = dl->dl_ip_dst;
@@ -175,11 +181,20 @@ static void tx_ip_check(scamper_dl_rec_t *dl)
   sig.sig_type = SCAMPER_TASK_SIG_TYPE_TX_IP;
   sig.sig_tx_ip_dst = &addr;
 
-  if((s2t = splaytree_find(tx_ip, &fm)) == NULL)
-    return;
-
-  if(s2t->task->funcs->handle_dl != NULL)
-    s2t->task->funcs->handle_dl(s2t->task, dl);
+  if((s2t = splaytree_find(tx_ip, &fm)) != NULL &&
+     s2t->task->funcs->handle_dl != NULL)
+    {
+      s2t->task->funcs->handle_dl(s2t->task, dl);
+    }
+  else if(addr2 != NULL)
+    {
+      sig.sig_tx_ip_dst = addr2;
+      if((s2t = splaytree_find(tx_ip, &fm)) != NULL &&
+	 s2t->task->funcs->handle_dl != NULL)
+	{
+	  s2t->task->funcs->handle_dl(s2t->task, dl);
+	}
+    }
 
   return;
 }

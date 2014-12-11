@@ -1,7 +1,7 @@
 /*
  * scamper_ip4.h
  *
- * $Id: scamper_ip4.h,v 1.4 2011/11/11 03:22:31 mjl Exp $
+ * $Id: scamper_ip4.h,v 1.4.16.1 2015/12/06 08:26:39 mjl Exp $
  *
  * Copyright (C) 2009-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -31,6 +31,7 @@ int scamper_ip4_frag_build(scamper_probe_t *probe, uint8_t *buf, size_t *len);
 #endif
 
 int scamper_ip4_openraw(void);
+int scamper_ip4_openraw_fd(void);
 void scamper_ip4_close(int fd);
 
 #endif /* __SCAMPER_IP4_H */

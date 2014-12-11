@@ -1,7 +1,7 @@
 /*
  * scamper_control.c
  *
- * $Id: scamper_control.c,v 1.161 2014/12/03 02:31:32 mjl Exp $
+ * $Id: scamper_control.c,v 1.161.2.1 2015/12/06 08:06:42 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_control.c,v 1.161 2014/12/03 02:31:32 mjl Exp $";
+  "$Id: scamper_control.c,v 1.161.2.1 2015/12/06 08:06:42 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -95,10 +95,12 @@ typedef struct client
    * fdn: file descriptor managed by scamper for the client fd.
    * lp:  interface to read a line at a time from the client.
    * wb:  interface to handle non-blocking writes to the scamper_fd.
+   * txt: text strings to pass over socket when able to.
    */
   scamper_fd_t       *fdn;
   scamper_linepoll_t *lp;
   scamper_writebuf_t *wb;
+  slist_t            *txt;
 
   /* pointer returned by the source observe code */
   void               *observe;
@@ -113,13 +115,11 @@ typedef struct client
    *  source:     the source allocated to the control socket.
    *  sof:        scamper file wrapper for accessing the warts code.
    *  sof_objs:   warts objects waiting to be written.
-   *  sof_txt:    text strings to pass over socket when able to.
    *  sof_obj:    current object partially written over socket.
    *  sof_off:    offset into current object being written.
    */
   scamper_source_t   *source;
   scamper_outfile_t  *sof;
-  slist_t            *sof_txt;
   slist_t            *sof_objs;
   client_obj_t       *sof_obj;
   size_t              sof_off;
@@ -323,11 +323,7 @@ static void client_free(client_t *client)
   client->lp = NULL;
 
   /* remove the writebuf structure */
-  if(client->wb != NULL)
-    {
-      scamper_writebuf_detach(client->wb);
-      scamper_writebuf_free(client->wb);
-    }
+  if(client->wb != NULL) scamper_writebuf_free(client->wb);
   client->wb = NULL;
 
   /* remove the client from the list of clients */
@@ -362,88 +358,16 @@ static void client_free(client_t *client)
       client->sof_objs = NULL;
     }
 
-  if(client->sof_txt != NULL)
+  if(client->txt != NULL)
     {
-      while((txt = slist_head_pop(client->sof_txt)) != NULL)
+      while((txt = slist_head_pop(client->txt)) != NULL)
 	client_txt_free(txt);
-      slist_free(client->sof_txt);
-      client->sof_txt = NULL;
+      slist_free(client->txt);
+      client->txt = NULL;
     }
 
   free(client);
   return;
-}
-
-/*
- * client_data_consume
- *
- * this function is concerned with supplying data to an /attached/ control
- * socket.  It does so by streaming uuencoded warts objects.  Because the
- * data is streamed this means we uuencode as necessary, making the function
- * a little complicated.
- */
-static int client_data_consume(client_t *client)
-{
-  client_txt_t *t = NULL;
-  client_obj_t *o;
-  uint8_t data[8192];
-  char str[64];
-  size_t len;
-  int rc;
-
-  if(client->sof_off == 0)
-    {
-      while((t = slist_head_pop(client->sof_txt)) != NULL)
-	{
-	  rc = scamper_writebuf_send(client->wb, t->str, t->len);
-	  client_txt_free(t); t = NULL;
-	  scamper_fd_write_unpause(client->fdn);
-	  if(rc < 0)
-	    goto err;
-	}
-
-      /* check if we should start sending through a completed task */
-      if((o = slist_head_pop(client->sof_objs)) != NULL)
-	{
-	  client->sof_obj = o;
-	  len = snprintf(str, sizeof(str), "DATA %d\n",
-			 (int)uuencode_len(o->len, NULL, NULL));
-	  if(scamper_writebuf_send(client->wb, str, len) < 0)
-	    {
-	      printerror(errno,strerror,__func__,"could not send DATA header");
-	      goto err;
-	    }
-	  scamper_fd_write_unpause(client->fdn);
-	}
-    }
-  else
-    {
-      o = client->sof_obj;
-    }
-
-  if(o != NULL)
-    {
-      len = uuencode_bytes(o->data,o->len,&client->sof_off,data,sizeof(data));
-      if(client->sof_off == o->len)
-	{
-	  client_obj_free(o);
-	  client->sof_obj = NULL;
-	  client->sof_off = 0;
-	}
-
-      if(scamper_writebuf_send(client->wb, data, len) != 0)
-	{
-	  printerror(errno,strerror,__func__, "could not send %d bytes", len);
-	  goto err;
-	}
-      scamper_fd_write_unpause(client->fdn);
-    }
-
-  return 0;
-
- err:
-  /* XXX: should do something to close the client */
-  return 0;
 }
 
 static int client_send(client_t *client, char *fs, ...)
@@ -473,26 +397,15 @@ static int client_send(client_t *client, char *fs, ...)
     }
   str[len++] = '\n';
 
-  if(client->mode == CLIENT_MODE_ATTACHED)
-    {
-      if(str == msg && (str = memdup(msg, len)) == NULL)
-	goto err;
-      if((t = malloc_zero(sizeof(client_txt_t))) == NULL)
-	goto err;
-      if(slist_tail_push(client->sof_txt, t) == NULL)
-	goto err;
-      t->str = str;
-      t->len = len;
-      scamper_writebuf_consume(client->wb,
-			       (scamper_writebuf_consume_t)client_data_consume);
-    }
-  else
-    {
-      ret = scamper_writebuf_send(client->wb, str, len);
-      if(str != msg)
-	free(str);
-      scamper_fd_write_unpause(client->fdn);
-    }
+  if(str == msg && (str = memdup(msg, len)) == NULL)
+    goto err;
+  if((t = malloc_zero(sizeof(client_txt_t))) == NULL)
+    goto err;
+  if(slist_tail_push(client->txt, t) == NULL)
+    goto err;
+  t->str = str;
+  t->len = len;
+  scamper_fd_write_unpause(client->fdn);
 
   return ret;
 
@@ -721,8 +634,7 @@ static int client_data_send(void *param, const void *vdata, size_t len)
     }
   obj = NULL;
 
-  scamper_writebuf_consume(client->wb,
-			   (scamper_writebuf_consume_t)client_data_consume);
+  scamper_fd_write_unpause(client->fdn);
   return 0;
 
  err:
@@ -798,11 +710,6 @@ static int command_attach(client_t *client, char *buf)
   if((client->sof_objs = slist_alloc()) == NULL)
     {
       printerror(errno, strerror, __func__, "could not alloc objs list");
-      goto err;
-    }
-  if((client->sof_txt = slist_alloc()) == NULL)
-    {
-      printerror(errno, strerror, __func__, "could not alloc txt list");
       goto err;
     }
 
@@ -1954,34 +1861,6 @@ static int client_isdone(client_t *client)
   return 1;
 }
 
-static void client_writebuf_error(client_t *client, int err)
-{
-  printerror(err, strerror, __func__, "fd %d", scamper_fd_fd_get(client->fdn));
-  client_free(client);
-  return;
-}
-
-/*
- * client_writebuf_drained
- *
- * this callback is called when the client's writebuf is empty.
- * the point being to check when the client has had all its output sent
- * and it can be cleaned up
- */
-static void client_writebuf_drained(client_t *client)
-{
-  scamper_fd_write_pause(client->fdn);
-
-  if(client->mode != CLIENT_MODE_FLUSH)
-    return;
-
-  if(client_isdone(client) == 0)
-    return;
-
-  client_free(client);
-  return;
-}
-
 /*
  * client_attached_cb
  *
@@ -2086,13 +1965,11 @@ static int client_read_line(void *param, uint8_t *buf, size_t len)
   return 0;
 }
 
-static void client_read(const int fd, void *param)
+static void client_read(const int fd, client_t *client)
 {
-  client_t *client;
-  ssize_t rc;
   uint8_t buf[256];
+  ssize_t rc;
 
-  client = (client_t *)param;
   assert(scamper_fd_fd_get(client->fdn) == fd);
 
   /* try and read more from the client */
@@ -2132,6 +2009,95 @@ static void client_read(const int fd, void *param)
   return;
 }
 
+static void client_write(const int fd, client_t *client)
+{
+  client_txt_t *t = NULL;
+  client_obj_t *o = NULL;
+  uint8_t data[8192];
+  char str[64];
+  size_t len;
+  int rc;
+
+  assert(scamper_fd_fd_get(client->fdn) == fd);
+
+  if(scamper_writebuf_len(client->wb) == 0)
+    {
+      if(client->sof_off == 0)
+	{
+	  while((t = slist_head_pop(client->txt)) != NULL)
+	    {
+	      rc = scamper_writebuf_send(client->wb, t->str, t->len);
+	      client_txt_free(t); t = NULL;
+	      if(rc < 0)
+		goto err;
+	    }
+
+	  /* check if we should start sending through a completed task */
+	  if(client->sof_objs != NULL &&
+	     (o = slist_head_pop(client->sof_objs)) != NULL)
+	    {
+	      client->sof_obj = o;
+	      len = snprintf(str, sizeof(str), "DATA %d\n",
+			     (int)uuencode_len(o->len, NULL, NULL));
+	      if(scamper_writebuf_send(client->wb, str, len) < 0)
+		{
+		  printerror(errno, strerror, __func__,
+			     "could not send DATA header");
+		  goto err;
+		}
+	    }
+	}
+      else
+	{
+	  o = client->sof_obj;
+	}
+
+      if(o != NULL)
+	{
+	  len = uuencode_bytes(o->data, o->len, &client->sof_off,
+			       data, sizeof(data));
+	  if(client->sof_off == o->len)
+	    {
+	      client_obj_free(o);
+	      client->sof_obj = NULL;
+	      client->sof_off = 0;
+	    }
+
+	  if(scamper_writebuf_send(client->wb, data, len) != 0)
+	    {
+	      printerror(errno, strerror, __func__,
+			 "could not send %d bytes", len);
+	      goto err;
+	    }
+	}
+    }
+
+
+  if(scamper_writebuf_write(fd, client->wb) != 0)
+    {
+      printerror(errno, strerror, __func__, "fd %d", fd);
+      goto err;
+    }
+
+  if(scamper_writebuf_len(client->wb) == 0 &&
+     slist_count(client->txt) == 0 && client->sof_off == 0 &&
+     (client->sof_objs == NULL || slist_count(client->sof_objs) == 0))
+    {
+      scamper_fd_write_pause(client->fdn);
+      if(client->mode != CLIENT_MODE_FLUSH)
+	return;
+      if(client_isdone(client) == 0)
+	return;
+      client_free(client);
+    }
+
+  return;
+
+ err:
+  client_free(client);
+  return;
+}
+
 /*
  * client_alloc
  *
@@ -2139,7 +2105,7 @@ static void client_read(const int fd, void *param)
  */
 static client_t *client_alloc(struct sockaddr *sa, socklen_t slen, int fd)
 {
-  client_t *client;
+  client_t *client = NULL;
 
   /* make the socket non-blocking, so a read or write will not hang scamper */
 #ifndef _WIN32
@@ -2149,58 +2115,40 @@ static client_t *client_alloc(struct sockaddr *sa, socklen_t slen, int fd)
     }
 #endif
 
-  /* allocate the structure that holds the socket/client together */
-  if((client = malloc_zero(sizeof(struct client))) == NULL)
-    {
-      return NULL;
-    }
-
-  /* put the node into the list of sockets that are connected */
-  if((client->node = dlist_tail_push(client_list, client)) == NULL)
-    {
-      goto cleanup;
-    }
-
-  /* make a copy of the sockaddr that connected to scamper */
-  if((client->sa = memdup(sa, slen)) == NULL)
-    {
-      goto cleanup;
-    }
-
-  /* add the file descriptor to the event manager */
-  if((client->fdn=scamper_fd_private(fd,client_read,client,NULL,NULL)) == NULL)
+  /*
+   * allocate the structure that holds the socket/client together
+   * put the node into the list of sockets that are connected
+   * make a copy of the sockaddr that connected to scamper
+   * add the file descriptor to the event manager
+   * put a wrapper around the socket to read from it one line at a time
+   */
+  if((client = malloc_zero(sizeof(struct client))) == NULL ||
+     (client->node = dlist_tail_push(client_list, client)) == NULL ||
+     (client->sa = memdup(sa, slen)) == NULL ||
+     (client->fdn = scamper_fd_private(fd, client,
+				       (scamper_fd_cb_t)client_read,
+				       (scamper_fd_cb_t)client_write))==NULL ||
+     (client->lp = scamper_linepoll_alloc(client_read_line, client)) == NULL ||
+     (client->wb = scamper_writebuf_alloc()) == NULL ||
+     (client->txt = slist_alloc()) == NULL)
     {
       goto cleanup;
     }
-
-  /* put a wrapper around the socket to read from it one line at a time */
-  if((client->lp = scamper_linepoll_alloc(client_read_line, client)) == NULL)
-    {
-      goto cleanup;
-    }
-
-  if((client->wb = scamper_writebuf_alloc()) == NULL)
-    {
-      goto cleanup;
-    }
-  scamper_writebuf_attach(client->wb, client,
-			  (scamper_writebuf_error_t)client_writebuf_error,
-			  (scamper_writebuf_drained_t)client_writebuf_drained);
-  scamper_fd_write_set(client->fdn,
-		       (scamper_fd_cb_t)scamper_writebuf_write,
-		       client->wb);
+  scamper_fd_write_pause(client->fdn);
 
   client->mode = CLIENT_MODE_INTERACTIVE;
 
   return client;
 
  cleanup:
-  if(client->wb != NULL) scamper_writebuf_free(client->wb);
-  if(client->lp != NULL) scamper_linepoll_free(client->lp, 0);
-  if(client->node != NULL) dlist_node_pop(client_list, client->node);
-  if(client->sa != NULL) free(client->sa);
-  free(client);
-
+  if(client != NULL)
+    {
+      if(client->wb != NULL) scamper_writebuf_free(client->wb);
+      if(client->lp != NULL) scamper_linepoll_free(client->lp, 0);
+      if(client->node != NULL) dlist_node_pop(client_list, client->node);
+      if(client->sa != NULL) free(client->sa);
+      free(client);
+    }
   return NULL;
 }
 
@@ -2237,7 +2185,7 @@ static int control_init(int fd)
       return -1;
     }
 
-  if((fdn = scamper_fd_private(fd, control_accept, NULL, NULL, NULL)) == NULL)
+  if((fdn = scamper_fd_private(fd, NULL, control_accept, NULL)) == NULL)
     {
       printerror(errno, strerror, __func__, "could not add fd");
       return -1;

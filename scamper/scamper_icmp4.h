@@ -1,7 +1,7 @@
 /*
  * scamper_icmp4.h
  *
- * $Id: scamper_icmp4.h,v 1.19 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_icmp4.h,v 1.19.16.1 2015/12/06 08:21:36 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2009 The University of Waikato
@@ -26,6 +26,7 @@
 #define __SCAMPER_ICMP4_H
 
 int scamper_icmp4_open(const void *addr);
+int scamper_icmp4_open_fd(void);
 void scamper_icmp4_close(int fd);
 
 void scamper_icmp4_cleanup(void);

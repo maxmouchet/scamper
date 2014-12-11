@@ -1,7 +1,7 @@
 /*
  * sc_wartsdump
  *
- * $Id: sc_wartsdump.c,v 1.186.6.2 2015/10/17 09:43:11 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.186.6.3 2015/12/03 06:51:18 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartsdump.c,v 1.186.6.2 2015/10/17 09:43:11 mjl Exp $";
+  "$Id: sc_wartsdump.c,v 1.186.6.3 2015/12/03 06:51:18 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -146,8 +146,10 @@ static void dump_timeval(const char *label, struct timeval *start)
   return;
 }
 
-static void dump_trace_hop(scamper_trace_hop_t *hop)
+static void dump_trace_hop(const scamper_trace_t *trace,
+			   scamper_trace_hop_t *hop)
 {
+  struct timeval tv;
   scamper_icmpext_t *ie;
   uint32_t u32;
   char addr[256];
@@ -157,8 +159,13 @@ static void dump_trace_hop(scamper_trace_hop_t *hop)
 	 hop->hop_probe_ttl,
 	 scamper_addr_tostr(hop->hop_addr, addr, sizeof(addr)));
 
-  printf(" attempt: %d, rtt: %d.%06ds, probe-size: %d\n",
-	 hop->hop_probe_id,
+  printf(" attempt: %d", hop->hop_probe_id);
+  if(hop->hop_tx.tv_sec != 0)
+    {
+      timeval_diff_tv(&tv, &trace->start, &hop->hop_tx);
+      printf(", tx: %d.%06ds", (int)tv.tv_sec, (int)tv.tv_usec);
+    }
+  printf(", rtt: %d.%06ds, probe-size: %d\n",
 	 (int)hop->hop_rtt.tv_sec, (int)hop->hop_rtt.tv_usec,
 	 hop->hop_probe_size);
 
@@ -406,11 +413,11 @@ static void dump_trace(scamper_trace_t *trace)
 
   for(u16=0; u16<trace->hop_count; u16++)
     for(hop = trace->hops[u16]; hop != NULL; hop = hop->hop_next)
-      dump_trace_hop(hop);
+      dump_trace_hop(trace, hop);
 
   /* dump any last-ditch probing hops */
   for(hop = trace->lastditch; hop != NULL; hop = hop->hop_next)
-    dump_trace_hop(hop);
+    dump_trace_hop(trace, hop);
 
   if((pmtud = trace->pmtud) != NULL)
     {
@@ -443,7 +450,7 @@ static void dump_trace(scamper_trace_t *trace)
 	  printf("\n");
 	}
       for(hop = trace->pmtud->hops; hop != NULL; hop = hop->hop_next)
-	dump_trace_hop(hop);
+	dump_trace_hop(trace, hop);
     }
 
   printf("\n");
@@ -1282,7 +1289,7 @@ static void dump_tbit(scamper_tbit_t *tbit)
       null = tbit->data;
       if(null->options != 0)
 	{
-	  printf(" options:");
+	  printf(" null-options:");
 	  tbit_bits_print(null->options, 16, null_options,
 			  sizeof(null_options) / sizeof(char *));
 	  printf("\n");

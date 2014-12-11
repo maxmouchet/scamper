@@ -1,7 +1,7 @@
 /*
  * scamper_icmp6.c
  *
- * $Id: scamper_icmp6.c,v 1.95 2013/08/07 20:48:23 mjl Exp $
+ * $Id: scamper_icmp6.c,v 1.95.14.1 2015/12/06 08:22:45 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmp6.c,v 1.95 2013/08/07 20:48:23 mjl Exp $";
+  "$Id: scamper_icmp6.c,v 1.95.14.1 2015/12/06 08:22:45 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -197,15 +197,6 @@ int scamper_icmp6_probe(scamper_probe_t *probe)
 		IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)&i, sizeof(i)) == -1)
     {
       printerror(errno, strerror, __func__, "could not set hlim to %d", i);
-      return -1;
-    }
-
-  i = len;
-  if(setsockopt(probe->pr_fd,
-		SOL_SOCKET, SO_SNDBUF, (char *)&i, sizeof(i)) == -1)
-    {
-      printerror(errno, strerror, __func__,
-		 "could not set buffer to %d bytes", i);
       return -1;
     }
 
@@ -562,31 +553,40 @@ void scamper_icmp6_close(int fd)
   return;
 }
 
+int scamper_icmp6_open_fd(void)
+{
+  return socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
+}
+
 int scamper_icmp6_open(const void *addr)
 {
   struct sockaddr_in6 sin6;
-  int fd = -1;
-  int opt;
+  int fd, opt;
 
 #if defined(ICMP6_FILTER)
   struct icmp6_filter filter;
 #endif
 
 #if defined(WITHOUT_PRIVSEP)
-  if((fd = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6)) == -1)
+  fd = scamper_icmp6_open_fd();
 #else
-  if((fd = scamper_privsep_open_icmp(AF_INET6)) == -1)
+  fd = scamper_privsep_open_icmp(AF_INET6);
 #endif
-    {
-      printerror(errno, strerror, __func__, "could not open ICMP socket");
-      goto err;
-    }
+  if(fd == -1)
+    goto err;
 
   opt = 65535 + 128;
   if(setsockopt(fd, SOL_SOCKET, SO_RCVBUF, (char *)&opt, sizeof(opt)) == -1)
     {
       printerror(errno, strerror, __func__, "could not SO_RCVBUF");
       goto err;
+    }
+
+  opt = 65535 + 128;
+  if(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (char *)&opt, sizeof(opt)) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not SO_SNDBUF");
+      return -1;
     }
 
 #if defined(SO_TIMESTAMP)

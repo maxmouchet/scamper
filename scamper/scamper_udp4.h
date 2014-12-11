@@ -1,7 +1,7 @@
 /*
  * scamper_udp4.h
  *
- * $Id: scamper_udp4.h,v 1.22 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_udp4.h,v 1.22.14.1 2015/12/06 08:28:56 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
@@ -26,6 +26,7 @@
 #define __SCAMPER_UDP4_H
 
 int scamper_udp4_openraw(const void *addr);
+int scamper_udp4_openraw_fd(const void *addr);
 int scamper_udp4_opendgram(const void *addr, int sport);
 void scamper_udp4_close(int fd);
 

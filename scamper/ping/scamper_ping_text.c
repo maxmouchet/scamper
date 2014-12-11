@@ -6,7 +6,7 @@
  * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping_text.c,v 1.12 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_ping_text.c,v 1.12.6.1 2015/12/03 07:21:09 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_text.c,v 1.12 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_ping_text.c,v 1.12.6.1 2015/12/03 07:21:09 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -76,19 +76,21 @@ static char *ping_reply(const scamper_ping_t *ping,
   scamper_addr_tostr(reply->addr, a, sizeof(a));
   timeval_tostr(&reply->rtt, rtt, sizeof(rtt));
 
-  if(SCAMPER_PING_REPLY_IS_ICMP(reply))
+  string_concat(buf, sizeof(buf), &off, "%d bytes from %s, seq=%d ",
+		reply->reply_size, a, reply->probe_id);
+
+  if(SCAMPER_PING_REPLY_IS_ICMP(reply) || SCAMPER_PING_REPLY_IS_UDP(reply))
     {
-      string_concat(buf, sizeof(buf), &off,
-		    "%d bytes from %s, seq=%d ttl=%d time=%s ms",
-		    reply->reply_size, a, reply->probe_id,
+      string_concat(buf, sizeof(buf), &off, "ttl=%d time=%s ms",
 		    reply->reply_ttl, rtt);
-      if(reply->tsreply != NULL)
-	string_concat(buf, sizeof(buf), &off,
-		      " tso=%s tsr=%s tst=%s",
-		      tsreply_tostr(tso,sizeof(tso),reply->tsreply->tso),
-		      tsreply_tostr(tsr,sizeof(tsr),reply->tsreply->tsr),
-		      tsreply_tostr(tst,sizeof(tst),reply->tsreply->tst));
-      string_concat(buf, sizeof(buf), &off, "\n");
+    }
+
+  if(SCAMPER_PING_REPLY_IS_ICMP(reply) && reply->tsreply != NULL)
+    {
+      string_concat(buf, sizeof(buf), &off, " tso=%s tsr=%s tst=%s",
+		    tsreply_tostr(tso, sizeof(tso), reply->tsreply->tso),
+		    tsreply_tostr(tsr, sizeof(tsr), reply->tsreply->tsr),
+		    tsreply_tostr(tst, sizeof(tst), reply->tsreply->tst));
     }
   else if(SCAMPER_PING_REPLY_IS_TCP(reply))
     {
@@ -109,15 +111,10 @@ static char *ping_reply(const scamper_ping_t *ping,
 	  tcp = flags;
 	}
 
-      string_concat(buf, sizeof(buf), &off,
-		    "%d bytes from %s, seq=%d tcp=%s ttl=%d time=%s ms\n",
-		    reply->reply_size, a, reply->probe_id, tcp,
-		    reply->reply_ttl, rtt);
+      string_concat(buf, sizeof(buf), &off, "tcp=%s ttl=%d time=%s ms",
+		    tcp, reply->reply_ttl, rtt);
     }
-  else
-    {
-      return NULL;
-    }
+  string_concat(buf, sizeof(buf), &off, "\n");
 
   if((v4rr = reply->v4rr) != NULL)
     {

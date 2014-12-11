@@ -1,7 +1,7 @@
 /*
  * scamper_dl: manage BPF/PF_PACKET datalink instances for scamper
  *
- * $Id: scamper_dl.c,v 1.181.6.1 2015/10/17 07:49:11 mjl Exp $
+ * $Id: scamper_dl.c,v 1.181.6.2 2015/12/03 07:14:14 mjl Exp $
  *
  *          Matthew Luckie
  *          Ben Stasiewicz added fragmentation support.
@@ -35,7 +35,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dl.c,v 1.181.6.1 2015/10/17 07:49:11 mjl Exp $";
+  "$Id: scamper_dl.c,v 1.181.6.2 2015/12/03 07:14:14 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1662,6 +1662,24 @@ void scamper_dl_rec_frag_print(const scamper_dl_rec_t *dl)
 		addr_tostr(dl->dl_af, dl->dl_ip_src, addr, sizeof(addr)),
 		dl->dl_ip_size, id, dl->dl_ip_off);
 
+  return;
+}
+
+void scamper_dl_rec_udp_print(const scamper_dl_rec_t *dl)
+{
+  char addr[64], ipid[16];
+
+  assert(dl->dl_af == AF_INET || dl->dl_af == AF_INET6);
+  assert(dl->dl_ip_proto == IPPROTO_UDP);
+
+  if(dl->dl_af == AF_INET)
+    snprintf(ipid, sizeof(ipid), "ipid 0x%04x ", dl->dl_ip_id);
+  else
+    ipid[0] = '\0';
+
+  scamper_debug(NULL, "from %s %sudp %d:%d len %d",
+		addr_tostr(dl->dl_af, dl->dl_ip_src, addr, sizeof(addr)),
+		ipid, dl->dl_tcp_sport, dl->dl_tcp_dport, dl->dl_ip_size);
   return;
 }
 

@@ -1,7 +1,7 @@
 /*
  * scamper_privsep.c: code that does root-required tasks
  *
- * $Id: scamper_privsep.c,v 1.76 2014/11/01 04:52:55 mjl Exp $
+ * $Id: scamper_privsep.c,v 1.76.4.1 2015/12/06 08:31:08 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -31,18 +31,23 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_privsep.c,v 1.76 2014/11/01 04:52:55 mjl Exp $";
+  "$Id: scamper_privsep.c,v 1.76.4.1 2015/12/06 08:31:08 mjl Exp $";
 #endif
 
 #include "internal.h"
 
 #include "scamper_privsep.h"
 #include "scamper_debug.h"
-#include "utils.h"
 
 #include "scamper_dl.h"
 #include "scamper_rtsock.h"
 #include "scamper_firewall.h"
+#include "scamper_icmp4.h"
+#include "scamper_icmp6.h"
+#include "scamper_udp4.h"
+#include "scamper_ip4.h"
+
+#include "utils.h"
 
 typedef struct privsep_msg
 {
@@ -64,10 +69,6 @@ static int   lame_fd   = -1; /* the fd that the lame code uses */
 static void *cmsgbuf   = NULL; /* cmsgbuf sized for one fd */
 #endif
 
-#if defined(IPPROTO_DIVERT)
-static int   divert_on =  0; /* do not allow divert sockets by default */
-#endif
-
 /*
  * the privilege separation code works by allowing the lame process to send
  * request messages to the root process.  these define the messages that
@@ -78,16 +79,15 @@ static int   divert_on =  0; /* do not allow divert sockets by default */
 #define SCAMPER_PRIVSEP_OPEN_FILE     0x02U
 #define SCAMPER_PRIVSEP_OPEN_RTSOCK   0x03U
 #define SCAMPER_PRIVSEP_OPEN_ICMP     0x04U
-#define SCAMPER_PRIVSEP_OPEN_DIVERT   0x05U
-#define SCAMPER_PRIVSEP_OPEN_SOCK     0x06U
-#define SCAMPER_PRIVSEP_OPEN_RAWUDP   0x07U
-#define SCAMPER_PRIVSEP_OPEN_UNIX     0x08U
-#define SCAMPER_PRIVSEP_OPEN_RAWIP    0x09U
-#define SCAMPER_PRIVSEP_UNLINK        0x0aU
-#define SCAMPER_PRIVSEP_IPFW_INIT     0x0bU
-#define SCAMPER_PRIVSEP_IPFW_CLEANUP  0x0cU
-#define SCAMPER_PRIVSEP_IPFW_ADD      0x0dU
-#define SCAMPER_PRIVSEP_IPFW_DEL      0x0eU
+#define SCAMPER_PRIVSEP_OPEN_SOCK     0x05U
+#define SCAMPER_PRIVSEP_OPEN_RAWUDP   0x06U
+#define SCAMPER_PRIVSEP_OPEN_UNIX     0x07U
+#define SCAMPER_PRIVSEP_OPEN_RAWIP    0x08U
+#define SCAMPER_PRIVSEP_UNLINK        0x09U
+#define SCAMPER_PRIVSEP_IPFW_INIT     0x0aU
+#define SCAMPER_PRIVSEP_IPFW_CLEANUP  0x0bU
+#define SCAMPER_PRIVSEP_IPFW_ADD      0x0cU
+#define SCAMPER_PRIVSEP_IPFW_DEL      0x0dU
 
 #define SCAMPER_PRIVSEP_MAXTYPE (SCAMPER_PRIVSEP_IPFW_DEL)
 
@@ -100,8 +100,7 @@ static int   divert_on =  0; /* do not allow divert sockets by default */
  */
 static int privsep_open_icmp(uint16_t plen, const uint8_t *param)
 {
-  int type, protocol, opt;
-  int fd = -1;
+  int type;
 
   if(plen != sizeof(type))
     {
@@ -112,40 +111,12 @@ static int privsep_open_icmp(uint16_t plen, const uint8_t *param)
   memcpy(&type, param, sizeof(type));
 
   if(type == AF_INET)
-    {
-      protocol = IPPROTO_ICMP;
-    }
-  else if(type == AF_INET6)
-    {
-      protocol = IPPROTO_ICMPV6;
-    }
-  else
-    {
-      scamper_debug(__func__, "type %d != AF_INET || AF_INET6", type);
-      errno = EINVAL;
-      goto err;
-    }
+    return scamper_icmp4_open_fd();
+  if(type == AF_INET6)
+    return scamper_icmp6_open_fd();
 
-  if((fd = socket(type, SOCK_RAW, protocol)) == -1)
-    {
-      printerror(errno, strerror, __func__, "could not open socket");
-      goto err;
-    }
-
-  if(type == AF_INET)
-    {
-      opt = 1;
-      if(setsockopt(fd,IPPROTO_IP,IP_HDRINCL,(void *)&opt,sizeof(opt)) == -1)
-	{
-	  printerror(errno, strerror, __func__, "could not set IP_HDRINCL");
-	  goto err;
-	}
-    }
-
-  return fd;
-
- err:
-  if(fd != -1) close(fd);
+  scamper_debug(__func__, "type %d != AF_INET || AF_INET6", type);
+  errno = EINVAL;
   return -1;
 }
 
@@ -188,55 +159,6 @@ static int privsep_open_datalink(uint16_t plen, const uint8_t *param)
   memcpy(&ifindex, param, sizeof(ifindex));
 
   return scamper_dl_open_fd(ifindex);
-}
-
-/*
- * privsep_open_divert
- *
- * open a divert socket.  bind it to the port supplied.
- */
-static int privsep_open_divert(uint16_t plen, const uint8_t *param)
-{
-  int fd = -1;
-
-#if defined(IPPROTO_DIVERT)
-  struct sockaddr_in sin;
-  int port;
-
-  if(divert_on == 0)
-    return -1;
-
-  if(plen != sizeof(port))
-    {
-      scamper_debug(__func__, "plen %d != %d", plen, sizeof(port));
-      errno = EINVAL;
-      return -1;
-    }
-
-  memcpy(&port, param, sizeof(port));
-
-  if((fd = socket(PF_INET, SOCK_RAW, IPPROTO_DIVERT)) == -1)
-    {
-      printerror(errno, strerror, __func__, "could not open socket");
-      return -1;
-    }
-
-  memset(&sin, 0, sizeof(sin));
-  sin.sin_len = sizeof(sin);
-  sin.sin_family = AF_INET;
-  sin.sin_addr.s_addr = INADDR_ANY;
-  sin.sin_port = htons(port);
-  if(bind(fd, (struct sockaddr *)&sin, sizeof(sin)) == -1)
-    {
-      printerror(errno, strerror, __func__, "could not bind socket");
-      return -1;
-    }
-#else
-  scamper_debug(__func__, "divert sockets not supported");
-  errno = EINVAL;
-#endif
-
-  return fd;
 }
 
 static int privsep_open_sock(uint16_t plen, const uint8_t *param)
@@ -322,9 +244,6 @@ static int privsep_open_sock(uint16_t plen, const uint8_t *param)
 static int privsep_open_rawudp(uint16_t plen, const uint8_t *param)
 {
   struct in_addr in;
-  struct sockaddr_in sin4;
-  int fd, hdr;
-  char tmp[32];
 
   if(plen != 4)
     {
@@ -334,62 +253,18 @@ static int privsep_open_rawudp(uint16_t plen, const uint8_t *param)
     }
 
   memcpy(&in, param+0, sizeof(in));
-  if((fd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) == -1)
-    {
-      printerror(errno, strerror, __func__, "could not open socket");
-      return -1;
-    }
-
-  hdr = 1;
-  if(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, (void *)&hdr, sizeof(hdr)) == -1)
-    {
-      printerror(errno, strerror, __func__, "could not set IP_HDRINCL");
-      goto err;
-    }
-
-  sockaddr_compose((struct sockaddr *)&sin4, AF_INET, &in, 0);
-  if(bind(fd, (struct sockaddr *)&sin4, sizeof(sin4)) == -1)
-    {
-      printerror(errno, strerror, __func__, "could not bind %s",
-		 sockaddr_tostr((struct sockaddr *)&sin4, tmp, sizeof(tmp)));
-      goto err;
-    }
-
-  return fd;
-
- err:
-  if(fd != -1) close(fd);
-  return -1;
+  return scamper_udp4_openraw_fd(&in);
 }
 
 static int privsep_open_rawip(uint16_t plen, const uint8_t *param)
 {
-  int fd, hdr = 1;
-
   if(plen != 0)
     {
       scamper_debug(__func__, "plen %d != 4", plen);
       errno = EINVAL;
       return -1;
     }
-
-  if((fd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) == -1)
-    {
-      printerror(errno, strerror, __func__, "could not open socket");
-      return -1;
-    }
-
-  if(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, (void *)&hdr, sizeof(hdr)) == -1)
-    {
-      printerror(errno, strerror, __func__, "could not set IP_HDRINCL");
-      goto err;
-    }
-
-  return fd;
-
- err:
-  if(fd != -1) close(fd);
-  return -1;
+  return scamper_ip4_openraw_fd();
 }
 
 static int privsep_ipfw_init(uint16_t plen, const uint8_t *param)
@@ -849,7 +724,6 @@ static int privsep_do(void)
     {privsep_open_file,     privsep_send_fd},
     {privsep_open_rtsock,   privsep_send_fd},
     {privsep_open_icmp,     privsep_send_fd},
-    {privsep_open_divert,   privsep_send_fd},
     {privsep_open_sock,     privsep_send_fd},
     {privsep_open_rawudp,   privsep_send_fd},
     {privsep_open_unix,     privsep_send_fd},
@@ -1091,11 +965,6 @@ int scamper_privsep_open_icmp(const int domain)
   return privsep_getfd_1int(SCAMPER_PRIVSEP_OPEN_ICMP, domain);
 }
 
-int scamper_privsep_open_divert(const int port)
-{
-  return privsep_getfd_1int(SCAMPER_PRIVSEP_OPEN_DIVERT, port);
-}
-
 int scamper_privsep_open_tcp(const int domain, const int port)
 {
   return privsep_getfd_3int(SCAMPER_PRIVSEP_OPEN_SOCK,domain,IPPROTO_TCP,port);
@@ -1326,11 +1195,10 @@ int scamper_privsep_init()
    * this was first noticed in SunOS
    */
   memset(&hints, 0, sizeof(struct addrinfo));
-  hints.ai_flags    = AI_NUMERICHOST;
   hints.ai_socktype = SOCK_DGRAM;
   hints.ai_protocol = IPPROTO_UDP;
   hints.ai_family   = AF_INET;
-  getaddrinfo("127.0.0.1", NULL, &hints, &res0);
+  getaddrinfo("localhost", NULL, &hints, &res0);
   freeaddrinfo(res0);
 
   /* change the root directory of the unpriviledged directory */

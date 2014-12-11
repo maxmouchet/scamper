@@ -1,7 +1,7 @@
 /*
  * scamper_icmp4.c
  *
- * $Id: scamper_icmp4.c,v 1.111 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_icmp4.c,v 1.111.6.1 2015/12/06 08:20:53 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmp4.c,v 1.111 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_icmp4.c,v 1.111.6.1 2015/12/06 08:20:53 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -178,15 +178,6 @@ int scamper_icmp4_probe(scamper_probe_t *probe)
 
   /* compute length, for sake of readability */
   len = ip4hlen + icmphdrlen + probe->pr_len;
-
-  i = len;
-  if(setsockopt(probe->pr_fd,
-		SOL_SOCKET, SO_SNDBUF, (char *)&i, sizeof(i)) == -1)
-    {
-      printerror(errno, strerror, __func__,
-		 "could not set buffer to %d bytes", i);
-      return -1;
-    }
 
   if(txbuf_len < len)
     {
@@ -822,36 +813,44 @@ void scamper_icmp4_close(int fd)
   return;
 }
 
+int scamper_icmp4_open_fd(void)
+{
+  int opt = 1, fd;
+
+  if((fd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not open ICMP socket");
+      goto err;
+    }
+  if(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, (void *)&opt, sizeof(opt)) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not set IP_HDRINCL");
+      goto err;
+    }
+  return fd;
+
+ err:
+  if(fd != -1) scamper_icmp4_close(fd);
+  return -1;
+}
+
 int scamper_icmp4_open(const void *addr)
 {
   struct sockaddr_in sin;
   char tmp[32];
-  int fd = -1;
-  int opt;
+  int fd, opt;
 
 #if defined(ICMP_FILTER)
   struct icmp_filter filter;
 #endif
 
 #if defined(WITHOUT_PRIVSEP)
-  if((fd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == -1)
-    {
-      printerror(errno, strerror, __func__, "could not open ICMP socket");
-      goto err;
-    }
-  opt = 1;
-  if(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, (void *)&opt, sizeof(opt)) == -1)
-    {
-      printerror(errno, strerror, __func__, "could not set IP_HDRINCL");
-      goto err;
-    }
+  fd = scamper_icmp4_open_fd();
 #else
-  if((fd = scamper_privsep_open_icmp(AF_INET)) == -1)
-    {
-      printerror(errno, strerror, __func__, "could not open ICMP socket");
-      goto err;
-    }
+  fd = scamper_privsep_open_icmp(AF_INET);
 #endif
+  if(fd == -1)
+    return -1;
 
   opt = 65535 + 128;
   if(setsockopt(fd, SOL_SOCKET, SO_RCVBUF, (void *)&opt, sizeof(opt)) == -1)
@@ -859,6 +858,13 @@ int scamper_icmp4_open(const void *addr)
       printerror(errno, strerror, __func__, "could not set SO_RCVBUF");
       goto err;
     }
+
+  opt = 65535 + 128;
+  if(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (void *)&opt, sizeof(opt)) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not set SO_SNDBUF");
+      goto err;
+    }      
 
 #if defined(SO_TIMESTAMP)
   opt = 1;

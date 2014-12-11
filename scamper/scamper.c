@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.241.2.2 2015/10/17 07:44:49 mjl Exp $
+ * $Id: scamper.c,v 1.241.2.3 2015/12/03 08:12:55 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper.c,v 1.241.2.2 2015/10/17 07:44:49 mjl Exp $";
+  "$Id: scamper.c,v 1.241.2.3 2015/12/03 08:12:55 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -81,7 +81,6 @@ static const char rcsid[] =
 #define OPT_VERSION         0x00000020 /* v: */
 #define OPT_DAEMON          0x00000200 /* D: */
 #define OPT_IP              0x00000400 /* i: */
-#define OPT_DL              0x00001000
 #define OPT_MONITORNAME     0x00002000 /* M: */
 #define OPT_COMMAND         0x00004000 /* c: */
 #define OPT_HELP            0x00008000 /* ?: */
@@ -261,32 +260,30 @@ static void usage(uint32_t opt_mask)
       usage_str('O', "specify options to use:");
       usage_line("text: output results in plain text for interactive use");
       usage_line("warts: output results in warts format for science");
-      usage_line("json: output results in json format, better to use warts");
-      usage_line("outcopy: output copy of all results collected to file");
-      usage_line("dlts: use timestamps from datalink layer where possible");
       usage_line("tsps: input file for ping -T tsprespec=%s");
-      usage_line("rawtcp: use raw socket to send IPv4 TCP probes");
+      usage_line("cmdfile: input file specifies whole commands");
+      usage_line("json: output results in json format, better to use warts");
       usage_line("planetlab: necessary to use safe raw sockets on planetlab");
       usage_line("noinitndc: do not initialise neighbour discovery cache");
+      usage_line("outcopy: output copy of all results collected to file");
+      usage_line("rawtcp: use raw socket to send IPv4 TCP probes");
 
 #ifdef HAVE_OPENSSL
       usage_line("notls: do not use TLS anywhere in scamper");
-#endif
-      
-#ifndef WITHOUT_DEBUGFILE
-      usage_line("debugfileappend: append to debugfile, rather than truncate");
 #endif
 
 #ifndef _WIN32
       usage_line("select: use select(2) rather than poll(2)");
 #endif
-
 #ifdef HAVE_KQUEUE
       usage_line("kqueue: use kqueue(2) rather than poll(2)");
 #endif
-
 #ifdef HAVE_EPOLL
       usage_line("epoll: use epoll(7) rather than poll(2)");
+#endif
+
+#ifndef WITHOUT_DEBUGFILE
+      usage_line("debugfileappend: append to debugfile, rather than truncate");
 #endif
     }
 
@@ -609,8 +606,6 @@ static int check_options(int argc, char *argv[])
 	    intype = optarg;
 	  else if(strcasecmp(optarg, "cmdfile") == 0)
 	    intype = optarg;
-	  else if(strcasecmp(optarg, "dlts") == 0)
-	    options |= OPT_DL;
 	  else if(strcasecmp(optarg, "planetlab") == 0)
 	    flags |= FLAG_PLANETLAB;
 	  else if(strcasecmp(optarg, "noinitndc") == 0)
@@ -932,12 +927,6 @@ int scamper_monitorname_set(const char *mn)
   return 0;
 }
 
-int scamper_option_dl()
-{
-  if(options & OPT_DL) return 1;
-  return 0;
-}
-
 int scamper_option_planetlab(void)
 {
   if(flags & FLAG_PLANETLAB) return 1;
@@ -1134,9 +1123,7 @@ static int scamper(int argc, char *argv[])
   if(firewall != NULL)
     {
       if(scamper_firewall_init(firewall) != 0)
-	{
-	  return -1;
-	}
+	return -1;
       free(firewall);
       firewall = NULL;
     }
@@ -1513,6 +1500,12 @@ static void cleanup(void)
     {
       free(monitorname);
       monitorname = NULL;
+    }
+
+  if(firewall != NULL)
+    {
+      free(firewall);
+      firewall = NULL;
     }
 
   if(command != NULL)

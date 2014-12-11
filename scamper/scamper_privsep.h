@@ -1,7 +1,7 @@
 /*
  * scamper_privsep.h
  *
- * $Id: scamper_privsep.h,v 1.23 2011/11/10 21:37:53 mjl Exp $
+ * $Id: scamper_privsep.h,v 1.23.16.1 2015/12/06 08:29:51 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -33,8 +33,6 @@ int scamper_privsep_open_file(const char *file,
 			      const int flags, const mode_t mode);
 
 int scamper_privsep_open_rtsock(void);
-
-int scamper_privsep_open_divert(const int port);
 
 int scamper_privsep_open_icmp(const int domain);
 int scamper_privsep_open_udp(const int domain, const int port);

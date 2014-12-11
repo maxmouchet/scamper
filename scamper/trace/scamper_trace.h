@@ -1,7 +1,7 @@
 /*
  * scamper_trace.h
  *
- * $Id: scamper_trace.h,v 1.133.2.2 2015/10/17 09:33:52 mjl Exp $
+ * $Id: scamper_trace.h,v 1.133.2.3 2015/12/03 07:24:58 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -51,6 +51,7 @@ struct scamper_addr;
 #define SCAMPER_TRACE_FLAG_IGNORETTLDST 0x08 /* ignore ttl exp. rx f/ dst */
 #define SCAMPER_TRACE_FLAG_DOUBLETREE   0x10 /* doubletree */
 #define SCAMPER_TRACE_FLAG_ICMPCSUMDP   0x20 /* icmp csum found in dport */
+#define SCAMPER_TRACE_FLAG_CONSTPAYLOAD 0x40 /* do not hack payload for csum */
 
 #define SCAMPER_TRACE_TYPE_ICMP_ECHO       0x01 /* ICMP echo requests */
 #define SCAMPER_TRACE_TYPE_UDP             0x02 /* UDP to unused ports */
@@ -65,25 +66,29 @@ struct scamper_addr;
 #define SCAMPER_TRACE_HOP_IS_TCP(hop) (                         \
  (hop->hop_flags & SCAMPER_TRACE_HOP_FLAG_TCP) != 0)
 
+#define SCAMPER_TRACE_HOP_IS_UDP(hop) (				\
+ (hop->hop_flags & SCAMPER_TRACE_HOP_FLAG_UDP) != 0)
+
 #define SCAMPER_TRACE_HOP_IS_ICMP(hop) (                        \
- (hop->hop_flags & SCAMPER_TRACE_HOP_FLAG_TCP) == 0)
+ (hop->hop_flags & (SCAMPER_TRACE_HOP_FLAG_TCP|			\
+		    SCAMPER_TRACE_HOP_FLAG_UDP)) == 0)
 
 #define SCAMPER_TRACE_HOP_IS_ICMP_TTL_EXP(hop) (		\
- ((hop)->hop_flags & SCAMPER_TRACE_HOP_FLAG_TCP) == 0 &&	\
+ SCAMPER_TRACE_HOP_IS_ICMP(hop) &&				\
  (((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV4 &&		\
    (hop)->hop_icmp_type == 11) ||				\
   ((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV6 &&		\
    (hop)->hop_icmp_type == 3)))
 
 #define SCAMPER_TRACE_HOP_IS_ICMP_TTL_EXP_TRANS(hop) (		\
- ((hop)->hop_flags & SCAMPER_TRACE_HOP_FLAG_TCP) == 0 &&	\
+ SCAMPER_TRACE_HOP_IS_ICMP(hop) &&				\
  (((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV4 &&		\
    (hop)->hop_icmp_type == 11 && (hop)->hop_icmp_code == 0) ||	\
   ((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV6 &&		\
    (hop)->hop_icmp_type == 3 && (hop)->hop_icmp_code == 0)))
 
 #define SCAMPER_TRACE_HOP_IS_ICMP_PTB(hop) (			\
- ((hop)->hop_flags & SCAMPER_TRACE_HOP_FLAG_TCP) == 0 &&	\
+ SCAMPER_TRACE_HOP_IS_ICMP(hop) &&				\
  (((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV4 &&		\
    (hop)->hop_icmp_type == 3 && (hop)->hop_icmp_code == 4) ||	\
   ((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV6 &&		\
@@ -94,21 +99,21 @@ struct scamper_addr;
  (hop)->hop_probe_size <= (hop)->hop_icmp_nhmtu)
 
 #define SCAMPER_TRACE_HOP_IS_ICMP_UNREACH(hop) (		\
- ((hop)->hop_flags & SCAMPER_TRACE_HOP_FLAG_TCP) == 0 &&	\
+ SCAMPER_TRACE_HOP_IS_ICMP(hop) &&				\
  (((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV4 &&		\
    (hop)->hop_icmp_type == 3) ||				\
   ((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV6 &&		\
    (hop)->hop_icmp_type == 1)))
 
 #define SCAMPER_TRACE_HOP_IS_ICMP_UNREACH_PORT(hop) (		\
- ((hop)->hop_flags & SCAMPER_TRACE_HOP_FLAG_TCP) == 0 &&	\
+ SCAMPER_TRACE_HOP_IS_ICMP(hop) &&				\
  (((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV4 &&		\
    (hop)->hop_icmp_type == 3 && (hop)->hop_icmp_code == 3) ||	\
   ((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV6 &&		\
    (hop)->hop_icmp_type == 1 && (hop)->hop_icmp_code == 4)))
 
 #define SCAMPER_TRACE_HOP_IS_ICMP_ECHO_REPLY(hop) (		\
- ((hop)->hop_flags & SCAMPER_TRACE_HOP_FLAG_TCP) == 0 &&	\
+ SCAMPER_TRACE_HOP_IS_ICMP(hop) &&				\
  (((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV4 &&		\
    (hop)->hop_icmp_type == 0) ||				\
   ((hop)->hop_addr->type == SCAMPER_ADDR_TYPE_IPV6 &&		\
@@ -157,6 +162,9 @@ struct scamper_addr;
 #define SCAMPER_TRACE_IS_ALLATTEMPTS(trace) (			\
  (trace)->flags & SCAMPER_TRACE_FLAG_ALLATTEMPTS)
 
+#define SCAMPER_TRACE_IS_CONSTPAYLOAD(trace)(			\
+ (trace)->flags & SCAMPER_TRACE_FLAG_CONSTPAYLOAD)
+
 /*
  * scamper hop flags:
  * these flags give extra meaning to fields found in the hop structure
@@ -168,6 +176,7 @@ struct scamper_addr;
 #define SCAMPER_TRACE_HOP_FLAG_TS_TSC     0x08 /* rtt computed w/ tsc clock */
 #define SCAMPER_TRACE_HOP_FLAG_REPLY_TTL  0x10 /* reply ttl included */
 #define SCAMPER_TRACE_HOP_FLAG_TCP        0x20 /* reply is TCP */
+#define SCAMPER_TRACE_HOP_FLAG_UDP        0x40 /* reply is UDP */
 
 /*
  * this macro is a more convenient way to check that the hop record

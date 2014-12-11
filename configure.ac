@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([scamper], [20141211b], [mjl@luckie.org.nz])
+AC_INIT([scamper], [20141211c], [mjl@luckie.org.nz])
 
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([scamper/scamper.c])
@@ -13,14 +13,6 @@ AC_PROG_GCC_TRADITIONAL
 AC_PROG_INSTALL
 AC_PROG_MKDIR_P
 AC_LANG(C)
-
-if test -d "/usr/local/lib"; then
-   LDFLAGS="$LDFLAGS -L/usr/local/lib"
-fi
-
-if test -d "/usr/local/include"; then
-   CFLAGS="$CFLAGS -I/usr/local/include"
-fi
 
 # Whether all the debugging output should be spewed out
 AC_ARG_ENABLE([debug],
@@ -244,6 +236,7 @@ AC_CONFIG_FILES([
 	utils/sc_ally/Makefile
 	utils/sc_analysis_dump/Makefile
 	utils/sc_attach/Makefile
+	utils/sc_filterpolicy/Makefile
 	utils/sc_ipiddump/Makefile
 	utils/sc_speedtrap/Makefile
 	utils/sc_tracediff/Makefile

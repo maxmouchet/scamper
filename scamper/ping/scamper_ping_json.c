@@ -5,10 +5,10 @@
  * Copyright (c) 2006-2011 The University of Waikato
  * Copyright (c) 2011-2013 Internap Network Services Corporation
  * Copyright (c) 2013      Matthew Luckie
- * Copyright (c) 2013-2014 The Regents of the University of California
+ * Copyright (c) 2013-2015 The Regents of the University of California
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_ping_json.c,v 1.11 2014/09/17 03:25:08 mjl Exp $
+ * $Id: scamper_ping_json.c,v 1.11.6.1 2015/12/03 07:17:59 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_json.c,v 1.11 2014/09/17 03:25:08 mjl Exp $";
+  "$Id: scamper_ping_json.c,v 1.11.6.1 2015/12/03 07:17:59 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -43,12 +43,25 @@ static const char rcsid[] =
 
 #include "utils.h"
 
+static char *ping_probe_data(const scamper_ping_t *ping, char *buf, size_t len)
+{
+  size_t off = 0;
+  uint16_t i;
+  for(i=0; i+4<ping->probe_datalen; i+=4)
+    string_concat(buf, len, &off, "%02x%02x%02x%02x",
+		  ping->probe_data[i+0], ping->probe_data[i+1],
+		  ping->probe_data[i+2], ping->probe_data[i+3]);
+  while(i<ping->probe_datalen)
+    string_concat(buf, len, &off, "%02x", ping->probe_data[i++]);
+  return buf;
+}
+
 static char *ping_header(const scamper_ping_t *ping)
 {
   static const char *flags[] = {
     "v4rr", "spoof", "payload", "tsonly", "tsandaddr", "icmpsum", "dl", "8"
   };
-  char buf[512], tmp[64];
+  char buf[1024], tmp[512];
   size_t off = 0;
   uint8_t u8, c;
 
@@ -76,6 +89,16 @@ static char *ping_header(const scamper_ping_t *ping)
   if(SCAMPER_PING_METHOD_IS_UDP(ping) || SCAMPER_PING_METHOD_IS_TCP(ping))
     string_concat(buf, sizeof(buf), &off, ", \"sport\":%u, \"dport\":%u",
 		  ping->probe_sport, ping->probe_dport);
+
+  if(ping->probe_datalen > 0 && ping->probe_data != NULL)
+    {
+      if((ping->flags & SCAMPER_PING_FLAG_PAYLOAD) != 0)
+	string_concat(buf, sizeof(buf), &off, ", \"payload\":");
+      else
+	string_concat(buf, sizeof(buf), &off, ", \"pattern\":");
+      string_concat(buf, sizeof(buf), &off, "\"%s\"",
+		    ping_probe_data(ping, tmp, sizeof(tmp)));
+    }
 
   if(ping->flags != 0)
     {
@@ -113,6 +136,20 @@ static char *ping_header(const scamper_ping_t *ping)
   return strdup(buf);
 }
 
+static char *ping_reply_proto(const scamper_ping_reply_t *reply,
+			     char *buf, size_t len)
+{
+  if(reply->reply_proto == IPPROTO_ICMP || reply->reply_proto == IPPROTO_ICMPV6)
+    snprintf(buf, len, "\"icmp\"");
+  else if(reply->reply_proto == IPPROTO_TCP)
+    snprintf(buf, len, "\"tcp\"");
+  else if(reply->reply_proto == IPPROTO_UDP)
+    snprintf(buf, len, "\"udp\"");
+  else
+    snprintf(buf, len, "%d", reply->reply_proto);
+  return buf;
+}
+
 static char *ping_reply(const scamper_ping_t *ping,
 			const scamper_ping_reply_t *reply)
 {
@@ -128,6 +165,9 @@ static char *ping_reply(const scamper_ping_t *ping,
 		reply->probe_id);
   string_concat(buf, sizeof(buf), &off,", \"reply_size\":%u, \"reply_ttl\":%u",
 		reply->reply_size, reply->reply_ttl);
+  string_concat(buf, sizeof(buf), &off, ", \"reply_proto\":%s",
+		ping_reply_proto(reply, tmp, sizeof(tmp)));
+
   if(reply->tx.tv_sec != 0)
     {
       timeval_add_tv3(&tv, &reply->tx, &reply->rtt);

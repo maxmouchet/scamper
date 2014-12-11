@@ -1,7 +1,7 @@
 /*
  * scamper_dl.h
  *
- * $Id: scamper_dl.h,v 1.57.14.3 2015/10/17 07:48:36 mjl Exp $
+ * $Id: scamper_dl.h,v 1.57.14.4 2015/12/03 07:15:35 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -549,10 +549,12 @@ int scamper_dl_rec_icmp_ip_dst(scamper_dl_rec_t *dl, scamper_addr_t *addr);
 
 #if !defined(NDEBUG) && !defined(WITHOUT_DEBUGFILE)
 void    scamper_dl_rec_tcp_print(const scamper_dl_rec_t *dl);
+void    scamper_dl_rec_udp_print(const scamper_dl_rec_t *dl);
 void    scamper_dl_rec_frag_print(const scamper_dl_rec_t *dl);
 void    scamper_dl_rec_icmp_print(const scamper_dl_rec_t *dl);
 #else
 #define scamper_dl_rec_tcp_print(dl) ((void)0)
+#define scamper_dl_rec_udp_print(dl) ((void)0)
 #define scamper_dl_rec_frag_print(dl) ((void)0)
 #define scamper_dl_rec_icmp_print(dl) ((void)0)
 #endif

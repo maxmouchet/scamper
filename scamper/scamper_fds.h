@@ -1,7 +1,7 @@
 /*
  * scamper_fds: manage events for file descriptors
  *
- * $Id: scamper_fds.h,v 1.21 2014/09/24 04:34:21 mjl Exp $
+ * $Id: scamper_fds.h,v 1.21.6.1 2015/12/06 08:03:03 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -52,9 +52,8 @@ int scamper_fd_sport(const scamper_fd_t *fdn, uint16_t *sport);
 int scamper_fd_addr(const scamper_fd_t *fdn, void *addr, size_t len);
 
 /* this function allocates a socket that is exclusively held by the caller */
-scamper_fd_t *scamper_fd_private(int fd,
-				 scamper_fd_cb_t read_cb, void *read_param,
-				 scamper_fd_cb_t write_cb, void *write_param);
+scamper_fd_t *scamper_fd_private(int fd, void *param, scamper_fd_cb_t read_cb,
+				 scamper_fd_cb_t write_cb);
 
 scamper_fd_t *scamper_fd_file(int fd, scamper_fd_cb_t read_cb, void *param);
 

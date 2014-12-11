@@ -1,7 +1,7 @@
 /*
  * scamper_icmp6.h
  *
- * $Id: scamper_icmp6.h,v 1.19 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_icmp6.h,v 1.19.16.1 2015/12/06 08:25:03 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2009 The University of Waikato
@@ -26,6 +26,7 @@
 #define __SCAMPER_ICMP6_H
 
 int scamper_icmp6_open(const void *addr);
+int scamper_icmp6_open_fd(void);
 void scamper_icmp6_close(int fd);
 
 void scamper_icmp6_cleanup(void);

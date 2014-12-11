@@ -6,7 +6,7 @@
  * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_text.c,v 1.20 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_trace_text.c,v 1.20.6.1 2015/12/03 07:54:55 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_text.c,v 1.20 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_trace_text.c,v 1.20.6.1 2015/12/03 07:54:55 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -93,7 +93,8 @@ static char *icmp_tostr(const scamper_trace_hop_t *hop,
     {
       str[0] = '\0';
     }
-  else if(hop->hop_addr->type == SCAMPER_ADDR_TYPE_IPV4)
+  else if(SCAMPER_TRACE_HOP_IS_ICMP(hop) &&
+	  hop->hop_addr->type == SCAMPER_ADDR_TYPE_IPV4)
     {
       if(hop->hop_icmp_type == ICMP_UNREACH)
 	{
@@ -137,7 +138,8 @@ static char *icmp_tostr(const scamper_trace_hop_t *hop,
 	  snprintf(str,len," !<%d,%d>",hop->hop_icmp_type,hop->hop_icmp_code);
 	}
     }
-  else if(hop->hop_addr->type == SCAMPER_ADDR_TYPE_IPV6)
+  else if(SCAMPER_TRACE_HOP_IS_ICMP(hop) &&
+	  hop->hop_addr->type == SCAMPER_ADDR_TYPE_IPV6)
     {
       if(hop->hop_icmp_type == ICMP6_DST_UNREACH)
 	{

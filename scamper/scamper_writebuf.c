@@ -1,12 +1,12 @@
 /*
  * scamper_writebuf.c: use in combination with select to send without blocking
  *
- * $Id: scamper_writebuf.c,v 1.37 2014/09/23 02:54:56 mjl Exp $
+ * $Id: scamper_writebuf.c,v 1.37.6.1 2015/12/06 07:56:45 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
  * Copyright (C) 2014      The Regents of the University of California
- * Copyright (C) 2014      Matthew Luckie
+ * Copyright (C) 2014-2015 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_writebuf.c,v 1.37 2014/09/23 02:54:56 mjl Exp $";
+  "$Id: scamper_writebuf.c,v 1.37.6.1 2015/12/06 07:56:45 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -37,6 +37,8 @@ static const char rcsid[] =
 #include "scamper_writebuf.h"
 #include "mjl_list.h"
 #include "utils.h"
+
+static int iov_max = -1;
 
 /*
  * scamper_writebuf
@@ -55,10 +57,6 @@ struct scamper_writebuf
   slist_t      *iovs;
   void         *param;
   int           error;
-
-  scamper_writebuf_error_t   error_func;
-  scamper_writebuf_drained_t drained_func;
-  scamper_writebuf_consume_t consume_func;
 };
 
 #ifndef _WIN32
@@ -72,9 +70,10 @@ static int writebuf_tx(scamper_writebuf_t *wb, int fd)
   int i, iovs;
 
   if((iovs = slist_count(wb->iovs)) <= 0)
-    {
-      return 0;
-    }
+    return 0;
+
+  if(iovs > iov_max)
+    iovs = iov_max;
 
   /*
    * if there is only one iovec, or we can't allocate an array large enough
@@ -105,9 +104,7 @@ static int writebuf_tx(scamper_writebuf_t *wb, int fd)
 
   /* if we allocated an array of iovecs, then free it now */
   if(iovs > 1)
-    {
-      free(iov);
-    }
+    free(iov);
 
   if(size == -1)
     {
@@ -177,39 +174,14 @@ static int writebuf_tx(scamper_writebuf_t *wb, int fd)
  *
  * this function is called when the fd is ready to write to.
  */
-void scamper_writebuf_write(int fd, scamper_writebuf_t *wb)
+int scamper_writebuf_write(int fd, scamper_writebuf_t *wb)
 {
-  /*
-   * if this callback was called, but there is no outstanding data to
-   * send, see if there is a consume function with data available.  if
-   * there is not then withdraw the entry from the fd monitoring module
-   */
-  if(slist_count(wb->iovs) == 0 && wb->consume_func != NULL)
+  if(writebuf_tx(wb, fd) != 0)
     {
-      wb->consume_func(wb->param);
+      wb->error = errno;
+      return -1;
     }
-
-  if(slist_count(wb->iovs) > 0)
-    {
-      if(writebuf_tx(wb, fd) != 0)
-	{
-	  wb->error = errno;
-	  if(wb->error_func != NULL)
-	    wb->error_func(wb->param, errno);
-	  return;
-	}
-    }
-  else
-    {
-      wb->consume_func = NULL;
-    }
-
-  /* if all the iovecs are sent, call the drained func */
-  if(slist_count(wb->iovs) == 0 &&
-     wb->consume_func == NULL && wb->drained_func != NULL)
-    wb->drained_func(wb->param);
-
-  return;
+  return 0;
 }
 
 size_t scamper_writebuf_len(const scamper_writebuf_t *wb)
@@ -250,13 +222,6 @@ size_t scamper_writebuf_len2(const scamper_writebuf_t *wb,char *str,size_t len)
     }
 
   return k;
-}
-
-void scamper_writebuf_detach(scamper_writebuf_t *wb)
-{
-  wb->error_func = NULL;
-  wb->param = NULL;
-  return;
 }
 
 /*
@@ -302,23 +267,6 @@ int scamper_writebuf_send(scamper_writebuf_t *wb, const void *data, size_t len)
   return -1;
 }
 
-int scamper_writebuf_consume(scamper_writebuf_t *wb,
-			     scamper_writebuf_consume_t cfunc)
-{
-  wb->consume_func = cfunc;
-
-  /* don't need to consume if there is already stuff queued to send */
-  if(slist_count(wb->iovs) > 0)
-    return 0;
-
-  /* consume.  if there is no effect then drop the consume pointer */
-  wb->consume_func(wb->param);
-  if(slist_count(wb->iovs) == 0)
-      wb->consume_func = NULL;
-
-  return 0;
-}
-
 /*
  * scamper_writebuf_free
  *
@@ -344,16 +292,6 @@ void scamper_writebuf_free(scamper_writebuf_t *wb)
   return;
 }
 
-void scamper_writebuf_attach(scamper_writebuf_t *wb, void *param,
-			     scamper_writebuf_error_t efunc,
-			     scamper_writebuf_drained_t dfunc)
-{
-  wb->param = param;
-  wb->error_func = efunc;
-  wb->drained_func = dfunc;
-  return;
-}
-
 /*
  * scamper_writebuf_alloc
  *
@@ -361,6 +299,17 @@ void scamper_writebuf_attach(scamper_writebuf_t *wb, void *param,
 scamper_writebuf_t *scamper_writebuf_alloc(void)
 {
   scamper_writebuf_t *wb = NULL;
+
+  if(iov_max == -1)
+    {
+#ifdef IOV_MAX
+      iov_max = IOV_MAX;
+#elif defined(_SC_IOV_MAX)
+      iov_max = sysconf(_SC_IOV_MAX);
+#else
+      iov_max = 1;
+#endif
+    }
 
   if((wb = malloc_zero(sizeof(scamper_writebuf_t))) == NULL ||
      (wb->iovs = slist_alloc()) == NULL)

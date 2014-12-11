@@ -1,7 +1,7 @@
 /*
  * scamper_udp4.c
  *
- * $Id: scamper_udp4.c,v 1.70 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_udp4.c,v 1.70.16.1 2015/12/06 08:28:31 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_udp4.c,v 1.70 2011/09/16 03:15:44 mjl Exp $";
+  "$Id: scamper_udp4.c,v 1.70.16.1 2015/12/06 08:28:31 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -149,15 +149,6 @@ int scamper_udp4_probe(scamper_probe_t *probe)
   /* compute length, for sake of readability */
   len = ip4hlen + sizeof(struct udphdr) + probe->pr_len;
 
-  i = len;
-  if(setsockopt(probe->pr_fd,
-		SOL_SOCKET, SO_SNDBUF, (char *)&i, sizeof(i)) == -1)
-    {
-      printerror(errno, strerror, __func__,
-                 "could not set buffer to %d bytes", i);
-      return -1;
-    }
-
   if(pktbuf_len < len)
     {
       if((buf = realloc(pktbuf, len)) == NULL)
@@ -237,8 +228,7 @@ int scamper_udp4_opendgram(const void *addr, int sport)
 {
   struct sockaddr_in sin4;
   char tmp[32];
-  int fd = -1;
-  int opt;
+  int fd, opt;
 
   if((fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
     {
@@ -268,20 +258,18 @@ int scamper_udp4_opendgram(const void *addr, int sport)
   return -1;
 }
 
-int scamper_udp4_openraw(const void *addr)
+int scamper_udp4_openraw_fd(const void *addr)
 {
-  int fd = -1;
-
-#if defined(WITHOUT_PRIVSEP)
   struct sockaddr_in sin4;
+  int hdr, fd;
   char tmp[32];
-  int hdr = 1;
 
   if((fd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) == -1)
     {
       printerror(errno, strerror, __func__, "could not open socket");
       goto err;
     }
+  hdr = 1;
   if(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, (void *)&hdr, sizeof(hdr)) == -1)
     {
       printerror(errno, strerror, __func__, "could not IP_HDRINCL");
@@ -294,14 +282,32 @@ int scamper_udp4_openraw(const void *addr)
 		 sockaddr_tostr((struct sockaddr *)&sin4, tmp, sizeof(tmp)));
       goto err;
     }
+
+  return fd;
+
+ err:
+  if(fd != -1) scamper_udp4_close(fd);
+  return -1;
+}
+
+int scamper_udp4_openraw(const void *addr)
+{
+  int fd, opt;
+
+#if defined(WITHOUT_PRIVSEP)
+  fd = scamper_udp4_openraw_fd(addr);
 #else
-  if((fd = scamper_privsep_open_rawudp(addr)) == -1)
+  fd = scamper_privsep_open_rawudp(addr);
+#endif
+  if(fd == -1)
+    return -1;
+
+  opt = 65535 + 128;
+  if(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (char *)&opt, sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open socket");
+      printerror(errno, strerror, __func__, "could not set SO_SNDBUF");
       goto err;
     }
-#endif
-
   return fd;
 
  err:

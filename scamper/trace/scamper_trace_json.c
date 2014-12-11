@@ -8,7 +8,7 @@
  * Copyright (C) 2015      The University of Waikato
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_trace_json.c,v 1.7.2.2 2015/10/17 09:35:19 mjl Exp $
+ * $Id: scamper_trace_json.c,v 1.7.2.3 2015/12/03 07:45:21 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_json.c,v 1.7.2.2 2015/10/17 09:35:19 mjl Exp $";
+  "$Id: scamper_trace_json.c,v 1.7.2.3 2015/12/03 07:45:21 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -81,7 +81,7 @@ static char *hop_tostr(scamper_trace_hop_t *hop)
 	string_concat(buf, sizeof(buf), &off, ", \"icmp_nhmtu:\":%u",
 		      hop->hop_icmp_nhmtu);
     }
-  else
+  else if(SCAMPER_TRACE_HOP_IS_TCP(hop))
     {
       string_concat(buf, sizeof(buf), &off,
 		    ", \"tcp_flags\":%u", hop->hop_tcp_flags);

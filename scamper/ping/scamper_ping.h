@@ -1,11 +1,11 @@
 /*
  * scamper_ping.h
  *
- * $Id: scamper_ping.h,v 1.45.10.1 2015/08/08 05:18:35 mjl Exp $
+ * $Id: scamper_ping.h,v 1.45.10.2 2015/12/03 06:54:12 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012-2014 The Regents of the University of California
+ * Copyright (C) 2012-2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -34,6 +34,9 @@
 
 #define SCAMPER_PING_REPLY_IS_TCP(reply) ( \
  ((reply)->reply_proto == 6))
+
+#define SCAMPER_PING_REPLY_IS_UDP(reply) ( \
+ ((reply)->reply_proto == 17))
 
 #define SCAMPER_PING_REPLY_IS_ICMP_ECHO_REPLY(reply) (     \
  ((reply)->addr->type == SCAMPER_ADDR_TYPE_IPV4 &&         \
@@ -71,7 +74,8 @@
 
 #define SCAMPER_PING_METHOD_IS_TCP(ping) (                    \
  ((ping)->probe_method == SCAMPER_PING_METHOD_TCP_ACK ||      \
-  (ping)->probe_method == SCAMPER_PING_METHOD_TCP_ACK_SPORT))
+  (ping)->probe_method == SCAMPER_PING_METHOD_TCP_ACK_SPORT || \
+  (ping)->probe_method == SCAMPER_PING_METHOD_TCP_SYN))
 
 #define SCAMPER_PING_METHOD_IS_UDP(ping) (                \
  ((ping)->probe_method == SCAMPER_PING_METHOD_UDP ||      \
@@ -108,6 +112,7 @@
 #define SCAMPER_PING_METHOD_UDP           0x03
 #define SCAMPER_PING_METHOD_UDP_DPORT     0x04
 #define SCAMPER_PING_METHOD_ICMP_TIME     0x05
+#define SCAMPER_PING_METHOD_TCP_SYN       0x06
 
 #define SCAMPER_PING_FLAG_V4RR            0x01 /* -R: IPv4 record route */
 #define SCAMPER_PING_FLAG_SPOOF           0x02 /* -O spoof: spoof src */
@@ -175,11 +180,6 @@ typedef struct scamper_ping_v4ts
  * scamper_ping_reply
  *
  * a ping reply structure keeps track of how a ping packet was responded to.
- * the default structure has enough fields for interesting pieces out of an
- * echo reply packet.
- *
- * if the icmp type/code is not an ICMP echo reply packet, then the TLVs
- * defined above may be present in the response.
  */
 typedef struct scamper_ping_reply
 {

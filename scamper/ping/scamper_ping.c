@@ -3,10 +3,10 @@
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012-2013 The Regents of the University of California
+ * Copyright (C) 2012-2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping.c,v 1.29 2013/07/23 23:06:56 mjl Exp $
+ * $Id: scamper_ping.c,v 1.29.14.2 2015/12/03 06:56:01 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping.c,v 1.29 2013/07/23 23:06:56 mjl Exp $";
+  "$Id: scamper_ping.c,v 1.29.14.2 2015/12/03 06:56:01 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -48,6 +48,7 @@ char *scamper_ping_method2str(const scamper_ping_t *ping, char *buf, size_t len)
     "udp",
     "udp-dport",
     "icmp-time",
+    "tcp-syn",
   };
 
   if(ping->probe_method > sizeof(m) / sizeof(char *))
@@ -257,6 +258,7 @@ void scamper_ping_free(scamper_ping_t *ping)
   if(ping->list != NULL) scamper_list_free(ping->list);
 
   if(ping->probe_tsps != NULL) scamper_ping_v4ts_free(ping->probe_tsps);
+  if(ping->probe_data != NULL) free(ping->probe_data);
 
   free(ping);
   return;
