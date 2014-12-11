@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.241 2014/12/03 01:33:21 mjl Exp $
+ * $Id: scamper.c,v 1.241.2.2 2015/10/17 07:44:49 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper.c,v 1.241 2014/12/03 01:33:21 mjl Exp $";
+  "$Id: scamper.c,v 1.241.2.2 2015/10/17 07:44:49 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -77,15 +77,10 @@ static const char rcsid[] =
 #define OPT_PPS             0x00000001 /* p: */
 #define OPT_OUTFILE         0x00000002 /* o: */
 #define OPT_OPTION          0x00000004 /* O: */
-#define OPT_NOINITNDC       0x00000008
 #define OPT_PIDFILE         0x00000010 /* e: */
 #define OPT_VERSION         0x00000020 /* v: */
-#define OPT_OUTCOPY         0x00000040
-#define OPT_SELECT          0x00000080
-#define OPT_KQUEUE          0x00000100
 #define OPT_DAEMON          0x00000200 /* D: */
 #define OPT_IP              0x00000400 /* i: */
-#define OPT_PLANETLAB       0x00000800
 #define OPT_DL              0x00001000
 #define OPT_MONITORNAME     0x00002000 /* M: */
 #define OPT_COMMAND         0x00004000 /* c: */
@@ -100,9 +95,16 @@ static const char rcsid[] =
 #define OPT_INFILE          0x00800000 /* f: */
 #define OPT_CTRL_INET       0x01000000 /* P: */
 #define OPT_CTRL_UNIX       0x02000000 /* U: */
-#define OPT_EPOLL           0x04000000
-#define OPT_RAWTCP          0x08000000
-#define OPT_DEBUGFILEAPPEND 0x10000000
+
+#define FLAG_NOINITNDC       0x00000001
+#define FLAG_OUTCOPY         0x00000002
+#define FLAG_SELECT          0x00000004
+#define FLAG_KQUEUE          0x00000008
+#define FLAG_PLANETLAB       0x00000010
+#define FLAG_EPOLL           0x00000020
+#define FLAG_RAWTCP          0x00000040
+#define FLAG_DEBUGFILEAPPEND 0x00000080
+#define FLAG_NOTLS           0x00000200
 
 /*
  * parameters configurable by the command line:
@@ -127,7 +129,8 @@ static const char rcsid[] =
  * firewall:    scamper should use the system firewall when needed
  * pidfile:     place to write process id
  */
-static uint32_t options = 0;
+static uint32_t options    = 0;
+static uint32_t flags      = 0;
 static char  *command      = NULL;
 static int    pps          = SCAMPER_PPS_DEF;
 static int    window       = SCAMPER_WINDOW_DEF;
@@ -266,6 +269,10 @@ static void usage(uint32_t opt_mask)
       usage_line("planetlab: necessary to use safe raw sockets on planetlab");
       usage_line("noinitndc: do not initialise neighbour discovery cache");
 
+#ifdef HAVE_OPENSSL
+      usage_line("notls: do not use TLS anywhere in scamper");
+#endif
+      
 #ifndef WITHOUT_DEBUGFILE
       usage_line("debugfileappend: append to debugfile, rather than truncate");
 #endif
@@ -605,26 +612,32 @@ static int check_options(int argc, char *argv[])
 	  else if(strcasecmp(optarg, "dlts") == 0)
 	    options |= OPT_DL;
 	  else if(strcasecmp(optarg, "planetlab") == 0)
-	    options |= OPT_PLANETLAB;
+	    flags |= FLAG_PLANETLAB;
 	  else if(strcasecmp(optarg, "noinitndc") == 0)
-	    options |= OPT_NOINITNDC;
+	    flags |= FLAG_NOINITNDC;
 	  else if(strcasecmp(optarg, "outcopy") == 0)
-	    options |= OPT_OUTCOPY;
-	  else if(strcasecmp(optarg, "select") == 0)
-	    options |= OPT_SELECT;
+	    flags |= FLAG_OUTCOPY;
 	  else if(strcasecmp(optarg, "rawtcp") == 0)
-	    options |= OPT_RAWTCP;
+	    flags |= FLAG_RAWTCP;
+#ifdef HAVE_OPENSSL
+	  else if(strcasecmp(optarg, "notls") == 0)
+	    flags |= FLAG_NOTLS;
+#endif
+#ifndef _WIN32
+	  else if(strcasecmp(optarg, "select") == 0)
+	    flags |= FLAG_SELECT;
+#endif
 #ifdef HAVE_KQUEUE
 	  else if(strcasecmp(optarg, "kqueue") == 0)
-	    options |= OPT_KQUEUE;
+	    flags |= FLAG_KQUEUE;
 #endif
 #ifdef HAVE_EPOLL
 	  else if(strcasecmp(optarg, "epoll") == 0)
-	    options |= OPT_EPOLL;
+	    flags |= FLAG_EPOLL;
 #endif
 #ifndef WITHOUT_DEBUGFILE
 	  else if(strcasecmp(optarg, "debugfileappend") == 0)
-	    options |= OPT_DEBUGFILEAPPEND;
+	    flags |= FLAG_DEBUGFILEAPPEND;
 #endif
 	  else
 	    {
@@ -927,43 +940,49 @@ int scamper_option_dl()
 
 int scamper_option_planetlab(void)
 {
-  if(options & OPT_PLANETLAB) return 1;
+  if(flags & FLAG_PLANETLAB) return 1;
   return 0;
 }
 
 int scamper_option_select(void)
 {
-  if(options & OPT_SELECT) return 1;
+  if(flags & FLAG_SELECT) return 1;
   return 0;
 }
 
 int scamper_option_kqueue(void)
 {
-  if(options & OPT_KQUEUE) return 1;
+  if(flags & FLAG_KQUEUE) return 1;
   return 0;
 }
 
 int scamper_option_epoll(void)
 {
-  if(options & OPT_EPOLL) return 1;
+  if(flags & FLAG_EPOLL) return 1;
   return 0;
 }
 
 int scamper_option_noinitndc(void)
 {
-  if(options & OPT_NOINITNDC) return 1;
+  if(flags & FLAG_NOINITNDC) return 1;
   return 0;
 }
 
 int scamper_option_rawtcp(void)
 {
-  if(options & OPT_RAWTCP) return 1;
+  if(flags & FLAG_RAWTCP) return 1;
   return 0;
 }
 
 int scamper_option_debugfileappend(void)
 {
-  if(options & OPT_DEBUGFILEAPPEND) return 1;
+  if(flags & FLAG_DEBUGFILEAPPEND) return 1;
+  return 0;
+}
+
+int scamper_option_notls(void)
+{
+  if(flags & FLAG_NOTLS) return 1;
   return 0;
 }
 
@@ -1096,6 +1115,11 @@ static int scamper(int argc, char *argv[])
     {
       return -1;
     }
+
+#ifdef HAVE_OPENSSL
+  if((flags & FLAG_NOTLS) == 0)
+    SSL_library_init();
+#endif
 
 #ifndef WITHOUT_PRIVSEP
   /* revoke the root priviledges we started with */
@@ -1348,7 +1372,7 @@ static int scamper(int argc, char *argv[])
 	       * write a copy of the data out if asked to, and it has not
 	       * already been written to this output file.
 	       */
-	      if((options & OPT_OUTCOPY) != 0 &&
+	      if((flags & FLAG_OUTCOPY) != 0 &&
 		 (sof2 = scamper_outfiles_get(NULL)) != NULL && sof != sof2)
 		{
 		  file = scamper_outfile_getfile(sof2);

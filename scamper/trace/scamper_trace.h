@@ -1,11 +1,12 @@
 /*
  * scamper_trace.h
  *
- * $Id: scamper_trace.h,v 1.133 2014/12/11 19:45:55 mjl Exp $
+ * $Id: scamper_trace.h,v 1.133.2.2 2015/10/17 09:33:52 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2008 Alistair King
+ * Copyright (C) 2008      Alistair King
+ * Copyright (C) 2015      The University of Waikato
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
  *
@@ -226,6 +227,7 @@ typedef struct scamper_trace_hop
   } hop_un;
 
   /* time elapsed between sending the probe and receiving this resp */
+  struct timeval               hop_tx;
   struct timeval               hop_rtt;
 
   /* ICMP extensions */
@@ -286,11 +288,14 @@ typedef struct scamper_trace_dtree
 {
   char            *lss;
   uint8_t          firsthop;
+  uint8_t          flags;
   uint16_t         gssc;
   scamper_addr_t **gss;
   scamper_addr_t  *gss_stop;
   scamper_addr_t  *lss_stop;
 } scamper_trace_dtree_t;
+
+#define SCAMPER_TRACE_DTREE_FLAG_NOBACK 0x01
 
 /*
  * scamper_trace:
@@ -441,7 +446,9 @@ int scamper_trace_lastditch_hop_count(const scamper_trace_t *trace);
 int scamper_trace_dtree_alloc(scamper_trace_t *trace);
 void scamper_trace_dtree_free(scamper_trace_t *trace);
 int scamper_trace_dtree_lss(scamper_trace_t *trace, const char *lss);
-int scamper_trace_dtree_gss_add(scamper_trace_t *trace, scamper_addr_t *iface);
+
+int scamper_trace_dtree_gss_alloc(scamper_trace_t *trace, uint16_t cnt);
+void scamper_trace_dtree_gss_sort(const scamper_trace_t *trace);
 scamper_addr_t *scamper_trace_dtree_gss_find(const scamper_trace_t *trace,
                                              const scamper_addr_t *iface);
 

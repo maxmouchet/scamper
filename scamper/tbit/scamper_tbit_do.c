@@ -1,18 +1,19 @@
 /*
  * scamper_do_tbit.c
  *
- * $Id: scamper_tbit_do.c,v 1.103 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_tbit_do.c,v 1.103.6.2 2015/10/21 08:22:51 mjl Exp $
  *
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2009-2010 Stephen Eichler
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2010-2011 University of Waikato
- * Copyright (C) 2012-2014 The Regents of the University of California
+ * Copyright (C) 2012-2015 The Regents of the University of California
  *
- * Authors: Matthew Luckie, Ben Stasiewicz, Stephen Eichler
+ * Authors: Matthew Luckie, Ben Stasiewicz, Stephen Eichler, Tiange Wu,
+ *          Robert Beverly
  *
- * This file implements algorithms described in the tbit-1.0 source code,
- * as well as the papers:
+ * Some of the algorithms implemented in this file are described in the
+ * tbit-1.0 source code, as well as the papers:
  *
  *  "On Inferring TCP Behaviour"
  *      by Jitendra Padhye and Sally Floyd
@@ -36,7 +37,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_do.c,v 1.103 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_tbit_do.c,v 1.103.6.2 2015/10/21 08:22:51 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -71,6 +72,8 @@ static const char rcsid[] =
 #define TBIT_RETX_DEFAULT         3
 #define TBIT_TIMEOUT_DEFAULT      10000
 #define TBIT_TIMEOUT_LONG         70000
+#define TBIT_TIMEOUT_SACK         2000
+#define TBIT_TIMEOUT_BLINDDATA    2000
 
 typedef struct tbit_options
 {
@@ -78,8 +81,10 @@ typedef struct tbit_options
   uint8_t   type;
   uint8_t   syn_retx;
   uint8_t   dat_retx;
-  uint8_t   ptb_retx;
-  uint8_t   options;
+  uint8_t   attempts;
+  uint8_t   fo_cookielen;
+  uint8_t   fo_cookie[16];
+  uint16_t  options;
   uint16_t  mss;
   uint16_t  mtu;
   uint16_t  sport;
@@ -87,6 +92,8 @@ typedef struct tbit_options
   char     *url;
   char     *ptbsrc;
   char     *src;
+  int32_t   offset;
+  uint16_t  asn;
 } tbit_options_t;
 
 typedef struct tbit_segment
@@ -154,6 +161,7 @@ typedef struct tbit_state
   slist_t                    *tx;
   slist_t                    *segments;
   scamper_tbit_tcpq_t        *rxq;
+  uint32_t                    sa_seq;
   uint32_t                    snd_nxt;
   uint32_t                    rcv_nxt;
 
@@ -164,6 +172,13 @@ typedef struct tbit_state
   uint32_t                    ts_lastack;
   uint32_t                    qs_nonce;
   uint8_t                     qs_ttl;
+
+#if defined(HAVE_OPENSSL)
+  int                         ssl_mode;
+  SSL                        *ssl;
+  BIO                        *rbio;
+  BIO                        *wbio;
+#endif
 
   union
   {
@@ -186,6 +201,27 @@ typedef struct tbit_state
     {
       uint8_t                 flags;
     } ecn;
+
+    struct tbit_icw
+    {
+      uint32_t                seq;
+      uint32_t                tail;
+      uint8_t                 count;
+      uint8_t                 flags;
+    } icw;
+
+    struct tbit_blind
+    {
+      uint8_t                 flags;
+      uint8_t                 c;       /* the number of blind packets sent */
+      uint8_t                 sent;    /* sent blind packet for this data */
+      uint8_t                 ignored; /* how many times sender ignored */
+      uint8_t                 step;    /* what step in blind data */
+      uint16_t                part1;
+      uint16_t                part2;
+      uint16_t                part3;
+    } blind;
+
   } un;
 } tbit_state_t;
 
@@ -197,6 +233,18 @@ typedef struct tbit_state
 #define sackr_flags           un.sackr.flags
 #define sackr_timeout         un.sackr.timeout
 #define ecn_flags             un.ecn.flags
+#define icw_seq               un.icw.seq
+#define icw_count             un.icw.count
+#define icw_tail              un.icw.tail
+#define icw_flags             un.icw.flags
+#define blind_flags           un.blind.flags
+#define blind_c               un.blind.c
+#define blind_sent            un.blind.sent
+#define blind_ignored         un.blind.ignored
+#define blind_part1           un.blind.part1
+#define blind_part2           un.blind.part2
+#define blind_part3           un.blind.part3
+#define blind_step            un.blind.step
 
 /* The callback functions registered with the tbit task */
 static scamper_task_funcs_t tbit_funcs;
@@ -228,6 +276,24 @@ extern scamper_addrcache_t *addrcache;
 #define TBIT_STATE_SACKR_FLAG_SHIFTED   0x02
 #define TBIT_STATE_SACKR_FLAG_BADOPT    0x04
 
+/* flags specific to the icw test */
+#define TBIT_STATE_ICW_FLAG_SEQ         0x01
+
+/* flags specific to the blind tests */
+#define TBIT_STATE_BLIND_FLAG_CHALLENGE 0x01
+#define TBIT_STATE_BLIND_FLAG_ACCEPTED  0x02
+#define TBIT_STATE_BLIND_FLAG_SILENCE   0x04
+#define TBIT_STATE_BLIND_FLAG_RST       0x08
+#define TBIT_STATE_BLIND_FLAG_FIN       0x10
+#define TBIT_STATE_BLIND_FLAG_SPLIT     0x20
+
+#if defined(HAVE_OPENSSL)
+/* ssl modes */
+#define TBIT_STATE_SSL_MODE_HANDSHAKE   0x00
+#define TBIT_STATE_SSL_MODE_ESTABLISHED 0x01
+#define TBIT_STATE_SSL_MODE_SHUTDOWN    0x02
+#endif
+
 /* Options that tbit supports */
 #define TBIT_OPT_DPORT       1
 #define TBIT_OPT_MSS         2
@@ -240,14 +306,22 @@ extern scamper_addrcache_t *addrcache;
 #define TBIT_OPT_URL         9
 #define TBIT_OPT_USERID      10
 #define TBIT_OPT_SRCADDR     11
+#define TBIT_OPT_FO          12
+#define TBIT_OPT_WSCALE      17
+#define TBIT_OPT_ATTEMPTS    18
+#define TBIT_OPT_OFFSET      19
+#define TBIT_OPT_ASN         20
+#define TBIT_OPT_TTL         21
 
 /* bits for the tbit_option.options field */
-#define TBIT_OPT_OPTION_BLACKHOLE  0x01
-#define TBIT_OPT_OPTION_TCPTS      0x02
-#define TBIT_OPT_OPTION_IPTS_SYN   0x04
-#define TBIT_OPT_OPTION_IPRR_SYN   0x08
-#define TBIT_OPT_OPTION_IPQS_SYN   0x10
-#define TBIT_OPT_OPTION_SACK       0x20
+#define TBIT_OPT_OPTION_BLACKHOLE  0x0001
+#define TBIT_OPT_OPTION_TCPTS      0x0002
+#define TBIT_OPT_OPTION_IPTS_SYN   0x0004
+#define TBIT_OPT_OPTION_IPRR_SYN   0x0008
+#define TBIT_OPT_OPTION_IPQS_SYN   0x0010
+#define TBIT_OPT_OPTION_SACK       0x0020
+#define TBIT_OPT_OPTION_FO         0x0040
+#define TBIT_OPT_OPTION_FO_EXP     0x0080
 
 /* we only support one IP option on a SYN packet */
 #define TBIT_OPT_OPTION_IPOPT_SYN_MASK \
@@ -259,17 +333,23 @@ extern scamper_addrcache_t *addrcache;
 #define TBIT_PROBE_TYPE_PTB 2
 
 static const scamper_option_in_t opts[] = {
+  {'b', NULL, TBIT_OPT_ASN,      SCAMPER_OPTION_TYPE_NUM},
   {'d', NULL, TBIT_OPT_DPORT,    SCAMPER_OPTION_TYPE_NUM},
+  {'f', NULL, TBIT_OPT_FO,       SCAMPER_OPTION_TYPE_STR},
   {'m', NULL, TBIT_OPT_MSS,      SCAMPER_OPTION_TYPE_NUM},
   {'M', NULL, TBIT_OPT_MTU,      SCAMPER_OPTION_TYPE_NUM},
+  {'o', NULL, TBIT_OPT_OFFSET,   SCAMPER_OPTION_TYPE_NUM},
   {'O', NULL, TBIT_OPT_OPTION,   SCAMPER_OPTION_TYPE_STR},
   {'p', NULL, TBIT_OPT_APP,      SCAMPER_OPTION_TYPE_STR},
   {'P', NULL, TBIT_OPT_PTBSRC,   SCAMPER_OPTION_TYPE_STR},
+  {'q', NULL, TBIT_OPT_ATTEMPTS, SCAMPER_OPTION_TYPE_NUM},
   {'s', NULL, TBIT_OPT_SPORT,    SCAMPER_OPTION_TYPE_NUM},
   {'S', NULL, TBIT_OPT_SRCADDR,  SCAMPER_OPTION_TYPE_STR},
   {'t', NULL, TBIT_OPT_TYPE,     SCAMPER_OPTION_TYPE_STR},
+  {'T', NULL, TBIT_OPT_TTL,      SCAMPER_OPTION_TYPE_NUM},
   {'u', NULL, TBIT_OPT_URL,      SCAMPER_OPTION_TYPE_STR},
   {'U', NULL, TBIT_OPT_USERID,   SCAMPER_OPTION_TYPE_NUM},
+  {'w', NULL, TBIT_OPT_WSCALE,   SCAMPER_OPTION_TYPE_NUM},
 };
 static const int opts_cnt = SCAMPER_OPTION_COUNT(opts);
 
@@ -283,12 +363,20 @@ static const uint8_t MODE_DATA      =  7; /* connection established */
 static const uint8_t MODE_PMTUD     =  8; /* sending PTBs */
 static const uint8_t MODE_BLACKHOLE =  9; /* don't send PTBs */
 static const uint8_t MODE_ZEROWIN   = 10; /* wait for window update */
+static const uint8_t MODE_MOREDATA  = 11; /* wait for new data beyond tail */
+static const uint8_t MODE_BLIND     = 12; /* in process of blind packets */
+
+#if defined(HAVE_OPENSSL)
+static SSL_CTX *ssl_ctx = NULL;
+#endif
 
 /* Note : URL is only valid for HTTP tests. */
 const char *scamper_do_tbit_usage(void)
 {
-  return "tbit [-t type] [-p app] [-d dport] [-s sport] [-m mss] [-M mtu]\n"
-         "     [-O option] [-P ptbsrc] [-S srcaddr] [-u url]";
+  return
+    "tbit [-t type] [-p app] [-d dport] [-s sport] [-b asn] [-f cookie]\n"
+    "     [-m mss] [-M mtu] [-o offset] [-O option]\n"
+    "     [-P ptbsrc] [-q attempts] [-S srcaddr] [-T ttl] [-u url]";
 }
 
 static scamper_tbit_t *tbit_getdata(const scamper_task_t *task)
@@ -347,9 +435,14 @@ static void tbit_result(scamper_task_t *task, uint8_t result)
     case SCAMPER_TBIT_RESULT_SACK_RCVR_SHIFTED:
     case SCAMPER_TBIT_RESULT_SACK_RCVR_TIMEOUT:
     case SCAMPER_TBIT_RESULT_SACK_RCVR_NOSACK:
+    case SCAMPER_TBIT_RESULT_BLIND_RST:
+    case SCAMPER_TBIT_RESULT_BLIND_ACCEPTED:
       d = 1;
       break;
     }
+
+  if(state->flags & TBIT_STATE_FLAG_RST_SEEN)
+    d = 1;
 
   if(tbit->result == SCAMPER_TBIT_RESULT_NONE)
     {
@@ -382,6 +475,7 @@ static void tbit_classify(scamper_task_t *task)
   scamper_tbit_t *tbit = tbit_getdata(task);
   tbit_state_t *state = tbit_getstate(task);
   scamper_tbit_pmtud_t *pmtud;
+  scamper_tbit_blind_t *blind;
   int ipv6 = SCAMPER_ADDR_TYPE_IS_IPV6(tbit->dst) ? 1 : 0;
   int bh = 0;
 
@@ -478,6 +572,73 @@ static void tbit_classify(scamper_task_t *task)
 	tbit_result(task, SCAMPER_TBIT_RESULT_SACK_RCVR_TIMEOUT);
       else
 	tbit_result(task, SCAMPER_TBIT_RESULT_SACK_RCVR_SUCCESS);
+    }
+  else if(tbit->type == SCAMPER_TBIT_TYPE_ICW)
+    {
+      if(state->flags & TBIT_STATE_FLAG_RST_SEEN)
+	tbit_result(task, SCAMPER_TBIT_RESULT_TCP_RST);
+      else if(state->flags & TBIT_STATE_FLAG_FIN_SEEN)
+	tbit_result(task, SCAMPER_TBIT_RESULT_TCP_FIN);
+      else
+	tbit_result(task, SCAMPER_TBIT_RESULT_NONE);
+    }
+  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+    {
+      if(state->blind_flags & TBIT_STATE_BLIND_FLAG_ACCEPTED)
+	tbit_result(task, SCAMPER_TBIT_RESULT_BLIND_ACCEPTED);
+      else if(state->blind_flags & TBIT_STATE_BLIND_FLAG_CHALLENGE)
+	tbit_result(task, SCAMPER_TBIT_RESULT_BLIND_CHALLENGE);
+      else if(state->blind_flags & TBIT_STATE_BLIND_FLAG_SILENCE)
+	tbit_result(task, SCAMPER_TBIT_RESULT_BLIND_IGNORED);
+      else if(state->blind_flags & TBIT_STATE_BLIND_FLAG_RST)
+	tbit_result(task, SCAMPER_TBIT_RESULT_BLIND_RST);
+      else if(state->flags & TBIT_STATE_FLAG_RST_SEEN)
+	tbit_result(task, SCAMPER_TBIT_RESULT_TCP_RST);
+      else if(state->flags & TBIT_STATE_FLAG_FIN_SEEN)
+	tbit_result(task, SCAMPER_TBIT_RESULT_TCP_FIN);
+      else
+	tbit_result(task, SCAMPER_TBIT_RESULT_NONE);
+    }
+  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST)
+    {
+      blind = tbit->data;
+      if(state->blind_flags & TBIT_STATE_BLIND_FLAG_CHALLENGE)
+	tbit_result(task, SCAMPER_TBIT_RESULT_BLIND_CHALLENGE);
+      else if(state->blind_c >= blind->retx)
+	tbit_result(task, SCAMPER_TBIT_RESULT_BLIND_IGNORED);
+      else if(state->blind_flags & TBIT_STATE_BLIND_FLAG_FIN ||
+	      state->flags & TBIT_STATE_FLAG_FIN_SEEN)
+	tbit_result(task, SCAMPER_TBIT_RESULT_TCP_FIN);
+      else if(state->flags & TBIT_STATE_FLAG_RST_SEEN)
+	tbit_result(task, SCAMPER_TBIT_RESULT_TCP_RST);
+      else if(state->blind_c == 1 && state->blind_ignored == 0)
+	tbit_result(task, SCAMPER_TBIT_RESULT_BLIND_ACCEPTED);
+      else
+	tbit_result(task, SCAMPER_TBIT_RESULT_NONE);
+    }
+  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN)
+    {
+      blind = tbit->data;
+      if(state->blind_flags & TBIT_STATE_BLIND_FLAG_RST)
+	tbit_result(task, SCAMPER_TBIT_RESULT_BLIND_RST);
+      else if(state->blind_flags & TBIT_STATE_BLIND_FLAG_CHALLENGE)
+	tbit_result(task, SCAMPER_TBIT_RESULT_BLIND_CHALLENGE);
+      else if(state->blind_c >= blind->retx)
+	tbit_result(task, SCAMPER_TBIT_RESULT_BLIND_IGNORED);
+      else if(state->blind_flags & TBIT_STATE_BLIND_FLAG_FIN ||
+	      state->flags & TBIT_STATE_FLAG_FIN_SEEN)
+	tbit_result(task, SCAMPER_TBIT_RESULT_TCP_FIN);
+      else if(state->flags & TBIT_STATE_FLAG_RST_SEEN)
+	tbit_result(task, SCAMPER_TBIT_RESULT_TCP_RST);
+      else if(state->flags & TBIT_STATE_FLAG_FIN_SEEN)
+	tbit_result(task, SCAMPER_TBIT_RESULT_TCP_FIN);
+      else
+	tbit_result(task, SCAMPER_TBIT_RESULT_NONE);
+    }
+  else
+    {
+      scamper_debug(__func__, "unhandled type %d", tbit->type);
+      tbit_result(task, SCAMPER_TBIT_RESULT_NONE);
     }
 
   return;
@@ -763,24 +924,33 @@ static tbit_probe_t *tp_alloc(tbit_state_t *state, uint8_t type)
   return tp;
 }
 
-static tbit_probe_t *tp_tcp(tbit_state_t *state, uint16_t len)
+static tbit_probe_t *tp_tcp(tbit_state_t *state)
 {
   tbit_probe_t *tp;
-
   if((tp = tp_alloc(state, TBIT_PROBE_TYPE_TCP)) == NULL)
     return NULL;
-
   tp->tp_flags = TH_ACK;
   tp->tp_seq   = state->snd_nxt;
   tp->tp_ack   = state->rcv_nxt;
-  tp->tp_len   = len;
-
   return tp;
 }
 
 static tbit_probe_t *tp_ptb(tbit_state_t *state)
 {
   return tp_alloc(state, TBIT_PROBE_TYPE_PTB);
+}
+
+static void tp_flush(tbit_state_t *state, tbit_probe_t *tp_stop)
+{
+  tbit_probe_t *tp;
+  for(;;)
+    {
+      if((tp = slist_head_get(state->tx)) == NULL || tp == tp_stop)
+	break;
+      slist_head_pop(state->tx);
+      tp_free(tp);
+    }
+  return;
 }
 
 static void tbit_segment_free(tbit_segment_t *seg)
@@ -866,7 +1036,76 @@ static int tbit_rxq(tbit_state_t *state, const scamper_dl_rec_t *dl)
   return -1;
 }
 
-static int tbit_app_http_rx(scamper_task_t *task, uint8_t *data, uint16_t dlen)
+#if defined(HAVE_OPENSSL)
+static int tbit_ssl_wbio_write(tbit_state_t *state)
+{
+  uint8_t buf[1024];
+  int pending, rc, size, off = 0;
+
+  if((pending = BIO_pending(state->wbio)) < 0)
+    return -1;
+
+  while(off < pending)
+    {
+      if(pending - off > sizeof(buf))
+	size = sizeof(buf);
+      else
+	size = pending - off;
+
+      if((rc = BIO_read(state->wbio, buf, size)) <= 0)
+	{
+	  if(BIO_should_retry(state->wbio) == 0)
+	    scamper_debug(__func__, "BIO_read should not retry");
+	  else
+	    scamper_debug(__func__, "BIO_read returned %d", rc);
+	  return -1;
+	}
+      off += rc;
+
+      if(tbit_segment(state, buf, rc) != 0)
+	return -1;
+    }
+
+  return pending;
+}
+
+static ssize_t tbit_ssl_write(tbit_state_t *state, uint8_t *buf, size_t len)
+{
+  SSL_write(state->ssl, buf, len);
+  return tbit_ssl_wbio_write(state);
+}
+
+static ssize_t tbit_ssl_init(tbit_state_t *state, char *name)
+{
+  int rc;
+
+  /*
+   * the order is important because once the BIOs are associated with
+   * the ssl structure, SSL_free will clean them up.
+   */
+  if((state->wbio = BIO_new(BIO_s_mem())) == NULL ||
+     (state->rbio = BIO_new(BIO_s_mem())) == NULL ||
+     (state->ssl = SSL_new(ssl_ctx)) == NULL)
+    return -1;
+
+  SSL_set_bio(state->ssl, state->rbio, state->wbio);
+#ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
+  if(name != NULL) SSL_set_tlsext_host_name(state->ssl, name);
+#endif
+  SSL_set_connect_state(state->ssl);
+
+  rc = SSL_do_handshake(state->ssl);
+  assert(rc <= 0);
+
+  if((rc = SSL_get_error(state->ssl, rc)) == SSL_ERROR_WANT_READ)
+    return tbit_ssl_wbio_write(state);
+
+  scamper_debug(__func__, "SSL_do_handshake error %d", rc);
+  return -1;
+}
+#endif
+
+static int tbit_app_http_req(scamper_task_t *task)
 {
   static const char *http_ua =
     "Mozilla/5.0 (X11; U; FreeBSD i386; en-US; rv:1.9.1.2) "
@@ -875,140 +1114,120 @@ static int tbit_app_http_rx(scamper_task_t *task, uint8_t *data, uint16_t dlen)
   scamper_tbit_app_http_t *http = tbit->app_data;
   tbit_state_t *state = tbit_getstate(task);
   char buf[512];
-  size_t off;
+  size_t off = 0;
 
-  if(state->mode == MODE_SYN)
+  string_concat(buf, sizeof(buf), &off, "GET %s HTTP/1.0\r\n", http->file);
+  if(http->host != NULL)
+    string_concat(buf, sizeof(buf), &off, "Host: %s\r\n", http->host);
+  string_concat(buf, sizeof(buf), &off,
+		"Connection: Keep-Alive\r\n"
+		"Accept: */*\r\n"
+		"User-Agent: %s\r\n\r\n", http_ua);
+
+#if defined(HAVE_OPENSSL)
+  if(state->ssl != NULL)
+    return tbit_ssl_write(state, (uint8_t *)buf, off);
+#endif
+
+  if(tbit_segment(state, (uint8_t *)buf, off) != 0)
+    return -1;
+  return off;
+}
+
+static int tbit_app_http_rx(scamper_task_t *task, uint8_t *data, uint16_t dlen)
+{
+  tbit_state_t *state = tbit_getstate(task);
+  int rc;
+
+#if defined(HAVE_OPENSSL)
+  scamper_tbit_t *tbit = tbit_getdata(task);
+  scamper_tbit_app_http_t *http = tbit->app_data;
+  char buf[4096];
+#endif
+
+  if(state->flags & TBIT_STATE_FLAG_NOMOREDATA)
+    return 0;
+
+  if(state->mode == MODE_SYN || state->mode == MODE_RTSOCK)
     {
-      off = 0;
-      string_concat(buf, sizeof(buf), &off, "GET %s HTTP/1.0\r\n", http->file);
-      if(http->host != NULL)
-	string_concat(buf, sizeof(buf), &off, "Host: %s\r\n", http->host);
-      string_concat(buf, sizeof(buf), &off,
-		    "Connection: Keep-Alive\r\n"
-		    "Accept: */*\r\n"
-		    "User-Agent: %s\r\n\r\n", http_ua);
-
-      if(tbit_segment(state, (const uint8_t *)buf, off) != 0)
+#if defined(HAVE_OPENSSL)
+      if(http->type == SCAMPER_TBIT_APP_HTTP_TYPE_HTTPS)
+	return tbit_ssl_init(state, http->host);
+#endif
+      if((rc = tbit_app_http_req(task)) < 0)
 	return -1;
       state->flags |= TBIT_STATE_FLAG_NOMOREDATA;
-      return (int)off;
+      return rc;
     }
+
+#if defined(HAVE_OPENSSL)
+  if(dlen > 0 && state->ssl != NULL)
+    {
+      BIO_write(state->rbio, data, dlen);
+      if(state->ssl_mode == TBIT_STATE_SSL_MODE_HANDSHAKE)
+	{
+	  if(SSL_is_init_finished(state->ssl) != 0 ||
+	     (rc = SSL_do_handshake(state->ssl)) > 0)
+	    {
+	      state->ssl_mode = TBIT_STATE_SSL_MODE_ESTABLISHED;
+	      state->flags |= TBIT_STATE_FLAG_NOMOREDATA;
+	      return tbit_app_http_req(task);
+	    }
+	  return tbit_ssl_wbio_write(state);
+	}
+      else if(state->ssl_mode == TBIT_STATE_SSL_MODE_ESTABLISHED)
+	{
+	  while((rc = SSL_read(state->ssl, buf, sizeof(buf))) > 0);
+	  return tbit_ssl_wbio_write(state);
+	}
+    }
+#endif
 
   return 0;
 }
 
-/*
- * tbit_app_smtp_rx
- *
- * walk through SMTP exchange; this function is tailored to the mtu test
- * and could be improved to use different exchanges for other tests.
- *
- */
-static int tbit_app_smtp_rx(scamper_task_t *task, uint8_t *data, uint16_t dlen)
+static int tbit_app_bgp_req(scamper_task_t *task)
 {
   scamper_tbit_t *tbit = tbit_getdata(task);
   tbit_state_t *state = tbit_getstate(task);
-  scamper_tbit_pmtud_t *pmtud;
-  char buf[8192], hostname[256], *data_cpy = NULL;
-  size_t off = 0, tmp = 0, namelen;
-  int i;
+  scamper_tbit_app_bgp_t *bgp = tbit->app_data;
+  uint8_t buf[29]; /* BGP 20B header + 9B OPEN w/o options */
+  size_t off = 0;
 
-  if(state->mode != MODE_DATA || state->flags & TBIT_STATE_FLAG_SEEN_220)
-    return 0;
+  /* bgp header */
+  for(off=0; off<16; off++)
+    buf[off] = 0xff;
+  bytes_htons(buf+off, 29); off += 2; /* length */
+  buf[off++] = 1; /* type = BGP_OPEN */
+  buf[off++] = 4; /* version = 4 */
 
-  /* try and get a large response if we're doing pmtud tests */
-  if(tbit->type == SCAMPER_TBIT_TYPE_PMTUD)
-    {
-      pmtud = tbit->data;
-      tmp = (pmtud->mtu >= 1280) ? pmtud->mtu : 1280;
-    }
+  /* bgp open */
+  bytes_htons(buf+off, (uint16_t)bgp->asn); off += 2;
+  bytes_htons(buf+off, 180); off += 2; /* hold time */
+  bytes_htonl(buf+off, 12345); off += 4; /* id */
+  buf[off++] = 0; /* options length */
 
-  /* From the 220, can we determine which MTA we are dealing with? */
-  if(dlen >= 3 && strncmp((char*)data, "220", 3) == 0)
-    {
-      if((data_cpy = malloc_zero(dlen + 1)) == NULL)
-	goto quit;
-      memcpy(data_cpy, data, dlen);
-      data_cpy[dlen] = '\0';
-      state->flags |= TBIT_STATE_FLAG_SEEN_220;
-
-      if(string_findlc(data_cpy, "sendmail") != NULL)
-	{
-	  string_concat(buf, sizeof(buf), &off, "HELP\r\nHELP EHLO\r\n");
-	}
-      else if(string_findlc(data_cpy, "postfix") != NULL)
-	{
-	  /* send multiple EHLOs */
-	  if(gethostname(hostname, sizeof(hostname)) != 0 ||
-	     (namelen = strlen(hostname)) == 0)
-	    goto quit;
-	  for(i=0; i<20; i++)
-	    string_concat(buf, sizeof(buf), &off, "EHLO %s\r\n", hostname);
-	}
-      else if(string_findlc(data_cpy, "exim") != NULL)
-	{
-	  /* Send one EHLO with a really long domain name */
-	  if(gethostname(hostname, sizeof(hostname)) != 0 ||
-	     (namelen = strlen(hostname)) == 0)
-	    goto quit;
-	  string_concat(buf, sizeof(buf), &off, "EHLO ");
-	  while(off + namelen + namelen < tmp)
-	    string_concat(buf, sizeof(buf), &off, "%s.", hostname);
-	  string_concat(buf, sizeof(buf), &off, "%s\r\n", hostname);
-	}
-      free(data_cpy); data_cpy = NULL;
-    }
-
-  /*
-   * Send a quit if the response wasn't a 220 from either Sendmail,
-   * Postfix or Exim
-   */
- quit:
-  if(data_cpy != NULL)
-    free(data_cpy);
-
-  if(off == 0)
-    {
-      string_concat(buf, sizeof(buf), &off, "QUIT\r\n");
-      state->flags |= TBIT_STATE_FLAG_NOMOREDATA;
-    }
-
-  /* Create the TCP segment */
   if(tbit_segment(state, (uint8_t *)buf, off) != 0)
     return -1;
-
-  return (int)off;
+  return off;
 }
 
-static int tbit_app_dns_rx(scamper_task_t *task, uint8_t *data, uint16_t dlen)
+static int tbit_app_bgp_rx(scamper_task_t *task, uint8_t *data, uint16_t dlen)
 {
-  /* recursive DNS request for the TXT record on tbit.staz.net.nz */
-  static const uint8_t dns_request[] = {
-    0x00, 0x22, 0x05, 0x4a,
-    0x01, 0x00, 0x00, 0x01,
-    0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x04, 0x74,
-    0x62, 0x69, 0x74, 0x04,
-    0x73, 0x74, 0x61, 0x7a,
-    0x03, 0x6e, 0x65, 0x74,
-    0x02, 0x6e, 0x7a, 0x00,
-    0x00, 0x10, 0x00, 0x01,
-  };
   tbit_state_t *state = tbit_getstate(task);
+  int rc;
 
-  if(state->mode == MODE_SYN)
+  if(state->flags & TBIT_STATE_FLAG_NOMOREDATA)
+    return 0;
+
+  if(state->mode == MODE_SYN || state->mode == MODE_RTSOCK)
     {
-      if(tbit_segment(state, dns_request, sizeof(dns_request)) != 0)
+      if((rc = tbit_app_bgp_req(task)) < 0)
 	return -1;
       state->flags |= TBIT_STATE_FLAG_NOMOREDATA;
-      return sizeof(dns_request);
+      return rc;
     }
 
-  return 0;
-}
-
-static int tbit_app_ftp_rx(scamper_task_t *task, uint8_t *data, uint16_t dlen)
-{
   return 0;
 }
 
@@ -1017,16 +1236,23 @@ static int tbit_app_rx(scamper_task_t *task, uint8_t *data, uint16_t len)
   static int (* const func[])(scamper_task_t *, uint8_t *, uint16_t) = {
     NULL,
     tbit_app_http_rx,
-    tbit_app_smtp_rx,
-    tbit_app_dns_rx,
-    tbit_app_ftp_rx,
+    NULL,
+    NULL,
+    NULL,
+    tbit_app_bgp_rx,
   };
   scamper_tbit_t *tbit = tbit_getdata(task);
 
-  assert(tbit->app_proto != 0);
-  assert(tbit->app_proto <= 4);
+  assert(tbit->app_proto == SCAMPER_TBIT_APP_HTTP ||
+         tbit->app_proto == SCAMPER_TBIT_APP_BGP);
 
   return func[tbit->app_proto](task, data, len);
+}
+
+static void timeout_generic_error(scamper_task_t *task)
+{
+  tbit_result(task, SCAMPER_TBIT_RESULT_ERROR);
+  return;
 }
 
 /*
@@ -1039,20 +1265,55 @@ static void dl_syn(scamper_task_t *task, scamper_dl_rec_t *dl)
   scamper_tbit_t *tbit = tbit_getdata(task);
   tbit_state_t *state = tbit_getstate(task);
   scamper_tbit_null_t *null;
+  tbit_segment_t *seg = slist_head_get(state->segments);
   tbit_probe_t *tp = NULL;
-  int rc, wait = TBIT_TIMEOUT_DEFAULT;
+  uint32_t ab;
+  uint8_t mode = MODE_DATA;
+  int rc;
 
-  /*
-   * make sure it has the SYN/ACK flags set and acknowledges the expected
-   * sequence number.
-   */
-  if(SCAMPER_DL_IS_TCP_SYNACK(dl) == 0 || dl->dl_tcp_ack != state->snd_nxt + 1)
+  if(SCAMPER_DL_IS_TCP_SYNACK(dl) == 0 || dl->dl_tcp_ack <= state->snd_nxt)
     {
       if(dl->dl_tcp_flags & TH_RST)
 	tbit_result(task, SCAMPER_TBIT_RESULT_TCP_NOCONN_RST);
       else
 	tbit_result(task, SCAMPER_TBIT_RESULT_TCP_NOCONN);
       return;
+    }
+
+  /* increment our sequence number, and remember the seq we expect from them */
+  state->snd_nxt++;
+  state->sa_seq = dl->dl_tcp_seq;
+  state->rcv_nxt = dl->dl_tcp_seq + 1;
+
+  /*
+   * if the sender appears to be acking data, it might be because we used
+   * TCP fast open
+   */
+  if((ab = dl->dl_tcp_ack - state->snd_nxt) > 0)
+    {
+      if(seg == NULL || ab > seg->len)
+	{
+	  tbit_result(task, SCAMPER_TBIT_RESULT_TCP_NOCONN);
+	  return;
+	}
+      if(ab == seg->len)
+	{
+	  slist_head_pop(state->segments);
+	  tbit_segment_free(seg);
+	}
+      else
+	{
+	  memmove(seg->data, seg->data+ab, seg->len-ab);
+	  seg->len -= ab;
+	}
+      state->snd_nxt += ab;
+    }
+
+  if((tbit->options & SCAMPER_TBIT_OPTION_TCPTS) &&
+     (dl->dl_tcp_opts & SCAMPER_DL_TCP_OPT_TS) != 0)
+    {
+      state->flags |= TBIT_STATE_FLAG_TCPTS;
+      state->ts_recent = dl->dl_tcp_tsval;
     }
 
   /* check if we got the expected response to an ECN-syn */
@@ -1079,29 +1340,47 @@ static void dl_syn(scamper_task_t *task, scamper_dl_rec_t *dl)
   else if(tbit->type == SCAMPER_TBIT_TYPE_NULL)
     {
       null = tbit->data;
-      if((null->options & SCAMPER_TBIT_NULL_OPTION_TCPTS) != 0 &&
+      if((tbit->options & SCAMPER_TBIT_OPTION_TCPTS) != 0 &&
 	 (dl->dl_tcp_opts & SCAMPER_DL_TCP_OPT_TS) != 0)
 	{
 	  null->results |= SCAMPER_TBIT_NULL_RESULT_TCPTS;
-	  state->flags |= TBIT_STATE_FLAG_TCPTS;
-	  state->ts_recent = dl->dl_tcp_tsval;
 	}
-      if((null->options & SCAMPER_TBIT_NULL_OPTION_SACK) != 0 &&
+      if((tbit->options & SCAMPER_TBIT_OPTION_SACK) != 0 &&
 	 (dl->dl_tcp_opts & SCAMPER_DL_TCP_OPT_SACKP) != 0)
 	{
 	  null->results |= SCAMPER_TBIT_NULL_RESULT_SACK;
 	  state->flags |= TBIT_STATE_FLAG_SACK;
 	}
+      if((((null->options & SCAMPER_TBIT_NULL_OPTION_FO) != 0 &&
+	   (dl->dl_tcp_opts & SCAMPER_DL_TCP_OPT_FO) != 0) ||
+	  ((null->options & SCAMPER_TBIT_NULL_OPTION_FO_EXP) != 0 &&
+	   (dl->dl_tcp_opts & SCAMPER_DL_TCP_OPT_FO_EXP) != 0)) &&
+	 dl->dl_tcp_fo_cookielen > 0 && tbit->fo_cookielen == 0)
+	{
+	  null->results |= SCAMPER_TBIT_NULL_RESULT_FO;
+	}
     }
 
   tbit->server_mss = dl->dl_tcp_mss;
 
-  /* increment our sequence number, and remember the seq we expect from them */
-  state->snd_nxt++;
-  state->rcv_nxt = dl->dl_tcp_seq + 1;
+  if(tbit->fo_cookie != NULL)
+    {
+      rc = 0;
+      if(dl->dl_tcp_datalen > 0)
+	{
+	  if((rc = tbit_app_rx(task, dl->dl_tcp_data, dl->dl_tcp_datalen)) < 0)
+	    goto err;
+	  state->rcv_nxt += dl->dl_tcp_datalen;
+	}
+    }
+  else
+    {
+      if((rc = tbit_app_rx(task, NULL, 0)) < 0)
+	goto err;
+    }
 
-  /* send an ack, figure out if we have data to send */
-  if((rc = tbit_app_rx(task, NULL, 0)) < 0 || (tp = tp_tcp(state, 0)) == NULL)
+  /* send a pure ack to their data */
+  if((tp = tp_tcp(state)) == NULL)
     goto err;
 
   /* send our request if there is one */
@@ -1119,35 +1398,43 @@ static void dl_syn(scamper_task_t *task, scamper_dl_rec_t *dl)
 	  return;
 	}
 
+      if((tp = tp_tcp(state)) == NULL)
+	goto err;
+      tp->tp_len = rc;
+
       if(tbit->type == SCAMPER_TBIT_TYPE_SACK_RCVR)
 	{
-	  rc = 1;
-	  wait = 2000;
+	  /* send one byte of the data in the SACK test */
+	  tp->tp_len = 1;
+	  tp->wait = TBIT_TIMEOUT_SACK;
 	}
-      if((tp = tp_tcp(state, rc)) == NULL)
-	goto err;
-      tp->wait = wait;
+      else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+	{
+	  scamper_debug(__func__, "request %d", rc);
+	  state->blind_part1 = state->blind_part2 = rc / 3;
+	  state->blind_part3 = rc - state->blind_part1 - state->blind_part2;
+	  tp->tp_len = state->blind_part1;
+	  tp->wait = TBIT_TIMEOUT_BLINDDATA;
+	}
+      else
+	{
+	  tp->wait = TBIT_TIMEOUT_DEFAULT;
+	}
+
+      if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST ||
+	 tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN ||
+	 tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+	mode = MODE_BLIND;
+
       state->attempt = 0;
     }
 
-  state->mode = MODE_DATA;
+  state->mode = mode;
   tbit_queue(task);
   return;
 
  err:
   tbit_handleerror(task, errno);
-  return;
-}
-
-static void timeout_rt(scamper_task_t *task)
-{
-  tbit_result(task, SCAMPER_TBIT_RESULT_ERROR);
-  return;
-}
-
-static void timeout_dlhdr(scamper_task_t *task)
-{
-  tbit_result(task, SCAMPER_TBIT_RESULT_ERROR);
   return;
 }
 
@@ -1199,7 +1486,7 @@ static void dl_fin(scamper_task_t *task, scamper_dl_rec_t *dl)
   if(dl->dl_tcp_datalen == 0 && (dl->dl_tcp_flags & TH_FIN) == 0)
     return;
 
-  if((tp = tp_tcp(state, 0)) == NULL)
+  if((tp = tp_tcp(state)) == NULL)
     goto err;
 
   /* is the data in range? */
@@ -1294,7 +1581,7 @@ static int dl_data_pmtud(scamper_task_t *task, scamper_dl_rec_t *dl)
   /* if it is out of sequence, then send an ack for what we want */
   if(dl->dl_tcp_seq != state->rcv_nxt)
     {
-      if(tp_tcp(state, 0) == NULL)
+      if(tp_tcp(state) == NULL)
 	goto err;
       return 0;
     }
@@ -1346,10 +1633,11 @@ static int dl_data_pmtud(scamper_task_t *task, scamper_dl_rec_t *dl)
 	{
 	  if((rc = tbit_app_rx(task, dl->dl_tcp_data, dl->dl_tcp_datalen)) < 0)
 	    goto err;
-	  if((tp = tp_tcp(state, rc)) == NULL)
+	  if((tp = tp_tcp(state)) == NULL)
 	    goto err;
 	  if(rc > 0)
             {
+	      tp->tp_len = rc;
 	      tp->wait = TBIT_TIMEOUT_DEFAULT;
 	      state->attempt = 0;
             }
@@ -1446,7 +1734,7 @@ static int dl_data_ecn(scamper_task_t *task, scamper_dl_rec_t *dl)
   /* if it is out of sequence, then send an ack for what we want */
   if(dl->dl_tcp_seq != state->rcv_nxt)
     {
-      if(tp_tcp(state, 0) == NULL)
+      if(tp_tcp(state) == NULL)
 	goto err;
       return 0;
     }
@@ -1474,10 +1762,11 @@ static int dl_data_ecn(scamper_task_t *task, scamper_dl_rec_t *dl)
     {
       if((rc = tbit_app_rx(task, dl->dl_tcp_data, dl->dl_tcp_datalen)) < 0)
 	goto err;
-      if((tp = tp_tcp(state, rc)) == NULL)
+      if((tp = tp_tcp(state)) == NULL)
 	goto err;
       if(rc > 0)
 	{
+	  tp->tp_len = rc;
 	  tp->wait = TBIT_TIMEOUT_DEFAULT;
 	  state->attempt = 0;
 	}
@@ -1501,17 +1790,15 @@ static int dl_data_ecn(scamper_task_t *task, scamper_dl_rec_t *dl)
   return -1;
 }
 
-static void timeout_data_ecn(scamper_task_t *task)
+static void timeout_data_generic(scamper_task_t *task)
 {
   tbit_state_t *state = tbit_getstate(task);
-
   tbit_classify(task);
   if(state->mode != MODE_FIN)
     {
       state->mode = MODE_FIN;
       scamper_task_queue_probe(task);
     }
-
   return;
 }
 
@@ -1539,7 +1826,7 @@ static int dl_data_null(scamper_task_t *task, scamper_dl_rec_t *dl)
     {
       if(tx_fin != 0 && (state->flags & TBIT_STATE_FLAG_SEEN_DATA) != 0)
 	{
-	  if((tp = tp_tcp(state, 0)) == NULL)
+	  if((tp = tp_tcp(state)) == NULL)
 	    goto err;
 	  tp->tp_flags |= TH_FIN;
 	  state->mode = MODE_FIN;
@@ -1547,6 +1834,8 @@ static int dl_data_null(scamper_task_t *task, scamper_dl_rec_t *dl)
       return 0;
     }
 
+  if(tbit_data_inrange(state, dl->dl_tcp_seq, dl->dl_tcp_datalen) == 0)
+    return 0;
   if(tbit_rxq(state, dl) != 0)
     goto err;
 
@@ -1564,7 +1853,7 @@ static int dl_data_null(scamper_task_t *task, scamper_dl_rec_t *dl)
       /* send an ack for the next packet we want */
       if((off = scamper_tbit_data_seqoff(state->rcv_nxt, seq)) > 0)
 	{
-	  if((tp = tp_tcp(state, 0)) == NULL)
+	  if((tp = tp_tcp(state)) == NULL)
 	    goto err;
 	  if(tx_fin != 0)
 	    {
@@ -1591,10 +1880,11 @@ static int dl_data_null(scamper_task_t *task, scamper_dl_rec_t *dl)
 	goto err;
       scamper_tbit_tcpqe_free(qe, free); qe = NULL;
 
-      if((tp = tp_tcp(state, rc)) == NULL)
+      if((tp = tp_tcp(state)) == NULL)
 	goto err;
       if(rc > 0)
 	{
+	  tp->tp_len = rc;
 	  tp->wait = TBIT_TIMEOUT_DEFAULT;
 	  state->attempt = 0;
 	}
@@ -1620,20 +1910,6 @@ static int dl_data_null(scamper_task_t *task, scamper_dl_rec_t *dl)
   return -1;
 }
 
-static void timeout_data_null(scamper_task_t *task)
-{
-  tbit_state_t *state = tbit_getstate(task);
-
-  tbit_classify(task);
-  if(state->mode != MODE_FIN)
-    {
-      state->mode = MODE_FIN;
-      scamper_task_queue_probe(task);
-    }
-
-  return;
-}
-
 static int sack_rcvr_next(scamper_task_t *task)
 {
   tbit_state_t *state = tbit_getstate(task);
@@ -1647,10 +1923,11 @@ static int sack_rcvr_next(scamper_task_t *task)
     }
 
   /* send the next out of sequence packet */
-  if((tp = tp_tcp(state, 1)) == NULL)
+  if((tp = tp_tcp(state)) == NULL)
     return -1;
+  tp->tp_len = 1;
   tp->tp_seq += 1 + (state->sackr_x * 2);
-  tp->wait = 2000;
+  tp->wait = TBIT_TIMEOUT_SACK;
   state->attempt = 0;
   state->sackr_x++;
 
@@ -1742,6 +2019,358 @@ static void timeout_data_sack_rcvr(scamper_task_t *task)
   return;
 }
 
+/*
+ * dl_data_icw
+ *
+ * this function reads from the stream until the first segment is seen
+ * again.  at that point, the function sends a FIN to accelerate a
+ * classification.  a successful classification is made in dl_icw.
+ *
+ */
+static int dl_data_icw(scamper_task_t *task, scamper_dl_rec_t *dl)
+{
+  scamper_tbit_t *tbit = tbit_getdata(task);
+  tbit_state_t *state = tbit_getstate(task);
+  scamper_tbit_tcpqe_t *qe;
+  scamper_tbit_icw_t *icw;
+  tbit_probe_t *tp = NULL;
+  uint32_t seq;
+  uint16_t datalen;
+  int rc, off, fin = 0;
+
+  assert(state->icw_count <= 2);
+
+  if((dl->dl_tcp_flags & TH_FIN) != 0)
+    {
+      state->flags |= TBIT_STATE_FLAG_FIN_SEEN;
+      fin = 1;
+    }
+
+  if(tbit_data_inrange(state, dl->dl_tcp_seq, dl->dl_tcp_datalen) == 0)
+    goto done;
+
+  /* if the packet contains data or is a fin, fail if we cannot queue it */
+  if((dl->dl_tcp_datalen != 0 || fin) && tbit_rxq(state, dl) != 0)
+    {
+      printerror(errno, strerror, __func__, "could not queue packet");
+      goto err;
+    }
+
+  if(state->flags & TBIT_STATE_FLAG_NOMOREDATA)
+    {
+      if((state->icw_flags & TBIT_STATE_ICW_FLAG_SEQ) == 0)
+	{
+	  icw = tbit->data;
+	  icw->start_seq = scamper_tbit_data_seqoff(state->sa_seq,
+						    state->rcv_nxt);
+	  state->icw_flags |= TBIT_STATE_ICW_FLAG_SEQ;
+	  state->icw_seq = state->rcv_nxt;
+	}
+
+      /*
+       * count the number of times the first segment is seen (with data)
+       * so that we know when the second retransmission is made.
+       */
+      if(dl->dl_tcp_seq == state->icw_seq && dl->dl_tcp_datalen > 0)
+	state->icw_count++;
+
+      if(state->icw_count < 2)
+	{
+	  /* we're done for now unless the packet is a fin */
+	  if(fin == 0)
+	    goto done;
+
+	  /*
+	   * if the packet is a fin, we do not have a retransmission
+	   * that would allow an ICW to be inferred.
+	   */
+	  tbit_result(task, SCAMPER_TBIT_RESULT_ICW_TOOSHORT);
+	  state->mode = MODE_FIN;
+	}
+      else
+	{
+	  /*
+	   * got a second retransmission.  make a note of the sequence
+	   * number we need to see to be sure we are seeing new data after
+	   * the initial flight.  shift to MODE_MOREDATA after we have
+	   * processed the packets in the rxq.
+	   */
+	  state->icw_tail = scamper_tbit_tcpq_tail(state->rxq);
+	  state->mode = MODE_MOREDATA;
+	}
+    }
+
+  if(state->rxq == NULL)
+    goto done;
+
+  while(scamper_tbit_tcpq_seg(state->rxq, &seq, &datalen) == 0)
+    {
+      /* skip if not in range */
+      if(scamper_tbit_data_inrange(state->rcv_nxt, seq, datalen) == 0)
+	{
+	  scamper_tbit_tcpqe_free(scamper_tbit_tcpq_pop(state->rxq), free);
+	  continue;
+	}
+
+      /* if we have a gap in the rxq, stop processing stream for now */
+      if((off = scamper_tbit_data_seqoff(state->rcv_nxt, seq)) > 0)
+	{
+	  if((tp = tp_tcp(state)) == NULL)
+	    goto err;
+	  if(state->mode == MODE_MOREDATA)
+	    tp->tp_flags |= TH_FIN;
+	  break;
+	}
+
+      /* process the data and free it */
+      qe = scamper_tbit_tcpq_pop(state->rxq);
+      off = abs(off);
+      fin = (qe->flags & TH_FIN) != 0 ? 1 : 0;
+      if(qe->len > 0)
+	state->rcv_nxt += (qe->len - off);
+      if((rc = tbit_app_rx(task, qe->data+off, qe->len-off)) < 0)
+	goto err;
+      scamper_tbit_tcpqe_free(qe, free); qe = NULL;
+
+      if((tp = tp_tcp(state)) == NULL)
+	goto err;
+      tp->tp_len = rc;
+      if(state->mode == MODE_MOREDATA)
+	tp->tp_flags |= TH_FIN;
+      if(fin != 0)
+	{
+	  tp->tp_ack++;
+	  state->rcv_nxt++;
+	  break;
+	}
+    }
+
+ done:
+  tbit_queue(task);
+  return 0;
+
+ err:
+  tbit_handleerror(task, errno);
+  tbit_queue(task);
+  return -1;
+}
+
+static int dl_data_blinddata(scamper_task_t *task, scamper_dl_rec_t *dl)
+{
+  scamper_tbit_t *tbit = tbit_getdata(task);
+  tbit_state_t *state = tbit_getstate(task);
+  scamper_tbit_blind_t *blind = tbit->data;
+  tbit_segment_t *seg;
+  tbit_probe_t *tp;
+
+  if(state->mode == MODE_DATA)
+    return dl_data_null(task, dl);
+  if(state->mode != MODE_BLIND)
+    return 0;
+
+  /*
+   * if we got some data, or the packet is an ack that indicates the
+   * blind data was accepted, then we're done
+   */
+  if(dl->dl_tcp_datalen > 0 || slist_count(state->segments) == 0)
+    {
+      if(state->blind_step == 2 && slist_count(state->segments) == 0)
+	state->blind_flags |= TBIT_STATE_BLIND_FLAG_ACCEPTED;
+      state->mode = MODE_DATA;
+      tp_flush(state, NULL);
+      return dl_data_null(task, dl);
+    }
+
+  /* skip over unexpected data */
+  if(dl->dl_tcp_seq != state->rcv_nxt)
+    return 0;
+
+  /* if we got a fin while trying to do the measurement, stop */
+  if((dl->dl_tcp_flags & TH_FIN) != 0)
+    {
+      tbit_result(task, SCAMPER_TBIT_RESULT_TCP_FIN);
+      return 0;
+    }
+
+  seg = slist_head_get(state->segments);
+
+  if(state->blind_step == 0)
+    {
+      if(seg->len != state->blind_part2 + state->blind_part3)
+	return 0;
+      state->blind_step++;
+      state->attempt = 0;
+
+      /* in step 1, we send third segment with wrong ack */
+      if((tp = tp_tcp(state)) == NULL)
+	{
+	  tbit_handleerror(task, errno);
+	  return -1;
+	}
+      tp->tp_seq += state->blind_part2;
+      tp->tp_len = state->blind_part3;
+      tp->tp_ack += blind->off;
+      tp->wait = TBIT_TIMEOUT_BLINDDATA;
+    }
+  else if(state->blind_step == 1)
+    {
+      state->blind_flags |= TBIT_STATE_BLIND_FLAG_CHALLENGE;
+      if(state->attempt >= blind->retx)
+	{
+	  state->blind_step++;
+	  state->attempt = 0;
+	}
+      return 0;
+    }
+  else if(state->blind_step == 2)
+    {
+      if(seg->len != state->blind_part3)
+	return 0;
+      state->blind_step++;
+      state->attempt = 0;
+      tp_flush(state, NULL);
+
+      /* in step 3, we send the third segment with correct ack */
+      if((tp = tp_tcp(state)) == NULL)
+	{
+	  tbit_handleerror(task, errno);
+	  return -1;
+	}
+      tp->tp_len = seg->len;
+      tp->wait = TBIT_TIMEOUT_BLINDDATA;
+    }
+
+  return 0;
+}
+
+/*
+ * dl_data_blindrst:
+ *
+ * try and reset the connection three times for the first three data packets,
+ * by sending blinded syn/rst.
+ */
+static int dl_data_blindrst(scamper_task_t *task, scamper_dl_rec_t *dl)
+{
+  scamper_tbit_t *tbit = tbit_getdata(task);
+  tbit_state_t *state = tbit_getstate(task);
+  scamper_tbit_blind_t *blind = tbit->data;
+  tbit_probe_t *tp;
+
+  assert(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST ||
+	 tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN);
+
+  if((state->flags & TBIT_STATE_FLAG_NOMOREDATA) != 0 &&
+     state->mode == MODE_BLIND)
+    {
+      /* we do not use the rxq through this stage */
+      if(state->rxq != NULL)
+	{
+	  scamper_tbit_tcpq_free(state->rxq, free);
+	  state->rxq = NULL;
+	}
+
+      if(dl->dl_tcp_datalen == 0 && (dl->dl_tcp_flags & TH_FIN) == 0)
+	{
+	  /* infer if the ack could be a challenge ack */
+	  if(state->blind_c > 0 && dl->dl_tcp_ack == state->snd_nxt)
+	    state->blind_flags |= TBIT_STATE_BLIND_FLAG_CHALLENGE;
+	  return 0;
+	}
+
+      /* if it is out of sequence, then send an ack for what we want */
+      if(dl->dl_tcp_seq != state->rcv_nxt)
+	{
+	  if(tp_tcp(state) == NULL)
+	    goto err;
+	  return 0;
+	}
+
+      /*
+       * make a note that we saw a fin (or data) at some point to help
+       * classify later
+       */
+      if(dl->dl_tcp_flags & TH_FIN)
+	state->blind_flags |= TBIT_STATE_BLIND_FLAG_FIN;
+      if(dl->dl_tcp_datalen > 0)
+	state->flags |= TBIT_STATE_FLAG_SEEN_DATA;
+
+      /*
+       * if we've already sent a rst/syn for this packet, accept the data so
+       * we can move on to the next one
+       */
+      if(state->blind_sent == 1 && dl->dl_tcp_datalen > 0)
+	{
+	  state->rcv_nxt += dl->dl_tcp_datalen;
+	  if(tbit_app_rx(task, dl->dl_tcp_data, dl->dl_tcp_datalen) < 0)
+	    goto err;
+	}
+      if((tp = tp_tcp(state)) == NULL)
+	goto err;
+
+      /* if the packet is a pure fin, then stop now */
+      if((dl->dl_tcp_flags & TH_FIN) != 0 && dl->dl_tcp_datalen == 0)
+	{
+	  tp->tp_flags |= TH_FIN;
+	  tp->tp_ack++;
+	  state->rcv_nxt++;
+	  state->mode = MODE_FIN;
+	  state->flags |= TBIT_STATE_FLAG_FIN_SEEN;
+	  return 0;
+	}
+
+      if(state->blind_sent == 0)
+	{
+	  /*
+	   * if we haven't sent a blinded rst/syn packet for this piece of
+	   * data yet, then send one now
+	   */
+	  if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST)
+	    tp->tp_flags = TH_RST;
+	  else
+	    tp->tp_flags = TH_SYN;
+	  tp->tp_seq += blind->off;
+	  state->blind_sent = 1;
+	  state->blind_c++;
+	}
+      else
+	{
+	  /*
+	   * move on to the next piece of data.  if we've sent enough
+	   * blinded rst/syn packets, then let the connection complete and
+	   * move on.
+	   */
+	  state->blind_sent = 0;
+	  state->blind_ignored++;
+	  if(state->blind_c >= blind->retx)
+	    state->mode = MODE_DATA;
+	  else
+	    tp_flush(state, tp);
+
+	  if((dl->dl_tcp_flags & TH_FIN) != 0)
+	    {
+	      tp->tp_flags |= TH_FIN;
+	      tp->tp_ack++;
+	      state->rcv_nxt++;
+	      state->mode = MODE_FIN;
+	      state->flags |= TBIT_STATE_FLAG_FIN_SEEN;
+	    }
+	}
+      tp->wait = TBIT_TIMEOUT_LONG;
+      state->attempt = 0;
+    }
+  else if((state->flags & TBIT_STATE_FLAG_NOMOREDATA) == 0 ||
+	  state->mode == MODE_DATA)
+    {
+      return dl_data_null(task, dl);
+    }
+
+  return 0;
+
+ err:
+  tbit_handleerror(task, errno);
+  return -1;
+}
+
 static void dl_data(scamper_task_t *task, scamper_dl_rec_t *dl)
 {
   static int (* const func[])(scamper_task_t *, scamper_dl_rec_t *) =
@@ -1751,14 +2380,32 @@ static void dl_data(scamper_task_t *task, scamper_dl_rec_t *dl)
       dl_data_ecn,
       dl_data_null,
       dl_data_sack_rcvr,
+      dl_data_icw,
+      NULL,
+      dl_data_blinddata,
+      dl_data_blindrst,
+      dl_data_blindrst,
     };
   scamper_tbit_t *tbit = tbit_getdata(task);
   tbit_state_t *state = tbit_getstate(task);
   tbit_segment_t *seg;
   uint32_t ab;
+  int timeout = TBIT_TIMEOUT_LONG;
+
+  if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA &&
+     state->mode == MODE_BLIND)
+    timeout = TBIT_TIMEOUT_BLINDDATA;
+
+  if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN &&
+     (dl->dl_tcp_flags & (TH_SYN|TH_ACK)) == (TH_SYN|TH_ACK) &&
+     dl->dl_tcp_seq != state->sa_seq)
+    {
+      tbit_result(task, SCAMPER_TBIT_RESULT_BLIND_SYNNEW);
+      return;
+    }
 
   if((state->flags & TBIT_STATE_FLAG_NORESET) == 0)
-    timeval_add_ms(&state->timeout, &dl->dl_tv, TBIT_TIMEOUT_LONG);
+    timeval_add_ms(&state->timeout, &dl->dl_tv, timeout);
 
   /* is the data in range? */
   if(tbit_data_inrange(state, dl->dl_tcp_seq, dl->dl_tcp_datalen) == 0)
@@ -1780,6 +2427,7 @@ static void dl_data(scamper_task_t *task, scamper_dl_rec_t *dl)
       else
 	{
 	  memmove(seg->data, seg->data+ab, seg->len-ab);
+	  seg->len -= ab;
 	}
       state->snd_nxt += ab;
     }
@@ -1795,9 +2443,14 @@ static void timeout_data(scamper_task_t *task)
     {
       NULL,
       timeout_data_pmtud,
-      timeout_data_ecn,
-      timeout_data_null,
+      timeout_data_generic, /* ecn */
+      timeout_data_generic, /* null */
       timeout_data_sack_rcvr,
+      timeout_data_generic, /* icw */
+      NULL,                 /* abc */
+      timeout_data_generic, /* blind-data */
+      timeout_data_generic, /* blind-rst */
+      timeout_data_generic, /* blind-syn */
     };
   scamper_tbit_t *tbit = tbit_getdata(task);
   tbit_state_t *state = tbit_getstate(task);
@@ -1811,8 +2464,9 @@ static void timeout_data(scamper_task_t *task)
 	  func[tbit->type](task);
 	  return;
 	}
-      if((tp=tp_tcp(state, seg->len)) == NULL)
+      if((tp=tp_tcp(state)) == NULL)
 	goto err;
+      tp->tp_len = seg->len;
       tp->wait = TBIT_TIMEOUT_DEFAULT;
       tbit_queue(task);
     }
@@ -1866,7 +2520,7 @@ static void dl_pmtud(scamper_task_t *task, scamper_dl_rec_t *dl)
     {
       if(dl->dl_ip_size > mtu)
 	return;
-      if(tp_tcp(state, 0) == NULL)
+      if(tp_tcp(state) == NULL)
 	goto err;
       tbit_queue(task);
       return;
@@ -1893,7 +2547,7 @@ static void dl_pmtud(scamper_task_t *task, scamper_dl_rec_t *dl)
       else
 	tbit_result(task, SCAMPER_TBIT_RESULT_PMTUD_SUCCESS);
 
-      if((tp = tp_tcp(state, 0)) == NULL)
+      if((tp = tp_tcp(state)) == NULL)
 	{
 	  tbit_handleerror(task, errno);
 	  return;
@@ -1943,7 +2597,7 @@ static void dl_blackhole(scamper_task_t *task, scamper_dl_rec_t *dl)
     {
       if(dl->dl_ip_size > mtu)
 	return;
-      if(tp_tcp(state, 0) == NULL)
+      if(tp_tcp(state) == NULL)
 	goto err;
       tbit_queue(task);
       return;
@@ -1964,7 +2618,7 @@ static void dl_blackhole(scamper_task_t *task, scamper_dl_rec_t *dl)
     {
       state->rcv_nxt += dl->dl_tcp_datalen;
 
-      if((tp = tp_tcp(state, 0)) == NULL)
+      if((tp = tp_tcp(state)) == NULL)
 	{
 	  tbit_handleerror(task, errno);
 	  return;
@@ -2001,43 +2655,286 @@ static void timeout_zerowin(scamper_task_t *task)
   return;
 }
 
+/*
+ * dl_zerowin:
+ *
+ * packet received, hopefully advertising a receive window sufficient
+ * to send our data.
+ */
 static void dl_zerowin(scamper_task_t *task, scamper_dl_rec_t *dl)
 {
   scamper_tbit_t *tbit = tbit_getdata(task);
   tbit_state_t *state = tbit_getstate(task);
   tbit_segment_t *seg;
   tbit_probe_t *tp;
-  int len, wait;
 
   if(dl->dl_tcp_win == 0)
     return;
 
-  seg = slist_head_get(state->segments);
-  assert(seg != NULL);
+  seg = slist_head_get(state->segments); assert(seg != NULL);
+  if((tp = tp_tcp(state)) == NULL)
+    goto err;
 
-  /* finally allowed to send our request */
+  if(tbit->type == SCAMPER_TBIT_TYPE_SACK_RCVR)
+    tp->tp_len = 1;
+  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+    tp->tp_len = state->blind_part1;
+  else
+    tp->tp_len = seg->len;
+
   if(tbit->type == SCAMPER_TBIT_TYPE_SACK_RCVR)
     {
-      len  = 1;
-      wait = 2000;
+      tp->wait = TBIT_TIMEOUT_SACK;
+      state->mode = MODE_DATA;
+    }
+  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+    {
+      tp->wait = TBIT_TIMEOUT_BLINDDATA;
+      state->mode = MODE_BLIND;
+    }
+  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST ||
+	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN)
+    {
+      tp->wait = TBIT_TIMEOUT_DEFAULT;
+      state->mode = MODE_BLIND;
     }
   else
     {
-      len  = seg->len;
-      wait = TBIT_TIMEOUT_DEFAULT;
+      tp->wait = TBIT_TIMEOUT_DEFAULT;
+      state->mode = MODE_DATA;
     }
 
-  if((tp = tp_tcp(state, len)) == NULL)
-    goto err;
-  tp->wait = wait;
   state->attempt = 0;
-  state->mode = MODE_DATA;
   tbit_queue(task);
   return;
 
  err:
   tbit_handleerror(task, errno);
   return;
+}
+
+static void timeout_moredata(scamper_task_t *task)
+{
+  tbit_classify(task);
+  return;
+}
+
+/*
+ * dl_moredata
+ *
+ * this function exists to make note of when a new data packet arrives
+ * from beyond the last flight.  dl_data_icw has previously sent
+ * FIN-ack packets to encourage a fast resolution to the measurement.
+ */
+static void dl_moredata(scamper_task_t *task, scamper_dl_rec_t *dl)
+{
+  scamper_tbit_t *tbit = tbit_getdata(task);
+  tbit_state_t *state = tbit_getstate(task);
+  scamper_tbit_tcpqe_t *qe;
+  tbit_probe_t *tp = NULL;
+  uint32_t seq;
+  uint16_t datalen;
+  int off, fin = 0;
+
+  assert(tbit->type == SCAMPER_TBIT_TYPE_ICW);
+
+  if(tbit->type == SCAMPER_TBIT_TYPE_ICW)
+    assert(state->icw_count == 2);
+
+  /* see if the remote host has acked our fin */
+  if(dl->dl_tcp_ack == state->snd_nxt + 1 &&
+     (state->flags & TBIT_STATE_FLAG_FIN_ACKED) == 0)
+    {
+      state->flags |= TBIT_STATE_FLAG_FIN_ACKED;
+      state->snd_nxt++;
+    }
+
+  /* skip over packets that do not occupy sequence number space */
+  if(dl->dl_tcp_datalen == 0 && (dl->dl_tcp_flags & TH_FIN) == 0)
+    return;
+
+  /* skip over data that is out of range */
+  if(tbit_data_inrange(state, dl->dl_tcp_seq, dl->dl_tcp_datalen) == 0)
+    return;
+
+  /* fail if we cannot queue packet */
+  if(tbit_rxq(state, dl) != 0)
+    {
+      printerror(errno, strerror, __func__, "could not queue packet");
+      goto err;
+    }
+
+  while(scamper_tbit_tcpq_seg(state->rxq, &seq, &datalen) == 0)
+    {
+      if(scamper_tbit_data_inrange(state->rcv_nxt, seq, datalen) == 0)
+	{
+	  scamper_tbit_tcpqe_free(scamper_tbit_tcpq_pop(state->rxq), free);
+	  continue;
+	}
+
+      if(datalen > 0)
+	{
+	  if(tbit->type == SCAMPER_TBIT_TYPE_ICW &&
+	     scamper_tbit_data_seqoff(state->icw_tail, seq+datalen) >= 0)
+	    {
+	      state->mode = MODE_FIN;
+	      tbit_result(task, SCAMPER_TBIT_RESULT_ICW_SUCCESS);
+	    }
+	}
+      else
+	{
+	  if(tbit->type == SCAMPER_TBIT_TYPE_ICW &&
+	     scamper_tbit_data_seqoff(state->icw_tail, seq) == 0)
+	    {
+	      state->mode = MODE_FIN;
+	      tbit_result(task, SCAMPER_TBIT_RESULT_ICW_TOOSHORT);
+	    }
+	}
+
+      if((off = scamper_tbit_data_seqoff(state->rcv_nxt, seq)) > 0)
+	{
+	  if((tp = tp_tcp(state)) == NULL)
+	    goto err;
+	  if((state->flags & TBIT_STATE_FLAG_FIN_ACKED) == 0)
+	    tp->tp_flags |= TH_FIN;
+	  break;
+	}
+
+      qe = scamper_tbit_tcpq_pop(state->rxq);
+      off = abs(off);
+      fin = (qe->flags & TH_FIN) != 0 ? 1 : 0;
+      if(qe->len > 0)
+	state->rcv_nxt += (qe->len - off);
+      if(tbit_app_rx(task, qe->data+off, qe->len-off) < 0)
+	goto err;
+      scamper_tbit_tcpqe_free(qe, free); qe = NULL;
+
+      if((tp = tp_tcp(state)) == NULL)
+	goto err;
+      if((state->flags & TBIT_STATE_FLAG_FIN_ACKED) == 0)
+	tp->tp_flags |= TH_FIN;
+      if(fin != 0)
+	{
+	  tp->tp_ack++;
+	  state->flags |= TBIT_STATE_FLAG_FIN_SEEN;
+	  state->rcv_nxt++;
+	  break;
+	}
+    }
+
+  if(tbit_tcpclosed(state))
+    {
+      if(tbit->result == SCAMPER_TBIT_RESULT_NONE)
+	tbit_classify(task);
+      state->mode = MODE_DONE;
+    }
+
+  tbit_queue(task);
+  return;
+
+ err:
+  tbit_handleerror(task, errno);
+  tbit_queue(task);
+  return;
+}
+
+/*
+ * timeout_blind
+ *
+ * a timeout has occured doing a blind-test.  figure out which blind
+ * test this corresponds to and take the appropriate action
+ */
+static void timeout_blind(scamper_task_t *task)
+{
+  scamper_tbit_t *tbit = tbit_getdata(task);
+  tbit_state_t *state = tbit_getstate(task);
+  scamper_tbit_blind_t *blind = tbit->data;
+  tbit_segment_t *seg;
+  tbit_probe_t *tp;
+
+  /* if the timeout is for the reset or syn tests, we're done */
+  if(tbit->type != SCAMPER_TBIT_TYPE_BLIND_DATA)
+    {
+      tbit_classify(task);
+      return;
+    }
+
+  seg = slist_head_get(state->segments); assert(seg != NULL);
+
+  if(state->blind_step == 0 || state->blind_step == 3)
+    {
+      if(state->attempt >= blind->retx)
+	{
+	  tbit_result(task, SCAMPER_TBIT_RESULT_NONE);
+	  return;
+	}
+      if((tp = tp_tcp(state)) == NULL)
+	goto err;
+      if(state->blind_step == 0)
+	tp->tp_len = state->blind_part1;
+      else
+	tp->tp_len = seg->len;
+      tp->wait = TBIT_TIMEOUT_BLINDDATA;
+      tbit_queue(task);
+      return;
+    }
+
+  if((tp = tp_tcp(state)) == NULL)
+    goto err;
+  tp->tp_len = seg->len;
+  tp->wait = TBIT_TIMEOUT_BLINDDATA;
+
+  if(state->attempt >= blind->retx)
+    {
+      if(state->blind_step == 1)
+	{
+	  /*
+	   * if we did not get a challenge ack during the process of
+	   * sending the first packet, then record silence.
+	   */
+	  if((state->blind_flags & TBIT_STATE_BLIND_FLAG_CHALLENGE) == 0)
+	    state->blind_flags |= TBIT_STATE_BLIND_FLAG_SILENCE;
+	}
+      state->attempt = 0;
+      state->blind_step++;
+    }
+
+  if(state->blind_step == 1)
+    {
+      /*
+       * if we are still in the process of re-trying data packet
+       * with offset ack field, keep trying
+       */
+      tp->tp_ack += blind->off;
+      tp->tp_seq += state->blind_part2;
+      tp->tp_len  = state->blind_part3;
+    }
+  else
+    {
+      tp->tp_len  = state->blind_part2;
+    }
+
+  tbit_queue(task);
+  return;
+
+ err:
+  tbit_handleerror(task, errno);
+  return;
+}
+
+static int blind_check_rst(const scamper_task_t *t, const scamper_dl_rec_t *dl)
+{
+  scamper_tbit_t *tbit = tbit_getdata(t);
+  tbit_state_t *state = tbit_getstate(t);
+  scamper_tbit_blind_t *blind = tbit->data;
+
+  if(((tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA &&
+       dl->dl_tcp_seq == state->rcv_nxt + blind->off) ||
+      (tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN &&
+       dl->dl_tcp_ack == state->snd_nxt + blind->off + 1)))
+    return 1;
+
+  return 0;
 }
 
 /*
@@ -2061,6 +2958,8 @@ static void do_tbit_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
       dl_pmtud,      /* MODE_PMTUD */
       dl_blackhole,  /* MODE_BLACKHOLE */
       dl_zerowin,    /* MODE_ZEROWIN */
+      dl_moredata,   /* MODE_MOREDATA */
+      dl_data,       /* MODE_BLIND */
     };
 
   scamper_tbit_t *tbit = tbit_getdata(task);
@@ -2115,17 +3014,23 @@ static void do_tbit_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
   if(func[state->mode] == NULL)
     goto done;
 
-  /* If a reset packet is received, abandon the measurement */
-  if((dl->dl_tcp_flags & TH_RST) != 0 && state->mode != MODE_SYN)
+  if(state->mode != MODE_SYN)
     {
-      state->flags |= TBIT_STATE_FLAG_RST_SEEN;
-      tbit_classify(task);
-      return;
-    }
+      /* If a reset packet is received, abandon the measurement */
+      if((dl->dl_tcp_flags & TH_RST) != 0)
+	{
+	  if(state->mode == MODE_BLIND && blind_check_rst(task, dl) == 1)
+	    state->blind_flags |= TBIT_STATE_BLIND_FLAG_RST;
 
-  /* the ACK flag should be set on all packets */
-  if((dl->dl_tcp_flags & TH_ACK) == 0 && state->mode != MODE_SYN)
-    goto done;
+	  state->flags |= TBIT_STATE_FLAG_RST_SEEN;
+	  tbit_classify(task);
+	  return;
+	}
+
+      /* the ACK flag should be set on all packets */
+      if((dl->dl_tcp_flags & TH_ACK) == 0)
+	goto done;
+    }
 
   /* update the timestamp record */
   if((state->flags & TBIT_STATE_FLAG_TCPTS) != 0 &&
@@ -2157,8 +3062,8 @@ static void do_tbit_handle_timeout(scamper_task_t *task)
   static void (* const func[])(scamper_task_t *) =
     {
       NULL,
-      timeout_rt,         /* MODE_RTSOCK */
-      timeout_dlhdr,      /* MODE_DLHDR */
+      timeout_generic_error, /* MODE_RTSOCK */
+      timeout_generic_error, /* MODE_DLHDR */
       NULL,               /* MODE_FIREWALL */
       NULL,               /* MODE_DONE */
       timeout_syn,        /* MODE_SYN */
@@ -2167,6 +3072,8 @@ static void do_tbit_handle_timeout(scamper_task_t *task)
       timeout_pmtud,      /* MODE_PMTUD */
       timeout_pmtud,      /* MODE_BLACKHOLE */
       timeout_zerowin,    /* MODE_ZEROWIN */
+      timeout_moredata,   /* MODE_MOREDATA */
+      timeout_blind,      /* MODE_BLIND */
     };
   tbit_state_t *state = tbit_getstate(task);
 
@@ -2291,8 +3198,6 @@ static void tbit_state_free(scamper_task_t *task)
 {
   scamper_tbit_t *tbit = tbit_getdata(task);
   tbit_state_t *state = tbit_getstate(task);
-  tbit_segment_t *seg;
-  tbit_probe_t *tp;
   int i;
 
   if(state == NULL)
@@ -2323,18 +3228,10 @@ static void tbit_state_free(scamper_task_t *task)
     }
 
   if(state->segments != NULL)
-    {
-      while((seg = slist_head_pop(state->segments)) != NULL)
-	tbit_segment_free(seg);
-      slist_free(state->segments);
-    }
+    slist_free_cb(state->segments, (slist_free_t)tbit_segment_free);
 
   if(state->tx != NULL)
-    {
-      while((tp = slist_head_pop(state->tx)) != NULL)
-	tp_free(tp);
-      slist_free(state->tx);
-    }
+    slist_free_cb(state->tx, (slist_free_t)tp_free);
 
   if(state->rxq != NULL)
     scamper_tbit_tcpq_free(state->rxq, free);
@@ -2345,6 +3242,20 @@ static void tbit_state_free(scamper_task_t *task)
 	tbit_frags_free(state->frags[i]);
       free(state->frags);
     }
+
+#if defined(HAVE_OPENSSL)
+  if(state->ssl != NULL)
+    {
+      SSL_free(state->ssl);
+    }
+  else
+    {
+      if(state->wbio != NULL)
+	BIO_free(state->wbio);
+      if(state->rbio != NULL)
+	BIO_free(state->rbio);
+    }
+#endif
 
   free(state);
   return;
@@ -2362,6 +3273,7 @@ static int tbit_state_alloc(scamper_task_t *task)
       printerror(errno, strerror, __func__, "could not malloc state");
       goto err;
     }
+  state->mode = MODE_RTSOCK;
   scamper_task_setstate(task, state);
 
   if((state->segments = slist_alloc()) == NULL)
@@ -2409,9 +3321,15 @@ static int tbit_state_alloc(scamper_task_t *task)
 	  state->qs_nonce &= 0x3fffffff; /* 30 bit value */
 	  random_u8(&state->qs_ttl);
 	}
+
+      /* if we are using the fast-open cookie, get the payload to include */
+      if(tbit->fo_cookielen > 0 && tbit_app_rx(task, NULL, 0) <= 0)
+	{
+	  scamper_debug(__func__, "could not get payload");
+	  goto err;
+	}
     }
 
-  state->mode = MODE_RTSOCK;
   return 0;
 
 err:
@@ -2454,6 +3372,17 @@ static int tbit_tx_tcp(scamper_task_t *task, scamper_probe_t *pr,
     {
       pr->pr_tcp_flags = TH_SYN;
       pr->pr_tcp_mss   = tbit->client_mss;
+      pr->pr_tcp_wscale = tbit->wscale;
+
+      if(tbit->options & SCAMPER_TBIT_OPTION_TCPTS)
+	{
+	  gettimeofday_wrap(&tv);
+	  pr->pr_tcp_opts |= SCAMPER_PROBE_TCPOPT_TS;
+	  pr->pr_tcp_tsval = timeval_diff_ms(&tv, &tbit->start);
+	}
+
+      if(tbit->options & SCAMPER_TBIT_OPTION_SACK)
+	pr->pr_tcp_opts |= SCAMPER_PROBE_TCPOPT_SACK;
 
       switch(tbit->type)
 	{
@@ -2467,15 +3396,23 @@ static int tbit_tx_tcp(scamper_task_t *task, scamper_probe_t *pr,
 
 	case SCAMPER_TBIT_TYPE_NULL:
 	  null = tbit->data;
-	  if(null->options & SCAMPER_TBIT_NULL_OPTION_TCPTS)
+	  if((null->options & SCAMPER_TBIT_NULL_OPTION_FO) ||
+	     (null->options & SCAMPER_TBIT_NULL_OPTION_FO_EXP))
 	    {
-	      gettimeofday_wrap(&tv);
-	      pr->pr_tcp_opts |= SCAMPER_PROBE_TCPOPT_TS;
-	      pr->pr_tcp_tsval = timeval_diff_ms(&tv, &tbit->start);
-	    }
-	  if(null->options & SCAMPER_TBIT_NULL_OPTION_SACK)
-	    {
-	      pr->pr_tcp_opts |= SCAMPER_PROBE_TCPOPT_SACK;
+	      if(null->options & SCAMPER_TBIT_NULL_OPTION_FO)
+		pr->pr_tcp_opts |= SCAMPER_PROBE_TCPOPT_FO;
+	      else
+		pr->pr_tcp_opts |= SCAMPER_PROBE_TCPOPT_FO_EXP;
+	      pr->pr_tcp_fo_cookielen = tbit->fo_cookielen;
+	      if(tbit->fo_cookielen > 0)
+		{
+		  pr->pr_tcp_fo_cookie = tbit->fo_cookie;
+		  if((seg = slist_head_get(state->segments)) != NULL)
+		    {
+		      pr->pr_data = seg->data;
+		      pr->pr_len = seg->len;
+		    }
+		}
 	    }
 	  if(null->options & SCAMPER_TBIT_NULL_OPTION_IPTS_SYN)
 	    {
@@ -2652,7 +3589,7 @@ static void do_tbit_probe(scamper_task_t *task)
   probe.pr_dl_len = state->dlhdr->len;
   probe.pr_ip_src = tbit->src;
   probe.pr_ip_dst = tbit->dst;
-  probe.pr_ip_ttl = 255;
+  probe.pr_ip_ttl = tbit->ttl;
 
   if(tbit->dst->type == SCAMPER_ADDR_TYPE_IPV4)
     {
@@ -2660,6 +3597,7 @@ static void do_tbit_probe(scamper_task_t *task)
       probe.pr_ip_off = IP_DF;
     }
 
+  /* if there are specific packets to be sent, then do so */
   if((tp = slist_head_pop(state->tx)) != NULL)
     {
       if(tp->type == TBIT_PROBE_TYPE_TCP)
@@ -2725,19 +3663,23 @@ static int tbit_arg_param_validate(int optid, char *param, long *out)
 	tmp = SCAMPER_TBIT_TYPE_NULL;
       else if(strcasecmp(param, "sack-rcvr") == 0)
 	tmp = SCAMPER_TBIT_TYPE_SACK_RCVR;
+      else if(strcasecmp(param, "icw") == 0)
+	tmp = SCAMPER_TBIT_TYPE_ICW;
+      else if(strcasecmp(param, "blind-data") == 0)
+	tmp = SCAMPER_TBIT_TYPE_BLIND_DATA;
+      else if(strcasecmp(param, "blind-rst") == 0)
+	tmp = SCAMPER_TBIT_TYPE_BLIND_RST;
+      else if(strcasecmp(param, "blind-syn") == 0)
+	tmp = SCAMPER_TBIT_TYPE_BLIND_SYN;
       else
 	goto err;
       break;
 
     case TBIT_OPT_APP:
-      if(strcasecmp(param, "smtp") == 0)
-	tmp = SCAMPER_TBIT_APP_SMTP;
-      else if(strcasecmp(param, "http") == 0)
+      if(strcasecmp(param, "http") == 0)
 	tmp = SCAMPER_TBIT_APP_HTTP;
-      else if(strcasecmp(param, "dns") == 0)
-	tmp = SCAMPER_TBIT_APP_DNS;
-      else if(strcasecmp(param, "ftp") == 0)
-	tmp = SCAMPER_TBIT_APP_FTP;
+      else if(strcasecmp(param, "bgp") == 0)
+	tmp = SCAMPER_TBIT_APP_BGP;
       else
 	goto err;
       break;
@@ -2746,12 +3688,46 @@ static int tbit_arg_param_validate(int optid, char *param, long *out)
     case TBIT_OPT_DPORT:
     case TBIT_OPT_MSS:
     case TBIT_OPT_MTU:
+    case TBIT_OPT_ASN:
       if(string_tolong(param, &tmp) != 0 || tmp < 0 || tmp > 65535)
 	goto err;
       break;
 
     case TBIT_OPT_USERID:
       if(string_tolong(param, &tmp) != 0 || tmp < 0)
+	goto err;
+      break;
+
+    case TBIT_OPT_FO:
+      tmp = strlen(param);
+      if((tmp % 8) != 0)
+	return -1;
+      tmp = tmp / 2;
+      if(tmp < 4 || tmp > 16)
+	return -1;
+      break;
+
+    case TBIT_OPT_WSCALE:
+      if(string_tolong(param, &tmp) != 0 || tmp > 14 || tmp < 0)
+	goto err;
+      break;
+
+    case TBIT_OPT_ATTEMPTS:
+      if(string_tolong(param, &tmp) != 0 || tmp < 1 || tmp > 4)
+	goto err;
+      break;
+
+    case TBIT_OPT_OFFSET:
+      if(string_tolong(param, &tmp) != 0)
+	goto err;
+#if SIZEOF_LONG > 4
+      if(tmp > 2147483647 || tmp < -2147483647)
+	goto err;
+#endif
+      break;
+
+    case TBIT_OPT_TTL:
+      if(string_tolong(param, &tmp) != 0 || tmp < 1 || tmp > 255)
 	goto err;
       break;
 
@@ -2802,14 +3778,27 @@ static int tbit_app_ftp(scamper_tbit_t *tbit, tbit_options_t *o)
   return 0;
 }
 
+static int tbit_app_bgp(scamper_tbit_t *tbit, tbit_options_t *o)
+{
+  scamper_tbit_app_bgp_t *bgp;
+  if(tbit->dport == 0)
+    tbit->dport = 179;
+  if((bgp = scamper_tbit_app_bgp_alloc()) == NULL)
+    return -1;
+  if(o->asn == 0)
+    bgp->asn = 1;
+  else
+    bgp->asn = o->asn;
+  tbit->app_data = bgp;
+  return 0;
+}
+
 static int tbit_app_http(scamper_tbit_t *tbit, tbit_options_t *o)
 {
-  char *host;
-  char *file;
-  char *ptr;
-
-  if(tbit->dport == 0)
-    tbit->dport = 80;
+  uint8_t type = SCAMPER_TBIT_APP_HTTP_TYPE_HTTP;
+  char *file = NULL, *host, *port, *ptr;
+  uint16_t dport = 80;
+  long lo;
 
   if(o->url == NULL)
     {
@@ -2817,14 +3806,30 @@ static int tbit_app_http(scamper_tbit_t *tbit, tbit_options_t *o)
       goto done;
     }
 
-  if(strncasecmp(o->url, "http://", 7) != 0)
-    return -1;
+  if(strncasecmp(o->url, "http://", 7) == 0)
+    {
+      host = o->url+7;
+    }
+#if defined(HAVE_OPENSSL)
+  else if(strncasecmp(o->url, "https://", 8) == 0)
+    {
+      if(scamper_option_notls() != 0)
+	return -1;
+      dport = 443;
+      host = o->url+8;
+      type = SCAMPER_TBIT_APP_HTTP_TYPE_HTTPS;
+    }
+#endif
+  else
+    {
+      return -1;
+    }
 
   /* extract the domain */
-  host = ptr = o->url+7;
+  ptr = host;
   while(*ptr != '\0')
     {
-      if(*ptr == '/') break;
+      if(*ptr == '/' || *ptr == ':') break;
       if(isalnum((int)*ptr) == 0 && *ptr != '-' && *ptr != '.') return -1;
       ptr++;
     }
@@ -2832,19 +3837,39 @@ static int tbit_app_http(scamper_tbit_t *tbit, tbit_options_t *o)
     return -1;
 
   if(*ptr == '\0')
+    goto done;
+
+  if(*ptr == ':')
     {
-      file = "/";
-    }
-  else
-    {
-      memmove(host-1, host, ptr-host);
-      host--;
-      *(ptr-1) = '\0';
-      file = ptr;
+      *ptr = '\0';
+      ptr++; port = ptr;
+      while(*ptr != '\0')
+	{
+	  if(*ptr == '/') break;
+	  ptr++;
+	}
+
+      if(*ptr == '\0')
+	goto done;
+      *ptr = '\0';
+
+      if(string_tolong(port, &lo) != 0 || lo < 1 || lo > 65535)
+	return -1;
+      dport = lo;
+      *ptr = '/';
     }
 
+  memmove(host-1, host, ptr-host);
+  host--;
+  *(ptr-1) = '\0';
+  file = ptr;
+
  done:
-  if((tbit->app_data = scamper_tbit_app_http_alloc(host, file)) == NULL)
+  if(file == NULL)
+    file = "/";
+  if(tbit->dport == 0)
+    tbit->dport = dport;
+  if((tbit->app_data = scamper_tbit_app_http_alloc(type, host, file)) == NULL)
     return -1;
   return 0;
 }
@@ -2876,8 +3901,50 @@ static int tbit_alloc_pmtud(scamper_tbit_t *tbit, tbit_options_t *o)
   /* if we're in blackhole mode, we don't send PTB messages */
   if(o->options & TBIT_OPT_OPTION_BLACKHOLE)
     pmtud->options |= SCAMPER_TBIT_PMTUD_OPTION_BLACKHOLE;
-  else
+  else if(o->attempts == 0)
     pmtud->ptb_retx = 4;
+  else
+    pmtud->ptb_retx = o->attempts;
+
+  return 0;
+}
+
+static int tbit_alloc_icw(scamper_tbit_t *tbit, tbit_options_t *o)
+{
+  if((tbit->data = scamper_tbit_icw_alloc()) == NULL)
+    return -1;
+  if(o->options & TBIT_OPT_OPTION_TCPTS)
+    tbit->options |= SCAMPER_TBIT_OPTION_TCPTS;
+  if(o->options & TBIT_OPT_OPTION_SACK)
+    tbit->options |= SCAMPER_TBIT_OPTION_SACK;
+  return 0;
+}
+
+static int tbit_alloc_blind(scamper_tbit_t *tbit, tbit_options_t *o)
+{
+  scamper_tbit_blind_t *blind;
+
+  if((blind = scamper_tbit_blind_alloc()) == NULL)
+    return -1;
+  tbit->data = blind;
+
+  if(o->attempts == 0)
+    blind->retx = 3;
+  else
+    blind->retx = o->attempts;
+
+  if(o->offset == 0)
+    {
+      if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN ||
+	 tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST)
+	blind->off = 10;
+      else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+	blind->off = -70000;
+      else
+	return -1;
+    }
+  else
+    blind->off = o->offset;
 
   return 0;
 }
@@ -2897,11 +3964,24 @@ static int tbit_alloc_null(scamper_tbit_t *tbit, tbit_options_t *o)
   tbit->data = null;
 
   if(o->options & TBIT_OPT_OPTION_TCPTS)
-    null->options |= SCAMPER_TBIT_NULL_OPTION_TCPTS;
+    tbit->options |= SCAMPER_TBIT_OPTION_TCPTS;
   if(o->options & TBIT_OPT_OPTION_SACK)
-    null->options |= SCAMPER_TBIT_NULL_OPTION_SACK;
+    tbit->options |= SCAMPER_TBIT_OPTION_SACK;
   if(o->options & TBIT_OPT_OPTION_IPQS_SYN)
     null->options |= SCAMPER_TBIT_NULL_OPTION_IPQS_SYN;
+
+  if(o->options & TBIT_OPT_OPTION_FO)
+    null->options |= SCAMPER_TBIT_NULL_OPTION_FO;
+  else if(o->options & TBIT_OPT_OPTION_FO_EXP)
+    null->options |= SCAMPER_TBIT_NULL_OPTION_FO_EXP;
+
+  if(o->fo_cookielen > 0)
+    {
+      if(scamper_tbit_fo_setcookie(tbit, o->fo_cookie, o->fo_cookielen) != 0)
+	return -1;
+      if((o->options & (TBIT_OPT_OPTION_FO|TBIT_OPT_OPTION_FO_EXP)) == 0)
+	null->options = SCAMPER_TBIT_NULL_OPTION_FO;
+    }
 
   if(o->options & (TBIT_OPT_OPTION_IPTS_SYN | TBIT_OPT_OPTION_IPRR_SYN))
     {
@@ -2931,6 +4011,11 @@ void *scamper_do_tbit_alloc(char *str)
     NULL,             /* ecn */
     tbit_alloc_null,  /* null */
     NULL,             /* sack-rcvr */
+    tbit_alloc_icw,   /* icw */
+    NULL,             /* abc */
+    tbit_alloc_blind, /* blind-data */
+    tbit_alloc_blind, /* blind-rst */
+    tbit_alloc_blind, /* blind-syn */
   };
   static int (* const app_func[])(scamper_tbit_t *, tbit_options_t *) = {
     NULL,
@@ -2938,15 +4023,18 @@ void *scamper_do_tbit_alloc(char *str)
     tbit_app_smtp,
     tbit_app_dns,
     tbit_app_ftp,
+    tbit_app_bgp,
   };
   scamper_option_out_t *opts_out = NULL, *opt;
   scamper_tbit_t *tbit = NULL;
   tbit_options_t o;
-  uint8_t type = SCAMPER_TBIT_TYPE_PMTUD;
+  uint8_t type = SCAMPER_TBIT_TYPE_NULL;
+  uint8_t wscale = 0;
+  uint8_t ttl = 255;
   uint32_t userid = 0;
   char *addr;
   long tmp = 0;
-  int af;
+  int i;
 
   memset(&o, 0, sizeof(o));
 
@@ -3016,6 +4104,32 @@ void *scamper_do_tbit_alloc(char *str)
 	  o.ptbsrc = opt->str;
 	  break;
 
+	case TBIT_OPT_FO:
+	  for(i=0; i<tmp; i++)
+	    o.fo_cookie[i] = hex2byte(opt->str[i*2], opt->str[(i*2)+1]);
+	  o.fo_cookielen = tmp;
+	  break;
+
+	case TBIT_OPT_WSCALE:
+	  wscale = (uint8_t)tmp;
+	  break;
+
+	case TBIT_OPT_ATTEMPTS:
+	  o.attempts = (uint8_t)tmp;
+	  break;
+
+	case TBIT_OPT_OFFSET:
+	  o.offset = (int32_t)tmp;
+	  break;
+
+	case TBIT_OPT_ASN:
+	  o.asn = (uint16_t)tmp;
+	  break;
+
+	case TBIT_OPT_TTL:
+	  ttl = (uint8_t)tmp;
+	  break;
+
 	case TBIT_OPT_OPTION:
 	  if(strcasecmp(opt->str, "blackhole") == 0)
 	    o.options |= TBIT_OPT_OPTION_BLACKHOLE;
@@ -3029,6 +4143,10 @@ void *scamper_do_tbit_alloc(char *str)
 	    o.options |= TBIT_OPT_OPTION_IPQS_SYN;
 	  else if(strcasecmp(opt->str, "sack") == 0)
 	    o.options |= TBIT_OPT_OPTION_SACK;
+	  else if(strcasecmp(opt->str, "fo") == 0)
+	    o.options |= TBIT_OPT_OPTION_FO;
+	  else if(strcasecmp(opt->str, "fo-exp") == 0)
+	    o.options |= TBIT_OPT_OPTION_FO_EXP;
 	  else
 	    goto err;
 	  break;
@@ -3056,6 +4174,8 @@ void *scamper_do_tbit_alloc(char *str)
     }
   tbit->type       = type;
   tbit->userid     = userid;
+  tbit->wscale     = wscale;
+  tbit->ttl        = ttl;
   tbit->client_mss = o.mss;
   tbit->dport      = o.dport;
   tbit->sport      = (o.sport != 0)    ? o.sport    : scamper_sport_default();
@@ -3064,10 +4184,10 @@ void *scamper_do_tbit_alloc(char *str)
 
   if(o.src != NULL)
     {
-      af = scamper_addr_af(tbit->dst);
-      if(af != AF_INET && af != AF_INET6)
+      i = scamper_addr_af(tbit->dst);
+      if(i != AF_INET && i != AF_INET6)
 	goto err;
-      if((tbit->src = scamper_addrcache_resolve(addrcache, af, o.src)) == NULL)
+      if((tbit->src = scamper_addrcache_resolve(addrcache, i, o.src)) == NULL)
 	goto err;
     }
 
@@ -3134,11 +4254,27 @@ scamper_task_t *scamper_do_tbit_alloctask(void *data, scamper_list_t *list,
 
 void scamper_do_tbit_cleanup(void)
 {
+#if defined(HAVE_OPENSSL)
+  if(ssl_ctx != NULL)
+    {
+      SSL_CTX_free(ssl_ctx);
+      ssl_ctx = NULL;
+    }
+#endif
   return;
 }
 
 int scamper_do_tbit_init(void)
 {
+#if defined(HAVE_OPENSSL)
+  if(scamper_option_notls() == 0)
+    {
+      if((ssl_ctx = SSL_CTX_new(SSLv23_client_method())) == NULL)
+	return -1;
+      SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_NONE, NULL);
+    }
+#endif
+
   tbit_funcs.probe          = do_tbit_probe;
   tbit_funcs.handle_icmp    = NULL;
   tbit_funcs.handle_dl      = do_tbit_handle_dl;

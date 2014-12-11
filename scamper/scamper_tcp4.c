@@ -1,11 +1,11 @@
 /*
  * scamper_tcp4.c
  *
- * $Id: scamper_tcp4.c,v 1.54 2012/05/04 18:09:35 mjl Exp $
+ * $Id: scamper_tcp4.c,v 1.54.14.1 2015/10/17 07:56:11 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2012,2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tcp4.c,v 1.54 2012/05/04 18:09:35 mjl Exp $";
+  "$Id: scamper_tcp4.c,v 1.54.14.1 2015/10/17 07:56:11 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -57,6 +57,15 @@ static size_t tcp_mss(uint8_t *buf, uint16_t mss)
   return 4;
 }
 
+static size_t tcp_wscale(uint8_t *buf, uint8_t wscale)
+{
+  buf[0] = 3;
+  buf[1] = 3;
+  buf[2] = wscale;
+  scamper_debug(__func__, "%u", wscale);
+  return 3;
+}
+
 static size_t tcp_sackp(uint8_t *buf)
 {
   buf[0] = 4;
@@ -84,6 +93,32 @@ static size_t tcp_nop(uint8_t *buf)
 {
   buf[0] = 1;
   return 1;
+}
+
+static size_t tcp_fo(uint8_t *buf, const scamper_probe_t *probe)
+{
+  buf[0] = 34;
+  buf[1] = 2;
+  if(probe->pr_tcp_fo_cookielen > 0)
+    {
+      buf[1] += probe->pr_tcp_fo_cookielen;
+      memcpy(buf+2, probe->pr_tcp_fo_cookie, probe->pr_tcp_fo_cookielen);
+    }
+  return buf[1];
+}
+
+static size_t tcp_fo_exp(uint8_t *buf, const scamper_probe_t *probe)
+{
+  buf[0] = 254;
+  buf[1] = 4;
+  buf[2] = 0xf9;
+  buf[3] = 0x89;
+  if(probe->pr_tcp_fo_cookielen > 0)
+    {
+      buf[1] += probe->pr_tcp_fo_cookielen;
+      memcpy(buf+4, probe->pr_tcp_fo_cookie, probe->pr_tcp_fo_cookielen);
+    }
+  return buf[1];
 }
 
 static size_t tcp_ts(uint8_t *buf, const scamper_probe_t *probe)
@@ -151,8 +186,14 @@ static void tcp4_build(scamper_probe_t *probe, uint8_t *buf)
     {
       if(probe->pr_tcp_mss != 0)
 	tcphlen += tcp_mss(buf+tcphlen, probe->pr_tcp_mss);
+      if(probe->pr_tcp_wscale != 0)
+	tcphlen += tcp_wscale(buf+tcphlen, probe->pr_tcp_wscale);
       if((probe->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_SACK) != 0)
 	tcphlen += tcp_sackp(buf+tcphlen);
+      if((probe->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_FO) != 0)
+	tcphlen += tcp_fo(buf+tcphlen, probe);
+      if((probe->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_FO_EXP) != 0)
+	tcphlen += tcp_fo_exp(buf+tcphlen, probe);
     }
 
   if((probe->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_TS) != 0)
@@ -192,8 +233,14 @@ size_t scamper_tcp4_hlen(scamper_probe_t *pr)
     {
       if(pr->pr_tcp_mss != 0)
 	len += 4;
+      if(pr->pr_tcp_wscale != 0)
+	len += 3;
       if((pr->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_SACK) != 0)
 	len += 2;
+      if((pr->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_FO) != 0)
+	len += (2 + pr->pr_tcp_fo_cookielen);
+      if((pr->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_FO_EXP) != 0)
+	len += (4 + pr->pr_tcp_fo_cookielen);
     }
   if((pr->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_TS) != 0)
     {
@@ -249,13 +296,6 @@ int scamper_tcp4_probe(scamper_probe_t *pr)
   scamper_ip4_hlen(pr, &ip4hlen);
   tcphlen = scamper_tcp4_hlen(pr);
   len = ip4hlen + tcphlen + pr->pr_len;
-
-  i = len;
-  if(setsockopt(pr->pr_fd, SOL_SOCKET, SO_SNDBUF, (char *)&i, sizeof(i)) == -1)
-    {
-      printerror(errno,strerror,__func__,"could not set buffer to %d bytes",i);
-      return -1;
-    }
 
   if(pktbuf_len < len)
     {
@@ -347,6 +387,13 @@ int scamper_tcp4_open(const void *addr, int sport)
     {
       printerror(errno, strerror, __func__, "could not set SO_REUSEADDR");
       goto err;
+    }
+
+  opt = 65535 + 128;
+  if(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (char *)&opt, sizeof(opt)) != 0)
+    {
+      printerror(errno,strerror,__func__,"could not set SO_SNDBUF");
+      return -1;
     }
 
   sockaddr_compose((struct sockaddr *)&sin4, AF_INET, addr, sport);

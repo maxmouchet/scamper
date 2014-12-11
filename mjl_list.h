@@ -25,7 +25,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_list.h,v 1.36 2013/07/19 20:45:28 mjl Exp $
+ * $Id: mjl_list.h,v 1.36.14.1 2015/10/17 07:38:45 mjl Exp $
  *
  */
 
@@ -50,6 +50,10 @@ typedef void (*clist_onremove_t)(void *item);
 
 typedef int (*slist_cmp_t)(const void *a, const void *b);
 typedef int (*dlist_cmp_t)(const void *a, const void *b);
+
+typedef void (*slist_free_t)(void *item);
+typedef void (*dlist_free_t)(void *item);
+typedef void (*clist_free_t)(void *item);
 
 #ifndef DMALLOC
 slist_t *slist_alloc(void);
@@ -93,7 +97,9 @@ int slist_shuffle(slist_t *list);
 void slist_lock(slist_t *list);
 void slist_unlock(slist_t *list);
 int slist_islocked(slist_t *list);
+void slist_empty(slist_t *list);
 void slist_free(slist_t *list);
+void slist_free_cb(slist_t *list, slist_free_t func);
 
 #ifndef DMALLOC
 dlist_t *dlist_alloc(void);
@@ -137,7 +143,9 @@ int dlist_shuffle(dlist_t *list);
 void dlist_lock(dlist_t *list);
 void dlist_unlock(dlist_t *list);
 int dlist_islocked(dlist_t *list);
+void dlist_empty(dlist_t *list);
 void dlist_free(dlist_t *list);
+void dlist_free_cb(dlist_t *list, dlist_free_t func);
 
 #ifndef DMALLOC
 clist_t *clist_alloc(void);
@@ -170,5 +178,6 @@ void clist_lock(clist_t *list);
 void clist_unlock(clist_t *list);
 int clist_islocked(clist_t *list);
 void clist_free(clist_t *list);
+void clist_free_cb(clist_t *list, clist_free_t func);
 
 #endif

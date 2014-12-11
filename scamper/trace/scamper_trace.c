@@ -1,7 +1,7 @@
 /*
  * scamper_trace.c
  *
- * $Id: scamper_trace.c,v 1.93 2014/12/11 19:45:55 mjl Exp $
+ * $Id: scamper_trace.c,v 1.93.2.1 2015/09/23 09:02:26 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2003-2011 The University of Waikato
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace.c,v 1.93 2014/12/11 19:45:55 mjl Exp $";
+  "$Id: scamper_trace.c,v 1.93.2.1 2015/09/23 09:02:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -139,28 +139,27 @@ int scamper_trace_dtree_alloc(scamper_trace_t *trace)
 
 void scamper_trace_dtree_free(scamper_trace_t *trace)
 {
-  scamper_trace_dtree_t *dt;
   uint16_t i;
 
-  if((dt = trace->dtree) == NULL)
+  if(trace->dtree == NULL)
     return;
 
-  if(dt->lss_stop != NULL)
-    scamper_addr_free(dt->lss_stop);
-  if(dt->gss_stop != NULL)
-    scamper_addr_free(dt->gss_stop);
-  if(dt->lss != NULL)
-    free(dt->lss);
+  if(trace->dtree->lss_stop != NULL)
+    scamper_addr_free(trace->dtree->lss_stop);
+  if(trace->dtree->gss_stop != NULL)
+    scamper_addr_free(trace->dtree->gss_stop);
+  if(trace->dtree->lss != NULL)
+    free(trace->dtree->lss);
 
-  if(dt->gss != NULL)
+  if(trace->dtree->gss != NULL)
     {
-      for(i=0; i<dt->gssc; i++)
-	if(dt->gss[i] != NULL)
-	  scamper_addr_free(dt->gss[i]);
-      free(dt->gss);
+      for(i=0; i<trace->dtree->gssc; i++)
+	if(trace->dtree->gss[i] != NULL)
+	  scamper_addr_free(trace->dtree->gss[i]);
+      free(trace->dtree->gss);
     }
 
-  free(dt);
+  free(trace->dtree);
   trace->dtree = NULL;
   return;
 }
@@ -172,22 +171,12 @@ int scamper_trace_dtree_lss(scamper_trace_t *trace, const char *name)
   return 0;
 }
 
-int scamper_trace_dtree_gss_add(scamper_trace_t *trace, scamper_addr_t *iface)
+int scamper_trace_dtree_gss_alloc(scamper_trace_t *trace, uint16_t cnt)
 {
-  size_t len = (trace->dtree->gssc + 1) * sizeof(scamper_addr_t *);
-
-  if(trace->dtree == NULL)
+  if(trace->dtree == NULL || trace->dtree->gss != NULL)
     return -1;
-
-  if(realloc_wrap((void **)&trace->dtree->gss, len) != 0)
+  if((trace->dtree->gss = malloc_zero(sizeof(scamper_addr_t *) * cnt)) == NULL)
     return -1;
-
-  trace->dtree->gss[trace->dtree->gssc] = scamper_addr_use(iface);
-  trace->dtree->gssc++;
-
-  array_qsort((void **)trace->dtree->gss, trace->dtree->gssc,
-	      (array_cmp_t)scamper_addr_cmp);
-
   return 0;
 }
 
@@ -196,57 +185,48 @@ scamper_addr_t *scamper_trace_dtree_gss_find(const scamper_trace_t *trace,
 {
   if(trace->dtree == NULL)
     return NULL;
-
   return array_find((void **)trace->dtree->gss, trace->dtree->gssc,
                     iface, (array_cmp_t)scamper_addr_cmp);
 }
 
+void scamper_trace_dtree_gss_sort(const scamper_trace_t *trace)
+{
+  array_qsort((void **)trace->dtree->gss, trace->dtree->gssc,
+	      (array_cmp_t)scamper_addr_cmp);
+  return;
+}
+
 int scamper_trace_hops_alloc(scamper_trace_t *trace, const int hops)
 {
+  size_t size = sizeof(scamper_trace_hop_t *) * hops;
   scamper_trace_hop_t **h;
-  size_t size;
-
-  size = sizeof(scamper_trace_hop_t *) * hops;
 
   if(trace->hops == NULL)
-    {
-      h = (scamper_trace_hop_t **)malloc_zero(size);
-    }
+    h = (scamper_trace_hop_t **)malloc_zero(size);
   else
-    {
-      h = (scamper_trace_hop_t **)realloc(trace->hops, size);
-    }
+    h = (scamper_trace_hop_t **)realloc(trace->hops, size);
 
-  if(h != NULL)
-    {
-      trace->hops = h;
-      return 0;
-    }
-
-  return -1;
+  if(h == NULL)
+    return -1;
+  
+  trace->hops = h;
+  return 0;
 }
 
 void scamper_trace_hop_free(scamper_trace_hop_t *hop)
 {
-  if(hop != NULL)
-    {
-      scamper_icmpext_free(hop->hop_icmpext);
-      scamper_addr_free(hop->hop_addr);
-      free(hop);
-    }
+  if(hop == NULL)
+    return;
+
+  scamper_icmpext_free(hop->hop_icmpext);
+  scamper_addr_free(hop->hop_addr);
+  free(hop);
   return;
 }
 
 scamper_trace_hop_t *scamper_trace_hop_alloc()
 {
-  scamper_trace_hop_t *hop;
-
-  if((hop = malloc_zero(sizeof(struct scamper_trace_hop))) == NULL)
-    {
-      return NULL;
-    }
-
-  return hop;
+  return malloc_zero(sizeof(struct scamper_trace_hop));
 }
 
 int scamper_trace_hop_count(const scamper_trace_t *trace)
@@ -256,12 +236,8 @@ int scamper_trace_hop_count(const scamper_trace_t *trace)
   uint8_t i;
 
   for(i=0; i<trace->hop_count; i++)
-    {
-      for(hop = trace->hops[i]; hop != NULL; hop = hop->hop_next)
-	{
-	  hops++;
-	}
-    }
+    for(hop = trace->hops[i]; hop != NULL; hop = hop->hop_next)
+      hops++;
 
   return hops;
 }

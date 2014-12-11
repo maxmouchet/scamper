@@ -3,11 +3,11 @@
  *
  * the warts file format
  *
- * $Id: scamper_file_warts.c,v 1.243 2014/11/08 06:16:31 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.243.2.1 2015/10/17 07:07:54 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012-2014 The Regents of the University of California
+ * Copyright (C) 2012-2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_warts.c,v 1.243 2014/11/08 06:16:31 mjl Exp $";
+  "$Id: scamper_file_warts.c,v 1.243.2.1 2015/10/17 07:07:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -290,6 +290,16 @@ void insert_uint32(uint8_t *buf, uint32_t *off, const uint32_t len,
   return;
 }
 
+void insert_int32(uint8_t *buf, uint32_t *off, const uint32_t len,
+		  const int32_t *in, void *param)
+{
+  uint32_t tmp = htonl((uint32_t)*in);
+  assert(len - *off >= 4);
+  memcpy(&buf[*off], &tmp, 4);
+  *off += 4;
+  return;
+}
+
 void insert_wartshdr(uint8_t *buf, uint32_t *off, uint32_t len,
 		     uint16_t hdr_type)
 {
@@ -447,29 +457,34 @@ int extract_string(const uint8_t *buf, uint32_t *off,
   return -1;
 }
 
+int extract_uint16(const uint8_t *buf, uint32_t *off,
+		   const uint32_t len, uint16_t *out, void *param)
+{
+  if(len - *off < 2)
+    return -1;
+  memcpy(out, buf + *off, 2); *off += 2;
+  *out = ntohs(*out);
+  return 0;
+}
+
 int extract_uint32(const uint8_t *buf, uint32_t *off,
-			  const uint32_t len, uint32_t *out, void *param)
+		   const uint32_t len, uint32_t *out, void *param)
 {
   if(len - *off < 4)
-    {
-      return -1;
-    }
-
+    return -1;
   memcpy(out, buf + *off, 4); *off += 4;
   *out = ntohl(*out);
   return 0;
 }
 
-int extract_uint16(const uint8_t *buf, uint32_t *off,
-			  const uint32_t len, uint16_t *out, void *param)
+int extract_int32(const uint8_t *buf, uint32_t *off,
+		  const uint32_t len, int32_t *out, void *param)
 {
-  if(len - *off < 2)
-    {
-      return -1;
-    }
-
-  memcpy(out, buf + *off, 2); *off += 2;
-  *out = ntohs(*out);
+  uint32_t u32;
+  if(len - *off < 4)
+    return -1;
+  memcpy(&u32, buf + *off, 4); *off += 4;
+  *out = (int32_t)ntohl(u32);
   return 0;
 }
 

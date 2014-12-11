@@ -1,7 +1,7 @@
 /*
  * utils.h
  *
- * $Id: utils.h,v 1.110 2014/12/03 01:33:21 mjl Exp $
+ * $Id: utils.h,v 1.110.2.1 2015/10/19 00:39:32 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -135,6 +135,7 @@ int   string_isfloat(const char *str);
 int   string_tolong(const char *str, long *l);
 char *string_lastof(char *str, const char *delim);
 char *string_lastof_char(char *str, const char delim);
+char *string_firstof_char(char *str, const char delim);
 char *string_concat(char *str, size_t len, size_t *off, const char *fs, ...);
 const char *string_findlc(const char *str, const char *find);
 

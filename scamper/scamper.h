@@ -1,7 +1,7 @@
 /*
  * scamper.h
  *
- * $Id: scamper.h,v 1.52.14.2 2015/08/08 05:27:56 mjl Exp $
+ * $Id: scamper.h,v 1.52.14.4 2015/10/21 08:26:25 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -27,7 +27,7 @@
 
 #define SCAMPER_PPS_MIN       1
 #define SCAMPER_PPS_DEF       20
-#define SCAMPER_PPS_MAX       1000
+#define SCAMPER_PPS_MAX       10000
 int scamper_pps_get(void);
 int scamper_pps_set(const int pps);
 
@@ -47,6 +47,7 @@ int scamper_monitorname_set(const char *monitorname);
 int scamper_option_dl(void);
 int scamper_option_planetlab(void);
 int scamper_option_noinitndc(void);
+int scamper_option_notls(void);
 int scamper_option_select(void);
 int scamper_option_kqueue(void);
 int scamper_option_epoll(void);
@@ -57,6 +58,6 @@ void scamper_exitwhendone(int on);
 
 uint16_t scamper_sport_default(void);
 
-#define SCAMPER_VERSION "20141211a"
+#define SCAMPER_VERSION "20141211b"
 
 #endif /* __SCAMPER_H */

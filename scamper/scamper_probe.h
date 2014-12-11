@@ -1,12 +1,12 @@
 /*
  * scamper_probe.h
  *
- * $Id: scamper_probe.h,v 1.42 2013/07/08 17:48:31 mjl Exp $
+ * $Id: scamper_probe.h,v 1.42.14.1 2015/10/17 07:58:55 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
- * Copyright (C) 2012-2013 The Regents of the University of California
+ * Copyright (C) 2012-2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -92,6 +92,8 @@ typedef struct scamper_probe_ipopt
 
 #define SCAMPER_PROBE_TCPOPT_SACK     0x01
 #define SCAMPER_PROBE_TCPOPT_TS       0x02
+#define SCAMPER_PROBE_TCPOPT_FO       0x04
+#define SCAMPER_PROBE_TCPOPT_FO_EXP   0x08
 
 #define SCAMPER_PROBE_IS_IPID(pr) (                                      \
   ((pr)->pr_flags & SCAMPER_PROBE_FLAG_IPID) != 0 &&                     \
@@ -153,12 +155,15 @@ typedef struct scamper_probe
   uint32_t               pr_tcp_ack;
   uint8_t                pr_tcp_flags;
   uint8_t                pr_tcp_opts;
+  uint8_t                pr_tcp_wscale;
   uint16_t               pr_tcp_win;
   uint16_t               pr_tcp_mss;
   uint32_t               pr_tcp_tsval;
   uint32_t               pr_tcp_tsecr;
   uint32_t               pr_tcp_sack[8];
   uint8_t                pr_tcp_sackb;
+  uint8_t               *pr_tcp_fo_cookie;
+  uint8_t                pr_tcp_fo_cookielen;
 
   /* the contents of the packet's body */
   uint8_t               *pr_data;

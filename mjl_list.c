@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_list.c,v 1.68.4.1 2015/08/08 03:36:12 mjl Exp $";
+  "$Id: mjl_list.c,v 1.68.4.2 2015/10/17 07:39:14 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -380,7 +380,7 @@ void slist_concat(slist_t *first, slist_t *second)
   return;
 }
 
-void slist_free(slist_t *list)
+static void slist_flush(slist_t *list, slist_free_t free_func)
 {
   slist_node_t *node;
   slist_node_t *next;
@@ -395,12 +395,32 @@ void slist_free(slist_t *list)
       next = node->next;
       if(list->onremove != NULL)
 	list->onremove(node->item);
+      if(free_func != NULL)
+	free_func(node->item);
       free(node);
       node = next;
     }
+  return;
+}
 
+void slist_empty(slist_t *list)
+{
+  slist_flush(list, NULL);
+  slist_init(list);
+  return;
+}
+
+void slist_free(slist_t *list)
+{
+  slist_flush(list, NULL);
   free(list);
+  return;
+}
 
+void slist_free_cb(slist_t *list, slist_free_t func)
+{
+  slist_flush(list, func);
+  free(list);
   return;
 }
 
@@ -840,7 +860,7 @@ dlist_node_t *dlist_node_alloc_dm(void *item, const char *file, const int line)
 }
 #endif
 
-void dlist_free(dlist_t *list)
+static void dlist_flush(dlist_t *list, dlist_free_t free_func)
 {
   dlist_node_t *node;
   dlist_node_t *next;
@@ -855,12 +875,32 @@ void dlist_free(dlist_t *list)
       next = node->next;
       if(list->onremove != NULL)
 	list->onremove(node->item);
+      if(free_func != NULL)
+	free_func(node->item);
       free(node);
       node = next;
     }
+  return;
+}
 
+void dlist_empty(dlist_t *list)
+{
+  dlist_flush(list, NULL);
+  dlist_init(list);
+  return;
+}
+
+void dlist_free(dlist_t *list)
+{
+  dlist_flush(list, NULL);
   free(list);
+  return;
+}
 
+void dlist_free_cb(dlist_t *list, dlist_free_t func)
+{
+  dlist_flush(list, func);
+  free(list);
   return;
 }
 
@@ -1465,7 +1505,7 @@ int clist_islocked(clist_t *list)
   return list->lock == 0 ? 0 : 1;
 }
 
-void clist_free(clist_t *list)
+static void clist_flush(clist_t *list, clist_free_t free_func)
 {
   clist_node_t *node;
   clist_node_t *next;
@@ -1473,24 +1513,38 @@ void clist_free(clist_t *list)
   assert(list != NULL);
   clist_assert(list);
 
-  if((node = list->head) != NULL)
-    {
-      /* break the circle */
-      list->head->prev->next = NULL;
+  if((node = list->head) == NULL)
+    return;
 
-      /* delete all the nodes */
-      while(node != NULL)
-	{
-	  next = node->next;
-	  if(list->onremove)
-	    list->onremove(node->item);
-	  free(node);
-	  node = next;
-	}
+  /* break the circle */
+  list->head->prev->next = NULL;
+
+  /* delete all the nodes */
+  while(node != NULL)
+    {
+      next = node->next;
+      if(list->onremove)
+	list->onremove(node->item);
+      if(free_func != NULL)
+	free_func(node->item);
+      free(node);
+      node = next;
     }
 
-  free(list);
+  return;
+}
 
+void clist_free(clist_t *list)
+{
+  clist_flush(list, NULL);
+  free(list);
+  return;
+}
+
+void clist_free_cb(clist_t *list, clist_free_t func)
+{
+  clist_flush(list, func);
+  free(list);
   return;
 }
 

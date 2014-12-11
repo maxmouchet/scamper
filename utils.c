@@ -1,7 +1,7 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.173.2.1 2015/08/08 03:33:58 mjl Exp $
+ * $Id: utils.c,v 1.173.2.2 2015/10/19 00:39:05 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.173.2.1 2015/08/08 03:33:58 mjl Exp $";
+  "$Id: utils.c,v 1.173.2.2 2015/10/19 00:39:05 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1183,6 +1183,26 @@ char *string_lastof_char(char *str, const char delim)
     }
 
   return lastof;
+}
+
+char *string_firstof_char(char *str, const char delim)
+{
+  char *firstof = NULL;
+  int i;
+
+  if(str == NULL)
+    return NULL;
+
+  for(i=0; str[i] != '\0'; i++)
+    {
+      if(str[i] == delim)
+	{
+	  firstof = &str[i];
+	  break;
+	}
+    }
+
+  return firstof;
 }
 
 char *string_concat(char *str, size_t len, size_t *off, const char *fs, ...)

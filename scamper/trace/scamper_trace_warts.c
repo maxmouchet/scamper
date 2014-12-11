@@ -4,9 +4,10 @@
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2014      The Regents of the University of California
+ * Copyright (C) 2015      The University of Waikato
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_warts.c,v 1.16 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_trace_warts.c,v 1.16.6.2 2015/10/17 09:34:55 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_warts.c,v 1.16 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_trace_warts.c,v 1.16.6.2 2015/10/17 09:34:55 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -161,6 +162,7 @@ static const warts_var_t pmtud_n_vars[] =
 #define WARTS_TRACE_DTREE_LSS_STOP     4 /* lss stop address */
 #define WARTS_TRACE_DTREE_GSS_STOP     5 /* gss stop address */
 #define WARTS_TRACE_DTREE_LSS_NAME     6 /* lss name */
+#define WARTS_TRACE_DTREE_FLAGS        7 /* flags */
 static const warts_var_t trace_dtree_vars[] =
 {
   {WARTS_TRACE_DTREE_LSS_STOP_GID,  4, -1},
@@ -169,6 +171,7 @@ static const warts_var_t trace_dtree_vars[] =
   {WARTS_TRACE_DTREE_LSS_STOP,     -1, -1},
   {WARTS_TRACE_DTREE_GSS_STOP,     -1, -1},
   {WARTS_TRACE_DTREE_LSS_NAME,     -1, -1},
+  {WARTS_TRACE_DTREE_FLAGS,         1, -1},
 };
 #define trace_dtree_vars_mfb WARTS_VAR_MFB(trace_dtree_vars)
 
@@ -193,6 +196,7 @@ static const warts_var_t trace_dtree_vars[] =
 #define WARTS_TRACE_HOP_Q_IPTOS      16      /* ip->tos byte inside icmp */
 #define WARTS_TRACE_HOP_ICMPEXT      17      /* RFC 4884 icmp extension data */
 #define WARTS_TRACE_HOP_ADDR         18      /* address */
+#define WARTS_TRACE_HOP_TX           19      /* transmit time */
 static const warts_var_t hop_vars[] =
 {
   {WARTS_TRACE_HOP_ADDR_GID,     4, -1},
@@ -213,6 +217,7 @@ static const warts_var_t hop_vars[] =
   {WARTS_TRACE_HOP_Q_IPTOS,      1, -1},
   {WARTS_TRACE_HOP_ICMPEXT,     -1, -1},
   {WARTS_TRACE_HOP_ADDR,        -1, -1},
+  {WARTS_TRACE_HOP_TX,           8, -1},
 };
 #define hop_vars_mfb WARTS_VAR_MFB(hop_vars)
 
@@ -528,6 +533,11 @@ static void warts_trace_hop_params(const scamper_trace_t *trace,
 	  if(hop->hop_reply_ipid == 0)
 	    continue;
 	}
+      else if(var->id == WARTS_TRACE_HOP_TX)
+	{
+	  if(hop->hop_tx.tv_sec == 0)
+	    continue;
+	}
 
       flag_set(flags, var->id, &max_id);
 
@@ -595,6 +605,7 @@ static int warts_trace_hop_read(scamper_trace_hop_t *hop, warts_state_t *state,
     {&hop->hop_icmp_q_tos, (wpr_t)extract_byte,                  NULL},
     {hop,                  (wpr_t)warts_trace_hop_read_icmpext,  NULL},
     {&hop->hop_addr,       (wpr_t)extract_addr,                  table},
+    {&hop->hop_tx,         (wpr_t)extract_timeval,               NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
   uint32_t o = *off;
@@ -638,6 +649,7 @@ static void warts_trace_hop_write(const warts_trace_hop_t *state,
     {&hop->hop_icmp_q_tos, (wpw_t)insert_byte,                    NULL},
     {hop,                  (wpw_t)warts_trace_hop_write_icmpext,  NULL},
     {hop->hop_addr,        (wpw_t)insert_addr,                    table},
+    {&hop->hop_tx,         (wpw_t)insert_timeval,                 NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);
   warts_params_write(buf, off, len, state->flags, state->flags_len,
@@ -1057,6 +1069,12 @@ static int warts_trace_dtree_params(const scamper_file_t *sf,
       state->params_len += warts_addr_size(table, dtree->gss_stop);
     }
 
+  if(dtree->flags != 0)
+    {
+      flag_set(state->flags, WARTS_TRACE_DTREE_FLAGS, &max_id);
+      state->params_len += 1;
+    }
+
   state->flags_len = fold_flags(state->flags, max_id);
 
   state->len = state->flags_len + state->params_len;
@@ -1078,6 +1096,7 @@ static void warts_trace_dtree_write(const scamper_trace_t *trace,
     {trace->dtree->lss_stop,  (wpw_t)insert_addr,   table},
     {trace->dtree->gss_stop,  (wpw_t)insert_addr,   table},
     {trace->dtree->lss,       (wpw_t)insert_string, NULL},
+    {&trace->dtree->flags,    (wpw_t)insert_byte,   NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);
 
@@ -1092,7 +1111,7 @@ static int warts_trace_dtree_read(scamper_trace_t *trace, warts_state_t *state,
 				  uint32_t *off, uint32_t len)
 {
   scamper_addr_t *lss_stop = NULL, *gss_stop = NULL;
-  uint8_t firsthop = 0;
+  uint8_t firsthop = 0, flags = 0;
   char *lss = NULL;
 
   warts_param_reader_t handlers[] = {
@@ -1102,6 +1121,7 @@ static int warts_trace_dtree_read(scamper_trace_t *trace, warts_state_t *state,
     {&lss_stop, (wpr_t)extract_addr,     table},
     {&gss_stop, (wpr_t)extract_addr,     table},
     {&lss,      (wpr_t)extract_string,   NULL},
+    {&flags,    (wpr_t)extract_byte,     NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
 
@@ -1118,6 +1138,7 @@ static int warts_trace_dtree_read(scamper_trace_t *trace, warts_state_t *state,
   trace->dtree->gss_stop = gss_stop;
   trace->dtree->firsthop = firsthop;
   trace->dtree->lss      = lss;
+  trace->dtree->flags    = flags;
   return 0;
 }
 

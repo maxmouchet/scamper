@@ -3,11 +3,11 @@
  *
  * the warts file format
  *
- * $Id: scamper_file_warts.h,v 1.21 2014/11/08 06:16:31 mjl Exp $
+ * $Id: scamper_file_warts.h,v 1.21.2.1 2015/10/17 07:07:01 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2012-2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -182,6 +182,8 @@ void insert_uint16(uint8_t *buf, uint32_t *off, const uint32_t len,
 			  const uint16_t *in, void *param);
 void insert_uint32(uint8_t *buf, uint32_t *off, const uint32_t len,
 			  const uint32_t *in, void *param);
+void insert_int32(uint8_t *buf, uint32_t *off, const uint32_t len,
+		  const int32_t *in, void *param);
 void insert_wartshdr(uint8_t *buf, uint32_t *off, uint32_t len,
 			    uint16_t hdr_type);
 void insert_byte(uint8_t *buf, uint32_t *off, const uint32_t len,
@@ -200,10 +202,12 @@ int extract_addr(const uint8_t *buf, uint32_t *off,
 			const uint32_t len, scamper_addr_t **out, void *param);
 int extract_string(const uint8_t *buf, uint32_t *off,
 			  const uint32_t len, char **out, void *param);
-int extract_uint32(const uint8_t *buf, uint32_t *off,
-		   const uint32_t len, uint32_t *out, void *param);
 int extract_uint16(const uint8_t *buf, uint32_t *off,
 			  const uint32_t len, uint16_t *out, void *param);
+int extract_uint32(const uint8_t *buf, uint32_t *off,
+		   const uint32_t len, uint32_t *out, void *param);
+int extract_int32(const uint8_t *buf, uint32_t *off,
+		  const uint32_t len, int32_t *out, void *param);
 int extract_byte(const uint8_t *buf, uint32_t *off,
 			const uint32_t len, uint8_t *out, void *param);
 int extract_bytes_ptr(const uint8_t *buf, uint32_t *off,

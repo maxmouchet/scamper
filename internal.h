@@ -1,7 +1,7 @@
 /*
  * internal.h
  *
- * $Id: internal.h,v 1.29 2014/11/01 15:01:46 mjl Exp $
+ * $Id: internal.h,v 1.29.4.1 2015/10/17 05:52:42 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -219,6 +219,13 @@ typedef unsigned short sa_family_t;
 
 #if defined(HAVE_STDINT_H)
 #include <stdint.h>
+#endif
+
+#if defined(HAVE_OPENSSL)
+#include <openssl/bio.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/x509v3.h>
 #endif
 
 #if defined(DMALLOC)

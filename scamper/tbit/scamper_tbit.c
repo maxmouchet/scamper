@@ -4,10 +4,10 @@
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2010-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
- * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2012,2015 The Regents of the University of California
  * Authors: Ben Stasiewicz, Matthew Luckie
  *
- * $Id: scamper_tbit.c,v 1.25 2014/04/04 22:03:05 mjl Exp $
+ * $Id: scamper_tbit.c,v 1.25.10.1 2015/10/17 09:03:06 mjl Exp $
  *
  * This file implements algorithms described in the tbit-1.0 source code,
  * as well as the papers:
@@ -34,7 +34,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit.c,v 1.25 2014/04/04 22:03:05 mjl Exp $";
+  "$Id: scamper_tbit.c,v 1.25.10.1 2015/10/17 09:03:06 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -60,12 +60,114 @@ struct scamper_tbit_tcpq
   int        tqec;
 };
 
+int scamper_tbit_data_seqoff(uint32_t rcv_nxt, uint32_t seq)
+{
+  if(seq >= rcv_nxt)
+    return seq - rcv_nxt;
+  return TCP_MAX_SEQNUM - rcv_nxt + seq + 1;
+}
+
 static int tqe_cmp(const tqe_t *a, const tqe_t *b)
 {
   if(a->off < b->off)         return -1;
   if(a->off > b->off)         return  1;
   if(a->qe->len < b->qe->len) return -1;
   if(a->qe->len > b->qe->len) return  1;
+  return 0;
+}
+
+int scamper_tbit_fo_setcookie(scamper_tbit_t *tbit,uint8_t *cookie,uint8_t len)
+{
+  if((tbit->fo_cookie = memdup(cookie, len)) == NULL)
+    return -1;
+  tbit->fo_cookielen = len;
+  return 0;
+}
+
+int scamper_tbit_fo_getcookie(scamper_tbit_t *tbit, uint8_t *c, uint8_t *l)
+{
+  uint8_t u8, v, iphlen, tcphlen, *pktptr;
+  scamper_tbit_pkt_t *pkt;
+  uint32_t i;
+
+  for(i=0; i<tbit->pktc; i++)
+    {
+      pkt = tbit->pkts[i];
+      if(pkt->dir != SCAMPER_TBIT_PKT_DIR_RX)
+	continue;
+
+      v = (pkt->data[0] >> 4);
+      if(v == 4)
+	{
+	  iphlen = (pkt->data[0] & 0xf) * 4;
+	  if(pkt->data[9] != IPPROTO_TCP)
+	    continue;
+	  if((bytes_ntohs(pkt->data+6) & 0x1fff) != 0)
+	    continue;
+	}
+      else if(v == 6)
+	{
+	  iphlen = 40;
+	  u8 = pkt->data[6];
+	  for(;;)
+	    {
+	      switch(u8)
+		{
+		case IPPROTO_HOPOPTS:
+		case IPPROTO_DSTOPTS:
+		case IPPROTO_ROUTING:
+		  u8 = pkt->data[iphlen+0];
+		  iphlen += (pkt->data[iphlen+1] * 8) + 8;
+		  continue;
+
+		case IPPROTO_FRAGMENT:
+		  if((bytes_ntohs(pkt->data+iphlen+2) & 0xfff8) != 0)
+		    break;
+		  u8 = pkt->data[iphlen+0];
+		  iphlen += 8;
+		  continue;
+		}
+	      break;
+	    }
+	  if(u8 != IPPROTO_TCP)
+	    continue;
+	}
+      else continue;
+
+      if((pkt->data[iphlen+13] & (TH_SYN|TH_ACK)) != (TH_SYN|TH_ACK))
+	continue;
+
+      tcphlen = ((pkt->data[iphlen+12] & 0xf0) >> 4) * 4;
+      u8 = 20;
+      while(u8 < tcphlen)
+	{
+	  pktptr = pkt->data + iphlen + u8;
+	  if(pktptr[0] == 0)
+	    break;
+	  if(pktptr[1] == 1) {
+	    u8++; continue;
+	  }
+
+	  if(pktptr[1] == 0 || u8 + pktptr[1] > tcphlen)
+	    break;
+
+	  if(pktptr[0] == 34 && pktptr[1] > 2 && pktptr[1] <= 18)
+	    {
+	      *l = pktptr[1] - 2;
+	      memcpy(c, pktptr+2, *l);
+	      return 1;
+	    }
+	  else if(pktptr[0] == 254  && pktptr[1] > 4 && pktptr[1] <= 20 &&
+		  pktptr[2] == 0xF9 && pktptr[3] == 0x89)
+	    {
+	      *l = pktptr[1] - 4;
+	      memcpy(c, pktptr+4, *l);
+	      return 1;
+	    }
+	  u8 += pktptr[1];
+	}
+    }
+
   return 0;
 }
 
@@ -76,6 +178,29 @@ void scamper_tbit_tcpqe_free(scamper_tbit_tcpqe_t *qe, void (*ff)(void *))
     ff(qe->data);
   free(qe);
   return;
+}
+
+/*
+ * scamper_tbit_tcpq_tail
+ *
+ * returns the sequence number at the tail of the tcpq, even if there
+ * are gaps in the tcpq.
+ */
+uint32_t scamper_tbit_tcpq_tail(const scamper_tbit_tcpq_t *tcpq)
+{
+  uint32_t range = 0, edge, u32;
+  scamper_tbit_tcpqe_t *qe;
+  int i;
+
+  for(i=0; i<tcpq->tqec; i++)
+    {
+      qe = tcpq->tqes[i]->qe;
+      edge = qe->seq + qe->len;
+      if((u32 = scamper_tbit_data_seqoff(tcpq->seq, edge)) > range)
+	range = u32;
+    }
+
+  return tcpq->seq + range;
 }
 
 scamper_tbit_tcpq_t *scamper_tbit_tcpq_alloc(uint32_t isn)
@@ -90,25 +215,32 @@ scamper_tbit_tcpq_t *scamper_tbit_tcpq_alloc(uint32_t isn)
   return NULL;
 }
 
-void scamper_tbit_tcpq_free(scamper_tbit_tcpq_t *q, void (*ff)(void *))
+void scamper_tbit_tcpq_flush(scamper_tbit_tcpq_t *q, void (*ff)(void *))
 {
   tqe_t *tqe;
   int i;
 
-  if(q == NULL)
+  if(q->tqes == NULL)
     return;
 
-  if(q->tqes != NULL)
+  for(i=0; i<q->tqec; i++)
     {
-      for(i=0; i<q->tqec; i++)
-	{
-	  tqe = q->tqes[i];
-	  scamper_tbit_tcpqe_free(tqe->qe, ff);
-	  free(tqe);
-	}
-      free(q->tqes);
+      tqe = q->tqes[i];
+      scamper_tbit_tcpqe_free(tqe->qe, ff);
+      free(tqe);
     }
+  free(q->tqes);
+  q->tqes = NULL;
+  q->tqec = 0;
+  return;
+}
 
+void scamper_tbit_tcpq_free(scamper_tbit_tcpq_t *q, void (*ff)(void *))
+{
+  if(q == NULL)
+    return;
+  if(q->tqes != NULL)
+    scamper_tbit_tcpq_flush(q, ff);
   free(q);
   return;
 }
@@ -181,13 +313,6 @@ int scamper_tbit_tcpq_add(scamper_tbit_tcpq_t *q, uint32_t seq,
       free(tqe);
     }
   return -1;
-}
-
-int scamper_tbit_data_seqoff(uint32_t rcv_nxt, uint32_t seq)
-{
-  if(seq >= rcv_nxt)
-    return seq - rcv_nxt;
-  return TCP_MAX_SEQNUM - rcv_nxt + seq + 1;
 }
 
 int scamper_tbit_tcpq_sack(scamper_tbit_tcpq_t *q, uint32_t *sack, int count)
@@ -337,6 +462,75 @@ int scamper_tbit_pkt_tcpack(const scamper_tbit_pkt_t *pkt, uint32_t *ack)
   return 0;
 }
 
+int scamper_tbit_icw_size(const scamper_tbit_t *tbit, uint32_t *icw_out)
+{
+  const scamper_tbit_icw_t *icw = tbit->data;
+  const scamper_tbit_pkt_t *pkt;
+  scamper_tbit_tcpq_t *q = NULL;
+  uint32_t i, u32, seq, start_seq;
+  uint16_t iplen, datalen;
+  uint8_t proto, iphlen, tcphlen, flags, start_seq_c = 0;
+  int rc = -1;
+
+  if(tbit->result != SCAMPER_TBIT_RESULT_ICW_SUCCESS ||
+     tbit->pktc < 1)
+    goto done;
+
+  for(i=1; i<tbit->pktc; i++)
+    {
+      pkt = tbit->pkts[i];
+      if(pkt->dir == SCAMPER_TBIT_PKT_DIR_RX)
+	break;
+    }
+  if(i == tbit->pktc ||
+     scamper_tbit_pkt_iph(pkt, &proto, &iphlen, &iplen) != 0 ||
+     proto != IPPROTO_TCP ||
+     (pkt->data[iphlen+13] & (TH_SYN|TH_ACK)) != (TH_SYN|TH_ACK))
+    goto done;
+
+  start_seq = bytes_ntohl(pkt->data+iphlen+4) + icw->start_seq;
+  if((q = scamper_tbit_tcpq_alloc(start_seq)) == NULL)
+    goto done;
+
+  for(i++; i<tbit->pktc; i++)
+    {
+      pkt = tbit->pkts[i];
+      if(pkt->dir != SCAMPER_TBIT_PKT_DIR_RX)
+	continue;
+      if(scamper_tbit_pkt_iph(pkt, &proto, &iphlen, &iplen) != 0)
+	break;
+      if(proto != IPPROTO_TCP)
+	break;
+      seq     = bytes_ntohl(pkt->data+iphlen+4);
+      tcphlen = ((pkt->data[iphlen+12] & 0xf0) >> 4) * 4;
+      flags   = pkt->data[iphlen+13];
+
+      if((datalen = iplen - iphlen - tcphlen) == 0 && (flags & TH_FIN) == 0)
+	continue;
+      if(scamper_tbit_data_inrange(start_seq, seq, datalen) == 0)
+	continue;
+
+      if(seq == start_seq)
+	{
+	  start_seq_c++;
+	  if(start_seq_c == 2)
+	    {
+	      u32 = scamper_tbit_tcpq_tail(q);
+	      *icw_out = scamper_tbit_data_seqoff(start_seq, u32);
+	      rc = 0;
+	      break;
+	    }
+	}
+
+      if(scamper_tbit_tcpq_add(q, seq, flags, datalen, NULL) != 0)
+	break;
+    }
+
+ done:
+  scamper_tbit_tcpq_free(q, NULL);
+  return rc;
+}
+
 int scamper_tbit_stats(const scamper_tbit_t *tbit, scamper_tbit_stats_t *stats)
 {
   const scamper_tbit_pkt_t *pkt, *syn;
@@ -446,6 +640,11 @@ char *scamper_tbit_type2str(const scamper_tbit_t *tbit, char *buf, size_t len)
     "ecn",
     "null",
     "sack-rcvr",
+    "icw",
+    "abc",
+    "blind-data",
+    "blind-rst",
+    "blind-syn",
   };
 
   if(tbit->type > sizeof(t) / sizeof(char *) || t[tbit->type] == NULL)
@@ -515,6 +714,36 @@ char *scamper_tbit_res2str(const scamper_tbit_t *tbit, char *buf, size_t len)
     "sack-rcvr-shifted",
     "sack-rcvr-timeout",
     "sack-rcvr-nosack",
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    "icw-success",         /* 60 */
+    "icw-tooshort",
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    "abc-success",         /* 70 */
+    "abc-tooshort",
+    "abc-badicw",
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    "blind-accepted",      /* 80 */
+    "blind-challenge",
+    "blind-ignored",
+    "blind-rst",
+    "blind-synnew",
   };
 
   if(tbit->result > sizeof(t) / sizeof(char *) || t[tbit->result] == NULL)
@@ -578,7 +807,8 @@ int scamper_tbit_record_pkt(scamper_tbit_t *tbit, scamper_tbit_pkt_t *pkt)
   return 0;
 }
 
-scamper_tbit_app_http_t *scamper_tbit_app_http_alloc(char *host, char *file)
+scamper_tbit_app_http_t *scamper_tbit_app_http_alloc(uint8_t type,
+						     char *host, char *file)
 {
   scamper_tbit_app_http_t *http;
 
@@ -592,6 +822,7 @@ scamper_tbit_app_http_t *scamper_tbit_app_http_alloc(char *host, char *file)
       return NULL;
     }
 
+  http->type = type;
   return http;
 }
 
@@ -602,6 +833,19 @@ void scamper_tbit_app_http_free(scamper_tbit_app_http_t *http)
   if(http->host != NULL) free(http->host);
   if(http->file != NULL) free(http->file);
   free(http);
+  return;
+}
+
+scamper_tbit_app_bgp_t *scamper_tbit_app_bgp_alloc(void)
+{
+  return malloc_zero(sizeof(scamper_tbit_app_bgp_t));
+}
+
+void scamper_tbit_app_bgp_free(scamper_tbit_app_bgp_t *bgp)
+{
+  if(bgp == NULL)
+    return;
+  free(bgp);
   return;
 }
 
@@ -633,6 +877,30 @@ void scamper_tbit_null_free(scamper_tbit_null_t *null)
   return;
 }
 
+scamper_tbit_icw_t *scamper_tbit_icw_alloc(void)
+{
+  return malloc_zero(sizeof(scamper_tbit_icw_t));
+}
+
+void scamper_tbit_icw_free(scamper_tbit_icw_t *icw)
+{
+  free(icw);
+  return;
+}
+
+scamper_tbit_blind_t *scamper_tbit_blind_alloc(void)
+{
+  return malloc_zero(sizeof(scamper_tbit_blind_t));
+}
+
+void scamper_tbit_blind_free(scamper_tbit_blind_t *blind)
+{
+  if(blind == NULL)
+    return;
+  free(blind);
+  return;
+}
+
 /* Free the tbit object. */
 void scamper_tbit_free(scamper_tbit_t *tbit)
 {
@@ -645,6 +913,8 @@ void scamper_tbit_free(scamper_tbit_t *tbit)
   if(tbit->dst != NULL)   scamper_addr_free(tbit->dst);
   if(tbit->list != NULL)  scamper_list_free(tbit->list);
   if(tbit->cycle != NULL) scamper_cycle_free(tbit->cycle);
+
+  if(tbit->fo_cookie != NULL) free(tbit->fo_cookie);
 
   /* Free the recorded packets */
   if(tbit->pkts != NULL)
@@ -668,6 +938,12 @@ void scamper_tbit_free(scamper_tbit_t *tbit)
 	scamper_tbit_pmtud_free(tbit->data);
       else if(tbit->type == SCAMPER_TBIT_TYPE_NULL)
 	scamper_tbit_null_free(tbit->data);
+      else if(tbit->type == SCAMPER_TBIT_TYPE_ICW)
+	scamper_tbit_icw_free(tbit->data);
+      else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST ||
+	      tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN ||
+	      tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+	scamper_tbit_blind_free(tbit->data);
     }
 
   free(tbit);

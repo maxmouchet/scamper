@@ -1,7 +1,7 @@
 /*
  * scamper_dl.h
  *
- * $Id: scamper_dl.h,v 1.57.14.2 2015/08/08 05:12:01 mjl Exp $
+ * $Id: scamper_dl.h,v 1.57.14.3 2015/10/17 07:48:36 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -67,6 +67,8 @@
 
 #define SCAMPER_DL_TCP_OPT_SACKP  0x01
 #define SCAMPER_DL_TCP_OPT_TS     0x02
+#define SCAMPER_DL_TCP_OPT_FO     0x04
+#define SCAMPER_DL_TCP_OPT_FO_EXP 0x08
 
 #define SCAMPER_DL_IS_IP(dl) ( \
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP)
@@ -346,6 +348,8 @@ typedef struct scamper_dl_rec
       uint32_t  tsecr;
       uint8_t  *data;
       uint16_t  datalen;
+      uint8_t   fo_cookie[16];
+      uint8_t   fo_cookielen;
     } tcp;
 
     struct dl_icmp
@@ -459,6 +463,8 @@ typedef struct scamper_dl_rec
 #define dl_tcp_sack_edgec     dl_trans_un.tcp.sack_edgec
 #define dl_tcp_tsval          dl_trans_un.tcp.tsval
 #define dl_tcp_tsecr          dl_trans_un.tcp.tsecr
+#define dl_tcp_fo_cookie      dl_trans_un.tcp.fo_cookie
+#define dl_tcp_fo_cookielen   dl_trans_un.tcp.fo_cookielen
 #define dl_tcp_data           dl_trans_un.tcp.data
 #define dl_tcp_datalen        dl_trans_un.tcp.datalen
 #define dl_icmp_type          dl_trans_un.icmp.type

@@ -5,14 +5,15 @@
 .\"          Boris Pfahringer
 .\"
 .\" Copyright (c) 2007-2011 University of Waikato
+.\" Copyright (c) 2012-2015 The Regents of the University of California
 .\"                         All rights reserved
 .\"
-.\" $Id: scamper.1,v 1.53 2014/12/03 01:33:21 mjl Exp $
+.\" $Id: scamper.1,v 1.53.2.2 2015/10/17 20:18:08 mjl Exp $
 .\"
 .\"  nroff -man scamper.1
 .\"  groff -man -Tascii scamper.1 | man2html -title scamper.1
 .\"
-.Dd March 8, 2011
+.Dd October 18, 2015
 .Dt SCAMPER 1
 .Os
 .\""""""""""""
@@ -170,7 +171,7 @@ easily represented with the text option.
 .It
 .Sy json:
 output results in json format.  Suitable for processing measurement
-results with a scripting langage.  A better approach is to output
+results with a scripting language.  A better approach is to output
 results in warts format, and to use
 .Xr sc_warts2json 1 .
 .It
@@ -226,6 +227,9 @@ write a copy of all data written by scamper with the default output method.
 append to the debugfile specified with the
 .Fl d
 option.  The default is to truncate the debugfile.
+.It
+.Sy notls:
+do not use TLS anywhere in scamper, including tbit.
 .El
 .It Fl i Ar IP 1..N
 specifies the addresses to probe, on the command line, using the command
@@ -269,8 +273,9 @@ trace
 .Op Fl g Ar gaplimit
 .Op Fl G Ar gapaction
 .Op Fl l Ar loops
-.Op Fl L Ar loopaction
 .Op Fl m Ar maxttl
+.Op Fl o Ar offset
+.Op Fl O Ar option
 .Op Fl p Ar payload
 .Op Fl P Ar method
 .Op Fl q Ar attempts
@@ -318,9 +323,18 @@ big packets (larger than MTU) being lost.
 .It Fl l Ar loops
 specifies the maximum number of loops permitted until probing stops.  By
 default, a value of one is used.  A value of zero disables loop checking.
-.It Fl L Ar loopaction
-specifies the action to take when a loop is encountered.  A value of 1 tells
-scamper to probe beyond the first loop in the trace.
+.It Fl o Ar offset
+specifies the fragmentation offset to use in probes.  By default, no
+offset is used.
+.It Fl O Ar option
+specifies optional arguments to use.
+The current choices for this option are:
+.Bl -dash -offset 2n -compact -width 1n
+.It
+.Sy dtree-noback
+specifies that the traceroute should not do backwards probing when using
+doubletree.
+.El
 .It Fl p Ar payload
 specifies the payload of the probe to use as a base.
 The payload is specified in hexadecimal.
@@ -404,7 +418,8 @@ of 4 is used.
 specifies the ICMP checksum to use when sending a probe.
 The payload of each probe will be manipulated so that the checksum is valid.
 .It Fl d Ar dport
-specifies the destination port to use in each TCP/UDP probe.
+specifies the destination port to use in each TCP/UDP probe, and the first
+ICMP sequence number to use in ICMP probes.
 .It Fl F Ar sport
 specifies the source port to use in each TCP/UDP probe, and the ICMP ID to
 use in ICMP probes.
@@ -430,6 +445,14 @@ specified with the
 .Fl S
 option.  The address scamper would otherwise use as the source address is
 embedded in the payload of the probe.
+.It
+.Sy tbt
+specifies that the goal of the ping is to obtain fragmented responses, so that
+the
+.Fl c
+option specifies how many packets to send, and the
+.Fl o
+option specifies how many fragmented responses are desired.
 .El
 .It Fl p Ar pattern
 specifies the pattern, in hex, to use in probes.  Up to 16 bytes may be
@@ -547,7 +570,7 @@ Defaults to (pid & 0x7fff) + 0x8000.
 .It Fl i Ar IP
 specifies the destination IP address of the probe.
 .It Fl M Ar mtu
-specifies the psuedo MTU to use when soliciting fragmented responses.
+specifies the pseudo MTU to use when soliciting fragmented responses.
 .It Fl P Ar method
 specifies which method to use for the probe.
 Valid options are: udp, udp-dport, tcp-ack, tcp-ack-sport, tcp-syn-sport,
@@ -585,7 +608,7 @@ May be specified multiple times to exclude multiple addresses.
 .Sh NEIGHBOUR DISCOVERY OPTIONS
 The neighbourdisc command attempts to find the layer-2 address of a given
 IP address using IPv4 ARP or IPv6 Neighbour Discovery.
-The following options are availible for the
+The following options are available for the
 .Nm
 neighbourdisc command:
 .Pp
@@ -623,28 +646,37 @@ The following options are available for the
 tbit command:
 .Pp
 tbit
-.\"tbit [-t type] [-p app] [-d dport] [-s sport] [-m mss] [-M mtu]\n"
-.\"     [-O option] [-P ptbsrc] [-S srcaddr] [-u url]";
+.\"tbit [-t type] [-p app] [-d dport] [-s sport] [-b asn] [-f cookie]\n"
+.\"     [-m mss] [-M mtu] [-o offset] [-O option]\n"
+.\"     [-P ptbsrc] [-q attempts][-S srcaddr] [-T ttl] [-u url]";
 .Bk -words
 .Op Fl t Ar type
 .Op Fl p Ar app
 .Op Fl d Ar dport
 .Op Fl s Ar sport
+.Op Fl b Ar ASN
+.Op Fl f Ar cookie
 .Op Fl m Ar mss
 .Op Fl M Ar mtu
+.Op Fl o Ar offset
 .Op Fl O Ar option
 .Op Fl P Ar ptbsrc
+.Op Fl q Ar attempts
 .Op Fl S Ar srcaddr
+.Op Fl T Ar ttl
 .Op Fl u Ar url
+.Op Fl U Ar userid
+.Op Fl w Ar wscale
 .Ek
 .Bl -tag -width Es
 .It Fl t Ar type
 specifies which type of testing to use.
-Valid options are: pmtud, ecn, null, sack-rcvr.
+Valid options are: pmtud, ecn, null, sack-rcvr, icw, blind-rst,
+blind-syn, blind-data.
 .It Fl p Ar app
 specifies what kind of traffic to generate for testing.
 Destination port defaults the application standard port.
-Valid applications are: smtp, http, dns, ftp.
+Valid applications are: http, bgp.
 .It Fl d Ar dport
 specifies the destination port for the packets being sent.
 Defaults are application-specific.
@@ -653,27 +685,77 @@ specifies the source port for the packets being sent.
 Default is based of the
 .Nm
 process id.
+.It Fl b Ar ASN
+specifies the autonomous system number (ASN) that should be used when
+establishing a BGP session.
+.It Fl f Ar cookie
+specifies the TCP fast open cookie that should be used when establishing
+a TCP connection.
 .It Fl m Ar mss
 specifies the maximum segment size to advertise to the remote host.
 .It Fl M Ar mtu
 specifies the MTU to use in a Packet Too Big message.
+.It Fl o Ar offset
+specifies the sequence number offset to use when conducting blind-syn and
+blind-rst tests, and the acknowledgement number offset to use when conducting
+a blind-data test.
 .It Fl O Ar option
 allows tbit behaviour to be further tailored.
-The current choice for this option is:
+The current choices for this option are:
 .Bl -dash -offset 2n -compact -width 1n
 .It
-.Sy blackhole
+.Sy blackhole:
 for PMTUD testing, do not send Packet Too Big messages; this tests to
 ability of a host to infer a PMTUD blackhole and work around it.
+.It
+.Sy tcpts:
+advertise support for TCP timestamps when establishing a TCP connection.
+If the peer supports TCP timestamps, embed timestamps in data packets.
+.It
+.Sy ipts-syn:
+use the timestamp IP option in a SYN packet when attempting to establish
+a TCP connection.
+.It
+.Sy iprr-syn:
+use the record-route IP option in a SYN packet when attempting to establish
+a TCP connection.
+.It
+.Sy ipqs-syn:
+use the quick-start IP option in a SYN packet when attempting to establish
+a TCP connection.
+.It
+.Sy sack:
+advertise support for TCP selective acknowledgements (SACK) when establishing
+a TCP connection.
+.It
+.Sy fo:
+advertise support for TCP fast open using the official IANA number assigned
+for fast open.
+.It
+.Sy fo-exp:
+advertise support for TCP fast open using the testing number assigned by
+IANA for fast open.
 .El
 .It Fl P Ar ptbsrc
 specifies the source address that should be used to send Packet Too Big
 messages in the pmtud test.
+.It Fl q Ar attempts
+specifies the number of attempts to make with each packet to reduce false
+inferences caused by packet loss.
 .It Fl S Ar srcaddr
 specifies the source address that should be used in TCP packets sent by
 the tbit test.
+.It Fl T Ar ttl
+specifies the IP time-to-live value that should be used in TCP packets sent
+by the tbit test.
 .It Fl u Ar url
 specifies a url for the http application.
+.It Fl U Ar userid
+specifies an unsigned integer to include with the data collected; the meaning
+of the user-id is entirely up to the user and has no effect on the behaviour
+of tbit.
+.It Fl w Ar wscale
+specifies the window scale option to use when establishing the TCP connection.
 .El
 .\""""""""""""
 .Sh TRACELB OPTIONS
@@ -727,7 +809,7 @@ Defaults to 2.
 specifies the maximum number of probes we ever want to send.
 Defaults to 3000.
 .It Fl s Ar sport
-specfies to the source port to use when sending probes.
+specifies to the source port to use when sending probes.
 Default based on process ID.
 .It Fl t Ar tos
 specifies the value for the IP Type-of-service field for outgoing probes.
@@ -794,7 +876,7 @@ By default, sting waits 2000ms between phases.
 specifies the mean rate to send packets in the data phase, in milliseconds.
 By default, sting waits 100ms between probes.
 .It Fl s Ar sport
-specfies to the source port to use when sending probes.
+specifies to the source port to use when sending probes.
 Default is based on the process ID.
 .El
 .\""""""""""""
@@ -1062,7 +1144,7 @@ Replies are split into lines by single \\n characters and have one of the
 following formats:
 .Bl -tag -width "   "
 .It Ic ERR Ar ...
-A line staring with the 3 characters "ERR" indicate an error has occured.
+A line starting with the 3 characters "ERR" indicates an error has occurred.
 The rest of the line will contain an error message.
 .It Ic OK Ar id-num
 A line with the 2 characters "OK" indicates that scamper has accepted
@@ -1153,6 +1235,9 @@ scamper -I "tracelb -P udp-sport -c 99 192.0.2.6"
 .Xr sc_ally 1 ,
 .Xr sc_analysis_dump 1 ,
 .Xr sc_attach 1 ,
+.Xr sc_ipiddump 1 ,
+.Xr sc_speedtrap 1 ,
+.Xr sc_tbitblind 1 ,
 .Xr sc_tracediff 1 ,
 .Xr sc_wartscat 1 ,
 .Xr sc_wartsdump 1 ,
@@ -1230,10 +1315,35 @@ scamper -I "tracelb -P udp-sport -c 99 192.0.2.6"
 .%T "Scamper: a Scalable and Extensible Packet Prober for Active Measurement of the Internet"
 .%O "Proc. ACM/SIGCOMM Internet Measurement Conference 2010"
 .Re
+.Rs
+.%A "R. Beverly"
+.%A "W. Brinkmeyer"
+.%A "M. Luckie"
+.%A "J.P. Rohrer"
+.%T "IPv6 Alias Resolution via Induced Fragmentation"
+.%O "Proc. Passive and Active Measurement Conference 2013"
+.Re
+.Rs
+.%A "M. Luckie"
+.%A "R. Beverly"
+.%A "W. Brinkmeyer"
+.%A "k claffy"
+.%T "Speedtrap: Internet-scale IPv6 Alias Resolution"
+.%O "Proc. ACM/SIGCOMM Internet Measurement Conference 2013"
+.Re
+.Rs
+.%A "M. Luckie"
+.%A "R. Beverly"
+.%A "T. Wu"
+.%A "M. Allman"
+.%A "k. claffy"
+.%T "Resilience of Deployed TCP to Blind Attacks"
+.%O "Proc. ACM/SIGCOMM Internet Measurement Conference 2015"
+.Re
 .\""""""""""""
 .Sh AUTHORS
 .Nm
-is written by Matthew Luckie <mjl@luckie.org.nz>.
+was written by Matthew Luckie <mjl@luckie.org.nz>.
 Alistair King contributed an initial implementation of Doubletree;
 Ben Stasiewicz contributed an initial implementation of TBIT's PMTUD test;
 Stephen Eichler contributed an initial implementation of TBIT's ECN test;
@@ -1242,6 +1352,8 @@ Boris Pfahringer adapted
 to use GNU autotools, modularised the tests, and updated this man page.
 Brian Hammond of Internap Network Services Corporation provided an initial
 implementation of scamper's json output format.
+Tiange Wu contributed an initial implementation of the blind in-window TBIT
+test, and Robert Beverly contributed BGP protocol support for TBIT.
 .\""""""""""""
 .Sh ACKNOWLEDGEMENTS
 .Nm

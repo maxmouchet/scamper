@@ -1,7 +1,7 @@
 /*
  * scamper_dl: manage BPF/PF_PACKET datalink instances for scamper
  *
- * $Id: scamper_dl.c,v 1.181 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_dl.c,v 1.181.6.1 2015/10/17 07:49:11 mjl Exp $
  *
  *          Matthew Luckie
  *          Ben Stasiewicz added fragmentation support.
@@ -16,7 +16,7 @@
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
- * Copyright (C) 2014      The Regents of the University of California
+ * Copyright (C) 2014-2015 The Regents of the University of California
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -35,7 +35,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dl.c,v 1.181 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_dl.c,v 1.181.6.1 2015/10/17 07:49:11 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -319,6 +319,22 @@ static int dl_parse_ip(scamper_dl_rec_t *dl, uint8_t *pktbuf, size_t pktlen)
 		    {
 		      dl->dl_tcp_sack_edgec = -1;
 		    }
+		}
+
+	      if(tmp[0] == 34 && tmp[1] >= 2)
+		{
+		  dl->dl_tcp_opts |= SCAMPER_DL_TCP_OPT_FO;
+		  dl->dl_tcp_fo_cookielen = tmp[1] - 2;
+		  for(i=0; i<dl->dl_tcp_fo_cookielen; i++)
+		    dl->dl_tcp_fo_cookie[i] = tmp[2+i];
+		}
+
+	      if(tmp[0] == 254 && tmp[1] >= 4 && bytes_ntohs(tmp+2) == 0xF989)
+		{
+		  dl->dl_tcp_opts |= SCAMPER_DL_TCP_OPT_FO_EXP;
+		  dl->dl_tcp_fo_cookielen = tmp[1] - 4;
+		  for(i=0; i<dl->dl_tcp_fo_cookielen; i++)
+		    dl->dl_tcp_fo_cookie[i] = tmp[4+i];
 		}
 
 	      off += tmp[1];

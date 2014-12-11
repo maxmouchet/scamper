@@ -1,14 +1,14 @@
 /*
  * sc_wartsdump
  *
- * $Id: sc_wartsdump.c,v 1.186 2014/10/10 03:13:44 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.186.6.2 2015/10/17 09:43:11 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012-2014 The Regents of the University of California
+ * Copyright (C) 2012-2015 The Regents of the University of California
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartsdump.c,v 1.186 2014/10/10 03:13:44 mjl Exp $";
+  "$Id: sc_wartsdump.c,v 1.186.6.2 2015/10/17 09:43:11 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -183,13 +183,14 @@ static void dump_trace_hop(scamper_trace_hop_t *hop)
 	}
       if(SCAMPER_TRACE_HOP_IS_ICMP_PTB(hop))
 	printf(", nhmtu: %d", hop->hop_icmp_nhmtu);
+      printf("\n");
     }
-  else
+  else if(SCAMPER_TRACE_HOP_IS_TCP(hop))
     {
       printf(" tcp-flags: 0x%02x", hop->hop_tcp_flags);
       dump_tcp_flags(hop->hop_tcp_flags);
+      printf("\n");
     }
-  printf("\n");
 
   printf(" flags: 0x%02x", hop->hop_flags);
   if(hop->hop_flags != 0)
@@ -341,7 +342,7 @@ static void dump_trace(scamper_trace_t *trace)
       if(trace->flags & SCAMPER_TRACE_FLAG_PMTUD)
 	printf(" pmtud");
       if(trace->flags & SCAMPER_TRACE_FLAG_DL)
-	printf(" dltxts");
+	printf(" dl");
       if(trace->flags & SCAMPER_TRACE_FLAG_IGNORETTLDST)
 	printf(" ignorettldst");
       if(trace->flags & SCAMPER_TRACE_FLAG_DOUBLETREE)
@@ -800,24 +801,24 @@ static void dump_ping(scamper_ping_t *ping)
     case SCAMPER_PING_METHOD_ICMP_TIME:
       if((ping->flags & SCAMPER_PING_FLAG_ICMPSUM) != 0)
 	printf(", icmp-csum: %04x", ping->probe_icmpsum);
-      printf("\n");
       break;
 
     case SCAMPER_PING_METHOD_UDP:
     case SCAMPER_PING_METHOD_TCP_ACK:
-      printf(", sport: %d, dport: %d\n", ping->probe_sport, ping->probe_dport);
+      printf(", sport: %d, dport: %d", ping->probe_sport, ping->probe_dport);
       break;
 
     case SCAMPER_PING_METHOD_TCP_ACK_SPORT:
-      printf(", base-sport: %d, dport: %d\n",
+      printf(", base-sport: %d, dport: %d",
 	     ping->probe_sport, ping->probe_dport);
       break;
 
     case SCAMPER_PING_METHOD_UDP_DPORT:
-      printf(", sport: %d, base-dport %d\n",
+      printf(", sport: %d, base-dport %d",
 	     ping->probe_sport, ping->probe_dport);
       break;
     }
+  printf("\n");
 
   if(ping->probe_tsps != NULL)
     {
@@ -1060,7 +1061,9 @@ static void dump_dealias(scamper_dealias_t *dealias)
 
   printf(" probes: %d, result: %s", dealias->probec,
 	 scamper_dealias_result_tostr(dealias, buf, sizeof(buf)));
-  if(ps->flags & SCAMPER_DEALIAS_PREFIXSCAN_FLAG_CSA)
+
+  if(dealias->method == SCAMPER_DEALIAS_METHOD_PREFIXSCAN &&
+     ps->flags & SCAMPER_DEALIAS_PREFIXSCAN_FLAG_CSA)
     printf(", csa");
   printf("\n");
 
@@ -1184,22 +1187,50 @@ static void dump_neighbourdisc(scamper_neighbourdisc_t *nd)
   return;
 }
 
+static void tbit_bits_print(uint32_t flags, int bits,
+			    const char **f2s, size_t f2sc)
+{
+  int i, f = 0;
+  uint32_t u32;
+
+  if(flags == 0)
+    return;
+  for(i=0; i<bits; i++)
+    {
+      if((u32 = flags & (0x1 << i)) == 0) continue;
+      if(f > 0) printf(",");
+      if(i < f2sc)
+	printf(" %s", f2s[i]);
+      else
+	printf(" 0x%x", u32);
+      f++;
+    }
+  return;
+}
+
 static void dump_tbit(scamper_tbit_t *tbit)
 {
+  static const char *tbit_options[] = {"tcpts", "sack"};
+  static const char *null_options[] = {"tcpts", "ipts-syn", "iprr-syn",
+				       "ipqs-syn", "sack", "fo", "fo-exp"};
+  static const char *null_results[] = {"tcpts-ok", "sack-ok", "fo-ok"};
   scamper_tbit_pmtud_t *pmtud;
   scamper_tbit_null_t *null;
+  scamper_tbit_icw_t *icw;
+  scamper_tbit_blind_t *blind;
   scamper_tbit_app_http_t *http;
+  scamper_tbit_app_bgp_t *bgp;
   scamper_tbit_pkt_t *pkt;
   struct timeval diff;
   uint32_t i;
   uint16_t len, u16, datalen;
-  uint8_t proto, flags, iphlen, tcphlen, mf, ecn, u8, *tmp;
+  uint8_t proto, flags, iphlen, tcphlen, mf, ecn, u8, *tmp, txsyn, rxsyn;
   uint32_t seq, ack, server_isn, client_isn, off, id, u32;
   char src[64], dst[64], buf[128], ipid[12], fstr[32], tfstr[32], sack[64];
+  uint8_t cookie[16];
+  char *str;
   size_t soff;
-  int j, frag;
-
-  ipid[0] = '\0';
+  int frag;
 
   /* Start dumping the tbit test information */
   printf("tbit from %s to %s\n",
@@ -1212,10 +1243,28 @@ static void dump_tbit(scamper_tbit_t *tbit)
   dump_timeval("start", &tbit->start);
 
   printf(" sport: %d, dport: %d\n", tbit->sport, tbit->dport);
-  printf(" client-mss: %d, server-mss: %d\n",
-	 tbit->client_mss, tbit->server_mss);
+  printf(" client-mss: %d, server-mss: %d, ttl: %u",
+	 tbit->client_mss, tbit->server_mss, tbit->ttl);
+  if(tbit->wscale > 0)
+    printf(", wscale: %u", tbit->wscale);
+  printf("\n");
   printf(" type: %s,", scamper_tbit_type2str(tbit, buf, sizeof(buf)));
   printf(" result: %s\n", scamper_tbit_res2str(tbit, buf, sizeof(buf)));
+  if(tbit->options != 0)
+    {
+      printf(" options:");
+      tbit_bits_print(tbit->options, 32, tbit_options,
+		      sizeof(tbit_options) / sizeof(char *));
+      printf("\n");
+    }
+
+  if(tbit->fo_cookielen > 0)
+    {
+      printf(" fo-cookie: ");
+      for(u8=0; u8<tbit->fo_cookielen; u8++)
+	printf("%02x", tbit->fo_cookie[u8]);
+      printf("\n");
+    }
 
   if(tbit->type == SCAMPER_TBIT_TYPE_PMTUD && tbit->data != NULL)
     {
@@ -1233,71 +1282,73 @@ static void dump_tbit(scamper_tbit_t *tbit)
       null = tbit->data;
       if(null->options != 0)
 	{
-	  printf(" options:"); i = 0;
-	  for(j=0; j<16; j++)
-	    {
-	      u16 = 0x1 << j;
-	      if((null->options & u16) == 0)
-		continue;
-	      if(i != 0) printf(",");
-	      switch(u16)
-		{
-		case SCAMPER_TBIT_NULL_OPTION_TCPTS:
-		  printf(" tcpts"); break;
-		case SCAMPER_TBIT_NULL_OPTION_SACK:
-		  printf(" sack"); break;
-		case SCAMPER_TBIT_NULL_OPTION_IPTS_SYN:
-		  printf(" ipts-syn"); break;
-		case SCAMPER_TBIT_NULL_OPTION_IPRR_SYN:
-		  printf(" iprr-syn"); break;
-		case SCAMPER_TBIT_NULL_OPTION_IPQS_SYN:
-		  printf(" ipqs-syn"); break;
-		default:
-		  printf(" 0x%02x", u16); break;
-		}
-	      i++;
-	    }
+	  printf(" options:");
+	  tbit_bits_print(null->options, 16, null_options,
+			  sizeof(null_options) / sizeof(char *));
 	  printf("\n");
 	}
       if(null->results != 0)
 	{
-	  printf(" results:"); i = 0;
-	  for(j=0; j<16; j++)
-	    {
-	      u16 = 0x1 << j;
-	      if((null->results & u16) == 0)
-		continue;
-	      if(i != 0) printf(",");
-	      switch(u16)
-		{
-		case SCAMPER_TBIT_NULL_RESULT_TCPTS:
-		  printf(" tcpts-ok"); break;
-		case SCAMPER_TBIT_NULL_RESULT_SACK:
-		  printf(" sack-ok"); break;
-		default:
-		  printf(" 0x%02x", u16); break;
-		}
-	      i++;
-	    }
+	  printf(" results:");
+	  tbit_bits_print(null->results, 16, null_results,
+			  sizeof(null_results) / sizeof(char *));
 	  printf("\n");
+
+	  if((null->results & SCAMPER_TBIT_NULL_RESULT_FO) &&
+	     scamper_tbit_fo_getcookie(tbit, cookie, &u8) != 0)
+	    {
+	      printf(" fo-cookie: ");
+	      for(i=0; i<u8; i++)
+		printf("%02x", cookie[i]);
+	      printf("\n");
+	    }
 	}
+    }
+  else if(tbit->type == SCAMPER_TBIT_TYPE_ICW &&
+	  tbit->result == SCAMPER_TBIT_RESULT_ICW_SUCCESS)
+    {
+      icw = tbit->data;
+      printf(" icw-start-seq: %u", icw->start_seq);
+      if(scamper_tbit_icw_size(tbit, &u32) == 0)
+	printf(", icw-size: %u bytes", u32);
+      printf("\n");
+    }
+  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST ||
+	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN ||
+	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+    {
+      blind = tbit->data;
+      printf(" blind: offset %d, retx %u\n", blind->off, blind->retx);
     }
 
   if(tbit->app_proto == SCAMPER_TBIT_APP_HTTP && tbit->app_data != NULL)
     {
       http = tbit->app_data;
       printf(" app: http");
+      if(http->type == SCAMPER_TBIT_APP_HTTP_TYPE_HTTPS)
+	str = "https";
+      else
+	str = "http";
+
       if(http->host != NULL && http->file != NULL)
-	printf(", url: http://%s%s", http->host, http->file);
+	printf(", url: %s://%s%s", str, http->host, http->file);
       else if(http->host != NULL)
-	printf(", url: http://%s", http->host);
+	printf(", url: %s://%s", str, http->host);
       else
 	printf(", file: %s", http->file);
       printf("\n");
     }
+  else if(tbit->app_proto == SCAMPER_TBIT_APP_BGP && tbit->app_data != NULL)
+    {
+      bgp = tbit->app_data;
+      printf(" app: bgp, asn: %u\n", bgp->asn);
+    }
 
   client_isn = 0;
   server_isn = 0;
+  ipid[0]    = '\0';
+  txsyn      = 0;
+  rxsyn      = 0;
 
   for(i=0; i<tbit->pktc; i++)
     {
@@ -1379,12 +1430,20 @@ static void dump_tbit(scamper_tbit_t *tbit)
             {
 	      if(flags & 0x10)
                 {
-		  server_isn = seq;
+		  if(rxsyn == 0)
+		    {
+		      server_isn = seq;
+		      rxsyn = 1;
+		    }
 		  string_concat(tfstr, sizeof(tfstr), &soff, "SYN/ACK");
                 }
 	      else
                 {
-		  client_isn = seq;
+		  if(txsyn == 0)
+		    {
+		      client_isn = seq;
+		      txsyn = 1;
+		    }
 		  string_concat(tfstr, sizeof(tfstr), &soff, "SYN");
                 }
             }
@@ -1446,7 +1505,8 @@ static void dump_tbit(scamper_tbit_t *tbit)
             }
 	  else
             {
-	      seq -= server_isn + ((seq >= server_isn) ? 0 : TCP_MAX_SEQNUM+1);
+	      if(!(seq == 0 && (flags & TH_RST) != 0))
+		seq -= server_isn + ((seq>=server_isn) ? 0 : TCP_MAX_SEQNUM+1);
 	      ack -= client_isn + ((ack >= client_isn) ? 0 : TCP_MAX_SEQNUM+1);
             }
 
@@ -1454,7 +1514,9 @@ static void dump_tbit(scamper_tbit_t *tbit)
 
 	  printf("%-13s %4d%s", tfstr, len, frag != 0 ? "F" : " ");
 	  soff = 0;
-	  string_concat(buf, sizeof(buf), &soff, " %u:%u", seq, ack);
+	  string_concat(buf, sizeof(buf), &soff, " %u", seq);
+	  if(flags & TH_ACK)
+	    string_concat(buf, sizeof(buf), &soff, ":%u", ack);
 	  if(datalen != 0)
 	    string_concat(buf, sizeof(buf), &soff, "(%d)", datalen);
 	  printf("%-17s%s", buf, ipid);

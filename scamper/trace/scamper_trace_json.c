@@ -5,9 +5,10 @@
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2011-2013 Internap Network Services Corporation
  * Copyright (C) 2013-2014 The Regents of the University of California
+ * Copyright (C) 2015      The University of Waikato
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_trace_json.c,v 1.7.2.1 2015/08/08 05:59:33 mjl Exp $
+ * $Id: scamper_trace_json.c,v 1.7.2.2 2015/10/17 09:35:19 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_json.c,v 1.7.2.1 2015/08/08 05:59:33 mjl Exp $";
+  "$Id: scamper_trace_json.c,v 1.7.2.2 2015/10/17 09:35:19 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -51,6 +52,9 @@ static char *hop_tostr(scamper_trace_hop_t *hop)
   string_concat(buf, sizeof(buf), &off,
 		", \"probe_ttl\":%u, \"probe_id\":%u, \"probe_size\":%u", 
 		hop->hop_probe_ttl, hop->hop_probe_id, hop->hop_probe_size);
+  if(hop->hop_tx.tv_sec != 0)
+    string_concat(buf, sizeof(buf), &off, ", \"tx\":%s",
+		  timeval_tostr(&hop->hop_tx, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off, ", \"rtt\":%s",
 		timeval_tostr(&hop->hop_rtt, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off,

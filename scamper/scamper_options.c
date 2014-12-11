@@ -1,10 +1,10 @@
 /*
  * scamper_options.c: code to handle parsing of options
  *
- * $Id: scamper_options.c,v 1.13 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_options.c,v 1.13.6.1 2015/10/19 01:05:59 mjl Exp $
  *
  * Copyright (C) 2006-2010 The University of Waikato
- * Copyright (C) 2014      The Regents of the University of California
+ * Copyright (C) 2014-2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_options.c,v 1.13 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_options.c,v 1.13.6.1 2015/10/19 01:05:59 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -79,28 +79,26 @@ static int opt_parse_param(int type, char **str, char **next)
 {
   char *tmp = *str;
   char delim;
+  int c;
 
   if(type == SCAMPER_OPTION_TYPE_NUM)
     {
+      if(*tmp == '-')
+	tmp++;
+      c = 0;
       while(isdigit((int)*tmp) != 0)
 	{
 	  tmp++;
+	  c++;
 	}
 
-      /* if there are no digits in this parameter, then we have a problem */
-      if(tmp == *str)
-	{
-	  goto err;
-	}
+      /* if there are no digits in this parameter */
+      if(c == 0)
+	goto err;
 
-      /* if the digit we stopped on is not whitespace, we have a problem */
-      if(*tmp != '\0')
-	{
-	  if(isspace((int)*tmp) == 0)
-	    {
-	      goto err;
-	    }
-	}
+      /* if the character we stopped on is not whitespace */
+      if(*tmp != '\0' && isspace((int)*tmp) == 0)
+	goto err;
     }
   else if(type == SCAMPER_OPTION_TYPE_STR)
     {

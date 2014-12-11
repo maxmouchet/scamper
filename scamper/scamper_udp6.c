@@ -1,7 +1,7 @@
 /*
  * scamper_udp6.c
  *
- * $Id: scamper_udp6.c,v 1.52 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_udp6.c,v 1.52.14.1 2015/10/17 08:03:15 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_udp6.c,v 1.52 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_udp6.c,v 1.52.14.1 2015/10/17 08:03:15 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -154,15 +154,6 @@ int scamper_udp6_probe(scamper_probe_t *probe)
       return -1;
     }
 
-  i = probe->pr_len;
-  if(setsockopt(probe->pr_fd,
-		SOL_SOCKET, SO_SNDBUF, (char *)&i, sizeof(i)) == -1)
-    {
-      printerror(errno, strerror, __func__,
-                 "could not set buffer to %d bytes", i);
-      return -1;
-    }
-
   sockaddr_compose((struct sockaddr *)&sin6, AF_INET6,
 		   probe->pr_ip_dst->addr, probe->pr_udp_dport);
 
@@ -215,17 +206,22 @@ int scamper_udp6_open(const void *addr, int sport)
 {
   struct sockaddr_in6 sin6;
   char buf[128];
-  int fd = -1;
-
-#if defined(IPV6_DONTFRAG)
-  int opt;
-#endif
+  int opt, fd = -1;
 
   if((fd = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)) == -1)
     {
       printerror(errno, strerror, __func__, "could not open socket");
       goto err;
     }
+
+#ifdef IPV6_V6ONLY
+  opt = 1;
+  if(setsockopt(fd,IPPROTO_IPV6,IPV6_V6ONLY, (char *)&opt,sizeof(opt)) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not set IPV6_V6ONLY");
+      goto err;
+    }
+#endif
 
   sockaddr_compose((struct sockaddr *)&sin6, AF_INET6, addr, sport);
   if(bind(fd, (struct sockaddr *)&sin6, sizeof(sin6)) == -1)
@@ -235,6 +231,13 @@ int scamper_udp6_open(const void *addr, int sport)
       else
 	printerror(errno,strerror,__func__, "could not bind %s:%d", buf, sport);
       goto err;
+    }
+
+  opt = 65535 + 128;
+  if(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (char *)&opt, sizeof(opt)) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not set SO_SNDBUF");
+      return -1;
     }
 
 #if defined(IPV6_DONTFRAG)

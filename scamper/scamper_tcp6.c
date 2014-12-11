@@ -1,11 +1,11 @@
 /*
  * scamper_tcp6.c
  *
- * $Id: scamper_tcp6.c,v 1.29 2012/05/04 18:09:35 mjl Exp $
+ * $Id: scamper_tcp6.c,v 1.29.14.1 2015/10/17 07:57:55 mjl Exp $
  *
  * Copyright (C) 2006      Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2012,2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tcp6.c,v 1.29 2012/05/04 18:09:35 mjl Exp $";
+  "$Id: scamper_tcp6.c,v 1.29.14.1 2015/10/17 07:57:55 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -48,6 +48,14 @@ static size_t tcp_mss(uint8_t *buf, uint16_t mss)
   buf[1] = 4;
   bytes_htons(buf+2, mss);
   return 4;
+}
+
+static size_t tcp_wscale(uint8_t *buf, uint8_t wscale)
+{
+  buf[0] = 3;
+  buf[1] = 3;
+  buf[2] = wscale;
+  return 3;
 }
 
 static size_t tcp_sackp(uint8_t *buf)
@@ -77,6 +85,32 @@ static size_t tcp_nop(uint8_t *buf)
 {
   buf[0] = 1;
   return 1;
+}
+
+static size_t tcp_fo(uint8_t *buf, const scamper_probe_t *probe)
+{
+  buf[0] = 34;
+  buf[1] = 2;
+  if(probe->pr_tcp_fo_cookielen > 0)
+    {
+      buf[1] += probe->pr_tcp_fo_cookielen;
+      memcpy(buf+2, probe->pr_tcp_fo_cookie, probe->pr_tcp_fo_cookielen);
+    }
+  return buf[1];
+}
+
+static size_t tcp_fo_exp(uint8_t *buf, const scamper_probe_t *probe)
+{
+  buf[0] = 254;
+  buf[1] = 4;
+  buf[2] = 0xf9;
+  buf[3] = 0x89;
+  if(probe->pr_tcp_fo_cookielen > 0)
+    {
+      buf[1] += probe->pr_tcp_fo_cookielen;
+      memcpy(buf+4, probe->pr_tcp_fo_cookie, probe->pr_tcp_fo_cookielen);
+    }
+  return buf[1];
 }
 
 static size_t tcp_ts(uint8_t *buf, const scamper_probe_t *probe)
@@ -139,8 +173,14 @@ size_t scamper_tcp6_hlen(scamper_probe_t *pr)
     {
       if(pr->pr_tcp_mss != 0)
 	tcphlen += 4;
+      if(pr->pr_tcp_wscale != 0)
+	tcphlen += 3;
       if((pr->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_SACK) != 0)
 	tcphlen += 2;
+      if((pr->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_FO) != 0)
+	tcphlen += (2 + pr->pr_tcp_fo_cookielen);
+      if((pr->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_FO_EXP) != 0)
+	tcphlen += (4 + pr->pr_tcp_fo_cookielen);
     }
   if((pr->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_TS) != 0)
     {
@@ -195,8 +235,14 @@ int scamper_tcp6_build(scamper_probe_t *probe, uint8_t *buf, size_t *len)
 	{
 	  if(probe->pr_tcp_mss != 0)
 	    tcphlen += tcp_mss(buf+ip6hlen+tcphlen, probe->pr_tcp_mss);
+	  if(probe->pr_tcp_wscale != 0)
+	    tcphlen += tcp_wscale(buf+ip6hlen+tcphlen, probe->pr_tcp_wscale);
 	  if((probe->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_SACK) != 0)
 	    tcphlen += tcp_sackp(buf+ip6hlen+tcphlen);
+	  if((probe->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_FO) != 0)
+	    tcphlen += tcp_fo(buf+tcphlen, probe);
+	  if((probe->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_FO_EXP) != 0)
+	    tcphlen += tcp_fo_exp(buf+tcphlen, probe);
 	}
 
       if((probe->pr_tcp_opts & SCAMPER_PROBE_TCPOPT_TS) != 0)
@@ -252,11 +298,24 @@ int scamper_tcp6_open(const void *addr, int sport)
   char tmp[128];
   int fd = -1;
 
+#ifdef IPV6_V6ONLY
+  int opt;
+#endif
+
   if((fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP)) == -1)
     {
       printerror(errno, strerror, __func__, "could not open socket");
       goto err;
     }
+
+#ifdef IPV6_V6ONLY
+  opt = 1;
+  if(setsockopt(fd,IPPROTO_IPV6,IPV6_V6ONLY, (char *)&opt,sizeof(opt)) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not set IPV6_V6ONLY");
+      goto err;
+    }
+#endif
 
   sockaddr_compose((struct sockaddr *)&sin6, AF_INET6, addr, sport);
   if(bind(fd, (struct sockaddr *)&sin6, sizeof(sin6)) == -1)

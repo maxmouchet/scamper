@@ -1,4 +1,4 @@
-# $Id: Makefile.am,v 1.24 2014/09/26 01:51:05 mjl Exp $
+# $Id: Makefile.am,v 1.24.6.1 2015/10/17 05:54:04 mjl Exp $
 
 AUTOMAKE_OPTIONS = subdir-objects
 
@@ -130,6 +130,9 @@ scamper_SOURCES = \
 	sniff/scamper_sniff_do.c
 
 scamper_CFLAGS = $(AM_CFLAGS)
+
+scamper_LDADD = @OPENSSL_LIBS@
+scamper_LDFLAGS = @OPENSSL_LDFLAGS@
 
 include_HEADERS = \
 	scamper_file.h \

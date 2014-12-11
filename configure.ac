@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([scamper], [20141211a], [mjl@luckie.org.nz])
+AC_INIT([scamper], [20141211b], [mjl@luckie.org.nz])
 
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([scamper/scamper.c])
@@ -202,6 +202,8 @@ AC_CHECK_FUNCS(strncasecmp)
 AC_CHECK_FUNCS(strtol)
 AC_CHECK_FUNCS(uname)
 
+AC_CHECK_SIZEOF(long)
+
 AC_CHECK_MEMBER([struct sockaddr.sa_len],
 	[AC_DEFINE([HAVE_STRUCT_SOCKADDR_SA_LEN],[1],
 	[Define if struct sockaddr has an sa_len member])],[:],
@@ -224,12 +226,16 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <sys/types.h>]],
                     ]
                  )
 
-# These libraries have to be explicitly linked in OpenSolaris (from libtrace)
+# These libraries have to be explicitly linked in OpenSolaris
 AC_SEARCH_LIBS(getaddrinfo, socket, [], [], -lnsl)
 AC_SEARCH_LIBS(inet_ntop, nsl, [], [], -lsocket)
 
 # Some systems need -lm to use sqrt.
 AC_SEARCH_LIBS(sqrt, m, [], [], [])
+
+AX_CHECK_OPENSSL(
+	[AC_DEFINE([HAVE_OPENSSL], [1], [Define to 1 if you have OpenSSL])]
+	[CFLAGS="$CFLAGS $OPENSSL_INCLUDES"])
 
 AC_CONFIG_FILES([
 	Makefile
@@ -241,6 +247,7 @@ AC_CONFIG_FILES([
 	utils/sc_ipiddump/Makefile
 	utils/sc_speedtrap/Makefile
 	utils/sc_tracediff/Makefile
+	utils/sc_tbitblind/Makefile
 	utils/sc_warts2csv/Makefile
 	utils/sc_warts2json/Makefile
 	utils/sc_warts2pcap/Makefile
