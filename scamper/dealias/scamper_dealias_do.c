@@ -1,7 +1,7 @@
 /*
  * scamper_do_dealias.c
  *
- * $Id: scamper_dealias_do.c,v 1.153.6.1 2016/06/15 08:10:12 mjl Exp $
+ * $Id: scamper_dealias_do.c,v 1.153.6.3 2016/09/17 12:20:05 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
@@ -30,7 +30,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_do.c,v 1.153.6.1 2016/06/15 08:10:12 mjl Exp $";
+  "$Id: scamper_dealias_do.c,v 1.153.6.3 2016/09/17 12:20:05 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -349,10 +349,17 @@ static void dealias_handleerror(scamper_task_t *task, int error)
 static void dealias_result(scamper_task_t *task, uint8_t result)
 {
   scamper_dealias_t *dealias = dealias_getdata(task);
+#ifdef HAVE_SCAMPER_DEBUG
   char buf[16];
+#endif
+
   dealias->result = result;
+
+#ifdef HAVE_SCAMPER_DEBUG
   scamper_debug(__func__, "%s",
 		scamper_dealias_result_tostr(dealias, buf, sizeof(buf)));
+#endif
+
   scamper_task_queue_done(task, 0);
   return;
 }
@@ -1195,6 +1202,7 @@ static int dealias_prefixscan_next(scamper_task_t *task)
   scamper_dealias_prefixscan_t *prefixscan = dealias->data;
   scamper_dealias_probedef_t *def = &pfstate->probedefs[state->probedefc-1];
   uint32_t *defids = NULL, p;
+  int q;
 
   /*
    * if the address we'd otherwise probe has been observed as an alias of
@@ -1226,8 +1234,8 @@ static int dealias_prefixscan_next(scamper_task_t *task)
     }
 
   /* re-set the pointers to the probedefs */
-  for(p=0; p<state->pdc; p++)
-    state->pds[p]->def = &prefixscan->probedefs[p];
+  for(q=0; q<state->pdc; q++)
+    state->pds[q]->def = &prefixscan->probedefs[q];
   for(p=0; p<dealias->probec; p++)
     dealias->probes[p]->def = &prefixscan->probedefs[defids[p]];
   free(defids); defids = NULL;
@@ -2851,7 +2859,7 @@ static int dealias_alloc_radargun(scamper_dealias_t *d, dealias_options_t *o)
   uint32_t i, probedefc;
   uint8_t flags = 0;
   char *a1, *a2;
-  int pdc = 0;
+  int j, pdc = 0;
 
   memset(&pd0, 0, sizeof(pd0));
 
@@ -2967,8 +2975,8 @@ static int dealias_alloc_radargun(scamper_dealias_t *d, dealias_options_t *o)
 
   if(pd_list == NULL)
     {
-      for(i=0; i<pdc; i++)
-	memcpy(&rg->probedefs[i], &pd[i], sizeof(scamper_dealias_probedef_t));
+      for(j=0; j<pdc; j++)
+	memcpy(&rg->probedefs[j], &pd[j], sizeof(scamper_dealias_probedef_t));
     }
   else
     {
@@ -2987,9 +2995,9 @@ static int dealias_alloc_radargun(scamper_dealias_t *d, dealias_options_t *o)
  err:
   if(pd != NULL)
     {
-      for(i=0; i<pdc; i++)
-	if(pd[i].dst != NULL)
-	  scamper_addr_free(pd[i].dst);
+      for(j=0; j<pdc; j++)
+	if(pd[j].dst != NULL)
+	  scamper_addr_free(pd[j].dst);
       free(pd);
     }
   if(pd_list != NULL)
@@ -3510,9 +3518,9 @@ scamper_task_t *scamper_do_dealias_alloctask(void *data,
     }
   else goto err;
 
-  for(i=0; i<state->probedefc; i++)
+  for(p=0; p<state->probedefc; p++)
     {
-      def = &state->probedefs[i];
+      def = &state->probedefs[p];
       if(def->mtu != 0)
 	state->flags |= DEALIAS_STATE_FLAG_DL;
       if(dealias_probedef_add(state, def) != 0)

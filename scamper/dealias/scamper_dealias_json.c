@@ -5,7 +5,7 @@
  * Copyright (c) 2013-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_json.c,v 1.9 2014/11/01 18:02:20 mjl Exp $
+ * $Id: scamper_dealias_json.c,v 1.9.4.3 2016/09/17 07:07:38 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_json.c,v 1.9 2014/11/01 18:02:20 mjl Exp $";
+  "$Id: scamper_dealias_json.c,v 1.9.4.3 2016/09/17 07:07:38 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -43,8 +43,8 @@ static const char rcsid[] =
 static char *dealias_flags_encode(char *buf, size_t len, uint8_t flags,
 				  const char **f2s, size_t f2sc)
 {
-  size_t off = 0;
-  int i, f = 0;
+  size_t i, off = 0;
+  int f = 0;
   uint8_t u8;
 
   string_concat(buf, len, &off, ", \"flags\":[");
@@ -351,6 +351,7 @@ int scamper_file_json_dealias_write(const scamper_file_t *sf,
   char    **prs         = NULL;
   size_t   *pr_lens     = NULL;
   int       i, rc       = -1;
+  uint32_t  j;
   scamper_dealias_probedef_t *defs = NULL;
   int defc = 0;
 
@@ -386,13 +387,13 @@ int scamper_file_json_dealias_write(const scamper_file_t *sf,
 	 (pr_lens = malloc_zero(sizeof(size_t) * dealias->probec)) == NULL)
 	goto cleanup;
 
-      for(i=0; i<dealias->probec; i++)
+      for(j=0; j<dealias->probec; j++)
 	{
-	  if(i > 0) len += 2; /* , */
-	  if((prs[i] = dealias_probe_tostr(dealias->probes[i])) == NULL)
+	  if(j > 0) len += 2; /* , */
+	  if((prs[j] = dealias_probe_tostr(dealias->probes[j])) == NULL)
 	    goto cleanup;
-	  pr_lens[i] = strlen(prs[i]);
-	  len += pr_lens[i];
+	  pr_lens[j] = strlen(prs[j]);
+	  len += pr_lens[j];
 	}
     }
 
@@ -414,15 +415,15 @@ int scamper_file_json_dealias_write(const scamper_file_t *sf,
   memcpy(str+wc, ", \"probes\":[", 12); wc += 12;
   if(dealias->probec > 0)
     {
-      for(i=0; i<dealias->probec; i++)
+      for(j=0; j<dealias->probec; j++)
 	{
-	  if(i > 0 )
+	  if(j > 0 )
 	    {
 	      memcpy(str+wc, ", ", 2);
 	      wc += 2;
 	    }
-	  memcpy(str+wc, prs[i], pr_lens[i]);
-	  wc += pr_lens[i];
+	  memcpy(str+wc, prs[j], pr_lens[j]);
+	  wc += pr_lens[j];
 	}
     }
   memcpy(str+wc, "]", 1); wc++;
@@ -459,9 +460,9 @@ int scamper_file_json_dealias_write(const scamper_file_t *sf,
     }
   if(prs != NULL)
     {
-      for(i=0; i<dealias->probec; i++)
-	if(prs[i] != NULL)
-	  free(prs[i]);
+      for(j=0; j<dealias->probec; j++)
+	if(prs[j] != NULL)
+	  free(prs[j]);
       free(prs);
     }
   return rc;

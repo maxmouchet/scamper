@@ -6,7 +6,7 @@
  *
  * Author: Matthew Luckie
  *
- * $Id: scamper_tbit_json.c,v 1.3.6.2 2016/02/02 15:43:03 mjl Exp $
+ * $Id: scamper_tbit_json.c,v 1.3.6.4 2016/09/17 08:41:52 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_json.c,v 1.3.6.2 2016/02/02 15:43:03 mjl Exp $";
+  "$Id: scamper_tbit_json.c,v 1.3.6.4 2016/09/17 08:41:52 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -52,7 +52,7 @@ typedef struct tbit_state
 #define TBIT_STATE_FLAG_SISN 0x02
 
 static char *tbit_bits_encode(char *buf, size_t len, uint32_t flags, int bits,
-			      const char **f2s, size_t f2sc)
+			      const char **f2s, int f2sc)
 {
   size_t off =  0;
   int i, f = 0;
@@ -71,6 +71,13 @@ static char *tbit_bits_encode(char *buf, size_t len, uint32_t flags, int bits,
       f++;
     }
   return buf;
+}
+
+static uint32_t tbit_isnoff(uint32_t isn, uint32_t seq)
+{
+  if(seq >= isn)
+    return seq - isn;
+  return TCP_MAX_SEQNUM - isn + seq + 1;
 }
 
 static char *tbit_header_tostr(const scamper_tbit_t *tbit,
@@ -414,18 +421,14 @@ static char *tbit_pkt_tostr(const scamper_tbit_t *tbit,
 
       if(pkt->dir == SCAMPER_TBIT_PKT_DIR_TX)
 	{
-	  seq -= state->client_isn +
-	    ((seq >= state->client_isn) ? 0 : TCP_MAX_SEQNUM+1);
-	  ack -= state->server_isn +
-	    ((ack >= state->server_isn) ? 0 : TCP_MAX_SEQNUM+1);
+	  seq = tbit_isnoff(state->client_isn, seq);
+	  ack = tbit_isnoff(state->server_isn, ack);
 	}
       else
 	{
 	  if(!(seq == 0 && (tcpflags & TH_RST) != 0))
-	    seq -= state->server_isn +
-	      ((seq >= state->server_isn) ? 0 : TCP_MAX_SEQNUM+1);
-	  ack -= state->client_isn +
-	    ((ack >= state->client_isn) ? 0 : TCP_MAX_SEQNUM+1);
+	    seq = tbit_isnoff(state->server_isn, seq);
+	  ack = tbit_isnoff(state->client_isn, ack);
 	}
 
       string_concat(buf, sizeof(buf), &off, ", \"tcp_seq\":%u", seq);

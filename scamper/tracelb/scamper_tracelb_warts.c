@@ -4,7 +4,7 @@
  * Copyright (C) 2008-2011 The University of Waikato
  * Author: Matthew Luckie
  *
- * $Id: scamper_tracelb_warts.c,v 1.4 2014/06/12 17:32:08 mjl Exp $
+ * $Id: scamper_tracelb_warts.c,v 1.4.6.1 2016/12/02 18:52:24 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb_warts.c,v 1.4 2014/06/12 17:32:08 mjl Exp $";
+  "$Id: scamper_tracelb_warts.c,v 1.4.6.1 2016/12/02 18:52:24 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -300,7 +300,13 @@ static int warts_tracelb_params_read(scamper_tracelb_t *trace,
     {&trace->userid,       (wpr_t)extract_uint32,    NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
-  return warts_params_read(buf, off, len, handlers, handler_cnt);
+  int rc;
+
+  if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
+    return rc;
+  if(trace->src == NULL || trace->dst == NULL)
+    return -1;
+  return 0;
 }
 
 static int warts_tracelb_params_write(const scamper_tracelb_t *trace,

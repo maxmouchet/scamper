@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.241.2.4 2016/07/16 04:36:49 mjl Exp $
+ * $Id: scamper.c,v 1.241.2.5 2016/09/17 12:15:28 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper.c,v 1.241.2.4 2016/07/16 04:36:49 mjl Exp $";
+  "$Id: scamper.c,v 1.241.2.5 2016/09/17 12:15:28 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -145,9 +145,12 @@ static int    listid       = -1;
 static int    cycleid      = -1;
 static char **arglist      = NULL;
 static int    arglist_len  = 0;
-static char  *debugfile    = NULL;
 static char  *firewall     = NULL;
 static char  *pidfile      = NULL;
+
+#ifndef WITHOUT_DEBUGFILE
+static char  *debugfile    = NULL;
+#endif
 
 /*
  * parameters calculated by scamper at run time:
@@ -222,8 +225,10 @@ static void usage(uint32_t opt_mask)
   if((opt_mask & OPT_CYCLEID) != 0)
     usage_str('C', "cycle id");
 
+#ifndef WITHOUT_DEBUGFILE
   if((opt_mask & OPT_DEBUGFILE) != 0)
     usage_str('d', "write debugging information to the specified file");
+#endif
 
   if((opt_mask & OPT_DAEMON) != 0)
     usage_str('D', "start as a daemon listening for commands on a port");
@@ -454,11 +459,15 @@ static int check_options(int argc, char *argv[])
   char *opt_cycleid = NULL, *opt_listid = NULL, *opt_listname = NULL;
   char *opt_ctrl_inet = NULL, *opt_ctrl_unix = NULL, *opt_monitorname = NULL;
   char *opt_pps = NULL, *opt_command = NULL, *opt_window = NULL;
-  char *opt_debugfile = NULL, *opt_firewall = NULL, *opt_pidfile = NULL;
+  char *opt_firewall = NULL, *opt_pidfile = NULL;
   size_t argv0 = strlen(argv[0]);
   size_t m, len;
   size_t off;
   uint32_t o;
+
+#ifndef WITHOUT_DEBUGFILE
+  char *opt_debugfile = NULL;
+#endif
 
   for(m=0; m<sizeof(multicall)/sizeof(scamper_multicall_t); m++)
     {
@@ -470,7 +479,10 @@ static int check_options(int argc, char *argv[])
     }
 
   off = 0;
-  string_concat(opts, sizeof(opts), &off, "c:C:d:e:fF:iIl:L:M:o:O:p:P:vw:?");
+  string_concat(opts, sizeof(opts), &off, "c:C:e:fF:iIl:L:M:o:O:p:P:vw:?");
+#ifndef WITHOUT_DEBUGFILE
+  string_concat(opts, sizeof(opts), &off, "d:");
+#endif
 #if !defined(__sun__) && !defined(_WIN32)
   string_concat(opts, sizeof(opts), &off, "D");
 #endif
@@ -492,10 +504,12 @@ static int check_options(int argc, char *argv[])
 	  opt_cycleid = optarg;
 	  break;
 
+#ifndef WITHOUT_DEBUGFILE
 	case 'd':
 	  options |= OPT_DEBUGFILE;
 	  opt_debugfile = optarg;
 	  break;
+#endif
 
 	case 'D':
 	  options |= OPT_DAEMON;
@@ -691,11 +705,13 @@ static int check_options(int argc, char *argv[])
       return -1;
     }
 
+#ifndef WITHOUT_DEBUGFILE
   if(options & OPT_DEBUGFILE && (debugfile = strdup(opt_debugfile)) == NULL)
     {
       printerror(errno, strerror, __func__, "could not strdup debugfile");
       return -1;
     }
+#endif
 
   if(options & OPT_PIDFILE && (pidfile = strdup(opt_pidfile)) == NULL)
     {
@@ -1467,18 +1483,18 @@ static void cleanup(void)
 
 #ifndef WITHOUT_DEBUGFILE
   if(options & OPT_DEBUGFILE)
-    {
-      scamper_debug_close();
-    }
+    scamper_debug_close();
 #endif
 
   scamper_osinfo_cleanup();
 
+#ifndef WITHOUT_DEBUGFILE
   if(debugfile != NULL)
     {
       free(debugfile);
       debugfile = NULL;
     }
+#endif
 
   if(pidfile != NULL)
     {

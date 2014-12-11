@@ -6,7 +6,7 @@
  * Copyright (C) 2012-2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping.c,v 1.29.14.3 2016/06/22 08:15:36 mjl Exp $
+ * $Id: scamper_ping.c,v 1.29.14.4 2016/09/17 05:53:39 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping.c,v 1.29.14.3 2016/06/22 08:15:36 mjl Exp $";
+  "$Id: scamper_ping.c,v 1.29.14.4 2016/09/17 05:53:39 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -112,7 +112,7 @@ int scamper_ping_stats(const scamper_ping_t *ping, scamper_ping_stats_t *stats)
   if(n > 0)
     {
       /* compute the average */
-      us = (sum / n);
+      us = (uint32_t)(sum / n);
       stats->avg_rtt.tv_sec  = us / 1000000;
       stats->avg_rtt.tv_usec = us % 1000000;
 
@@ -129,7 +129,7 @@ int scamper_ping_stats(const scamper_ping_t *ping, scamper_ping_stats_t *stats)
 	    }
 	}
 
-      us = sqrt(sum/n);
+      us = (uint32_t)sqrt(sum/n);
       stats->stddev_rtt.tv_sec  = us / 1000000;
       stats->stddev_rtt.tv_usec = us % 1000000;
     }

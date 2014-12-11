@@ -1,7 +1,7 @@
 /*
  * sc_speedtrap
  *
- * $Id: sc_speedtrap.c,v 1.22.4.1 2015/08/08 05:27:23 mjl Exp $
+ * $Id: sc_speedtrap.c,v 1.22.4.2 2016/12/02 19:08:56 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_speedtrap.c,v 1.22.4.1 2015/08/08 05:27:23 mjl Exp $";
+  "$Id: sc_speedtrap.c,v 1.22.4.2 2016/12/02 19:08:56 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -486,17 +486,10 @@ static int ipid_inseq3(uint64_t a, uint64_t b, uint64_t c)
     b += 0x100000000ULL;
   if(a > c)
     c += 0x100000000ULL;
-
-  if(fudge != 0)
-    {
-      if(b - a > fudge || c - b > fudge)
-	return 0;
-    }
-  else
-    {
-      if(a > b || b > c)
-	return 0;
-    }
+  if(a > b || b > c)
+    return 0;
+  if(fudge != 0 && (b - a > fudge || c - b > fudge))
+    return 0;
   return 1;
 }
 

@@ -1,7 +1,7 @@
 /*
  * scamper_icmp6.c
  *
- * $Id: scamper_icmp6.c,v 1.95.14.1 2015/12/06 08:22:45 mjl Exp $
+ * $Id: scamper_icmp6.c,v 1.95.14.2 2016/09/17 05:49:45 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmp6.c,v 1.95.14.1 2015/12/06 08:22:45 mjl Exp $";
+  "$Id: scamper_icmp6.c,v 1.95.14.2 2016/09/17 05:49:45 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -373,9 +373,11 @@ int scamper_icmp6_recv(int fd, scamper_icmp_resp_t *resp)
 #endif
 
 #ifdef _WIN32
-  if((pbuflen = recv(fd, rxbuf, sizeof(rxbuf), 0)) < 0)
+  socklen_t fromlen = sizeof(from);
+  if((pbuflen = recvfrom(fd, rxbuf, sizeof(rxbuf), 0,
+			 (struct sockaddr *)&from, &fromlen)) < 0)
     {
-      printerror(errno, strerror, __func__, "could not recv");
+      printerror(errno, strerror, __func__, "could not recvfrom");
       return -1;
     }
 #endif

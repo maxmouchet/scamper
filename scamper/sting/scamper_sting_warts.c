@@ -5,7 +5,7 @@
  * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_sting_warts.c,v 1.7 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_sting_warts.c,v 1.7.6.1 2016/12/02 19:00:36 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sting_warts.c,v 1.7 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_sting_warts.c,v 1.7.6.1 2016/12/02 19:00:36 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -285,8 +285,12 @@ static int warts_sting_params_read(scamper_sting_t *sting,
     {&sting->result,       (wpr_t)extract_byte,         NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
-
-  return warts_params_read(buf, off, len, handlers, handler_cnt);
+  int rc;
+  if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
+    return rc;
+  if(sting->src == NULL || sting->dst == NULL)
+    return -1;
+  return 0;
 }
 
 static int warts_sting_params_write(const scamper_sting_t *sting,

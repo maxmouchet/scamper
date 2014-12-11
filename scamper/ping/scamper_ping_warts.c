@@ -6,7 +6,7 @@
  * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping_warts.c,v 1.13 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_ping_warts.c,v 1.13.6.1 2016/12/02 18:41:26 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_warts.c,v 1.13 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_ping_warts.c,v 1.13.6.1 2016/12/02 18:41:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -436,6 +436,9 @@ static int warts_ping_reply_read(const scamper_ping_t *ping,
   if((i = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
     return i;
 
+  if(reply->addr == NULL)
+    return -1;
+
   /*
    * some earlier versions of the ping reply structure did not include
    * the reply protocol field.  fill it with something valid.
@@ -649,6 +652,8 @@ static int warts_ping_params_read(scamper_ping_t *ping, warts_state_t *state,
 
   if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
     return rc;
+  if(ping->src == NULL || ping->dst == NULL)
+    return -1;
   if(flag_isset(&buf[o], WARTS_PING_PROBE_TIMEOUT) == 0)
     ping->probe_timeout = ping->probe_wait;
   return 0;
@@ -776,8 +781,6 @@ int scamper_file_warts_ping_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 	  goto err;
 	}
     }
-
-  assert(off == hdr->len);
 
  done:
   warts_addrtable_clean(&table);

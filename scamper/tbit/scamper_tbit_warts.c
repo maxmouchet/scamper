@@ -6,7 +6,7 @@
  * Copyright (C) 2012-2015 The Regents of the University of California
  * Authors: Matthew Luckie, Ben Stasiewicz
  *
- * $Id: scamper_tbit_warts.c,v 1.11.6.1 2015/10/17 09:03:06 mjl Exp $
+ * $Id: scamper_tbit_warts.c,v 1.11.6.2 2016/12/02 18:50:33 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_warts.c,v 1.11.6.1 2015/10/17 09:03:06 mjl Exp $";
+  "$Id: scamper_tbit_warts.c,v 1.11.6.2 2016/12/02 18:50:33 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -859,6 +859,9 @@ static int warts_tbit_params_read(scamper_tbit_t *tbit,
   if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0)
     return -1;
 
+  if(tbit->src == NULL || tbit->dst == NULL)
+    return -1;
+
   /* handle the fact the pktc param changed from 16 to 32 bits */
   if(pktc32 != 0)
     tbit->pktc = pktc32;
@@ -1054,7 +1057,6 @@ int scamper_file_warts_tbit_read(scamper_file_t *sf, const warts_hdr_t *hdr,
       off += junk32;
     }
 
-  assert(off == hdr->len);
   warts_addrtable_clean(&table);
   *tbit_out = tbit;
   free(buf);

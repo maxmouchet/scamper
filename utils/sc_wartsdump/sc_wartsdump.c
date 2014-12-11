@@ -1,7 +1,7 @@
 /*
  * sc_wartsdump
  *
- * $Id: sc_wartsdump.c,v 1.186.6.3 2015/12/03 06:51:18 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.186.6.4 2016/09/17 08:45:50 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartsdump.c,v 1.186.6.3 2015/12/03 06:51:18 mjl Exp $";
+  "$Id: sc_wartsdump.c,v 1.186.6.4 2016/09/17 08:45:50 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1194,8 +1194,7 @@ static void dump_neighbourdisc(scamper_neighbourdisc_t *nd)
   return;
 }
 
-static void tbit_bits_print(uint32_t flags, int bits,
-			    const char **f2s, size_t f2sc)
+static void tbit_bits_print(uint32_t flags,int bits, const char **f2s,int f2sc)
 {
   int i, f = 0;
   uint32_t u32;
@@ -1213,6 +1212,13 @@ static void tbit_bits_print(uint32_t flags, int bits,
       f++;
     }
   return;
+}
+
+static uint32_t tbit_isnoff(uint32_t isn, uint32_t seq)
+{
+  if(seq >= isn)
+    return seq - isn;
+  return TCP_MAX_SEQNUM - isn + seq + 1;
 }
 
 static void dump_tbit(scamper_tbit_t *tbit)
@@ -1507,14 +1513,14 @@ static void dump_tbit(scamper_tbit_t *tbit)
 
 	  if(pkt->dir == SCAMPER_TBIT_PKT_DIR_TX)
             {
-	      seq -= client_isn + ((seq >= client_isn) ? 0 : TCP_MAX_SEQNUM+1);
-	      ack -= server_isn + ((ack >= server_isn) ? 0 : TCP_MAX_SEQNUM+1);
+	      seq = tbit_isnoff(client_isn, seq);
+	      ack = tbit_isnoff(server_isn, ack);
             }
 	  else
             {
 	      if(!(seq == 0 && (flags & TH_RST) != 0))
-		seq -= server_isn + ((seq>=server_isn) ? 0 : TCP_MAX_SEQNUM+1);
-	      ack -= client_isn + ((ack >= client_isn) ? 0 : TCP_MAX_SEQNUM+1);
+		seq = tbit_isnoff(server_isn, seq);
+	      ack = tbit_isnoff(client_isn, ack);
             }
 
 	  datalen = len - iphlen - tcphlen;
@@ -1682,13 +1688,13 @@ static void dump_sting(scamper_sting_t *sting)
 
       if(pkt->flags & SCAMPER_STING_PKT_FLAG_TX)
 	{
-	  seq -= client_isn + ((seq >= client_isn) ? 0 : TCP_MAX_SEQNUM+1);
-	  ack -= server_isn + ((ack >= server_isn) ? 0 : TCP_MAX_SEQNUM+1);
+	  seq = tbit_isnoff(client_isn, seq);
+	  ack = tbit_isnoff(server_isn, ack);
 	}
       else
 	{
-	  seq -= server_isn + ((seq >= server_isn) ? 0 : TCP_MAX_SEQNUM+1);
-	  ack -= client_isn + ((ack >= client_isn) ? 0 : TCP_MAX_SEQNUM+1);
+	  seq = tbit_isnoff(server_isn, seq);
+	  ack = tbit_isnoff(client_isn, ack);
 	}
 
       datalen = len - iphlen - tcphlen;

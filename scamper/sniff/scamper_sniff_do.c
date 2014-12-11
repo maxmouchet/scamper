@@ -1,7 +1,7 @@
 /*
  * scamper_sniff_do.c
  *
- * $Id: scamper_sniff_do.c,v 1.12 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_sniff_do.c,v 1.12.14.1 2016/09/17 05:40:01 mjl Exp $
  *
  * Copyright (C) 2011 The University of Waikato
  * Author: Matthew Luckie
@@ -23,7 +23,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sniff_do.c,v 1.12 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_sniff_do.c,v 1.12.14.1 2016/09/17 05:40:01 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -367,7 +367,7 @@ void *scamper_do_sniff_alloc(char *str)
   sniff->limit_pktc = limit_pktc;
   sniff->limit_time = limit_time;
   sniff->userid     = userid;
-  sniff->icmpid     = icmpid;
+  sniff->icmpid     = (uint16_t)icmpid;
 
   return sniff;
 

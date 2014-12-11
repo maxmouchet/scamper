@@ -1,7 +1,7 @@
 /*
  * scamper_icmp_resp.h
  *
- * $Id: scamper_icmp_resp.h,v 1.30 2013/09/04 23:32:44 mjl Exp $
+ * $Id: scamper_icmp_resp.h,v 1.30.12.1 2016/09/17 12:14:51 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -254,7 +254,7 @@ void scamper_icmp_resp_handle(scamper_icmp_resp_t *resp);
 void scamper_icmp_resp_clean(scamper_icmp_resp_t *ir);
 
 /* scamper only uses this function if it is built in debug mode */
-#if !defined(NDEBUG) && !defined(WITHOUT_DEBUGFILE)
+#if !defined(NDEBUG) || !defined(WITHOUT_DEBUGFILE)
 void    scamper_icmp_resp_print(const scamper_icmp_resp_t *resp);
 #else
 #define scamper_icmp_resp_print(resp) ((void)0)

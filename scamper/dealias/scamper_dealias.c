@@ -1,7 +1,7 @@
 /*
  * scamper_dealias.c
  *
- * $Id: scamper_dealias.c,v 1.47.10.1 2016/08/26 21:12:18 mjl Exp $
+ * $Id: scamper_dealias.c,v 1.47.10.3 2016/12/02 19:12:21 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2012-2013 The Regents of the University of California
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias.c,v 1.47.10.1 2016/08/26 21:12:18 mjl Exp $";
+  "$Id: scamper_dealias.c,v 1.47.10.3 2016/12/02 19:12:21 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -434,11 +434,11 @@ int scamper_dealias_bump_alloc(scamper_dealias_t *dealias)
   return -1;
 }
 
-static uint16_t dealias_ipid16_diff(uint32_t a, uint32_t b)
+static uint16_t dealias_ipid16_diff(uint16_t a, uint16_t b)
 {
-  if(b < a)
-    b += 0x10000;
-  return b - a;
+  if(a <= b)
+    return b - a;
+  return (0xFFFFUL - a) + b + 1;
 }
 
 static int dealias_ipid16_inseq2(uint16_t a, uint16_t b, uint16_t fudge)
@@ -458,25 +458,19 @@ static int dealias_ipid16_inseq3(uint32_t a,uint32_t b,uint32_t c,uint32_t f)
   if(a > c)
     c += 0x10000;
 
-  if(f != 0)
-    {
-      if(b - a > f || c - b > f)
-	return 0;
-    }
-  else
-    {
-      if(a > b || b > c)
-	return 0;
-    }
+  if(a > b || b > c)
+    return 0;
+  if(f != 0 && (b - a > f || c - b > f))
+    return 0;
 
   return 1;
 }
 
-static uint16_t dealias_ipid32_diff(uint64_t a, uint64_t b)
+static uint32_t dealias_ipid32_diff(uint32_t a, uint32_t b)
 {
-  if(b < a)
-    b += 0x100000000ULL;
-  return b - a;
+  if(a <= b)
+    return b - a;
+  return (0xFFFFFFFFUL - a) + b + 1;
 }
 
 static int dealias_ipid32_inseq2(uint32_t a, uint32_t b, uint32_t fudge)
@@ -496,16 +490,10 @@ static int dealias_ipid32_inseq3(uint64_t a,uint64_t b,uint64_t c,uint64_t f)
   if(a > c)
     c += 0x100000000ULL;
 
-  if(f != 0)
-    {
-      if(b - a > f || c - b > f)
-	return 0;
-    }
-  else
-    {
-      if(a > b || b > c)
-	return 0;
-    }
+  if(a > b || b > c)
+    return 0;
+  if(f != 0 && (b - a > f || c - b > f))
+    return 0;
 
   return 1;
 }

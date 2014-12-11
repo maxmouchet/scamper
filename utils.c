@@ -1,7 +1,7 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.173.2.6 2016/08/26 20:55:00 mjl Exp $
+ * $Id: utils.c,v 1.173.2.7 2016/09/17 05:38:39 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.173.2.6 2016/08/26 20:55:00 mjl Exp $";
+  "$Id: utils.c,v 1.173.2.7 2016/09/17 05:38:39 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -2090,7 +2090,7 @@ uint32_t byteswap32(const uint32_t word)
 int file_lines(const char *filename, int (*func)(char *, void *), void *param)
 {
   struct stat sb;
-  size_t off, start;
+  off_t off, start;
   char *readbuf = NULL;
   int fd = -1;
 

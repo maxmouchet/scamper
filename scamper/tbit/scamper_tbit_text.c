@@ -4,7 +4,7 @@
  * Copyright (C) 2009-2011 The University of Waikato
  * Authors: Ben Stasiewicz, Matthew Luckie
  *
- * $Id: scamper_tbit_text.c,v 1.12.14.2 2016/06/15 07:24:10 mjl Exp $
+ * $Id: scamper_tbit_text.c,v 1.12.14.3 2016/09/17 08:43:05 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,6 +37,13 @@ static const char rcsid[] =
 #include "scamper_tbit.h"
 #include "scamper_tbit_text.h"
 #include "utils.h"
+
+static uint32_t tbit_isnoff(uint32_t isn, uint32_t seq)
+{
+  if(seq >= isn)
+    return seq - isn;
+  return TCP_MAX_SEQNUM - isn + seq + 1;
+}
 
 int scamper_file_text_tbit_write(const scamper_file_t *sf,
 				 const scamper_tbit_t *tbit)
@@ -227,13 +234,13 @@ int scamper_file_text_tbit_write(const scamper_file_t *sf,
 
 	  if(pkt->dir == SCAMPER_TBIT_PKT_DIR_TX)
             {
-	      seq -= client_isn + ((seq >= client_isn) ? 0 : TCP_MAX_SEQNUM+1);
-	      ack -= server_isn + ((ack >= server_isn) ? 0 : TCP_MAX_SEQNUM+1);
+	      seq = tbit_isnoff(client_isn, seq);
+	      ack = tbit_isnoff(server_isn, ack);
             }
 	  else
             {
-	      seq -= server_isn + ((seq >= server_isn) ? 0 : TCP_MAX_SEQNUM+1);
-	      ack -= client_isn + ((ack >= client_isn) ? 0 : TCP_MAX_SEQNUM+1);
+	      seq = tbit_isnoff(server_isn, seq);
+	      ack = tbit_isnoff(client_isn, ack);
             }
 
 	  datalen = len - iphlen - tcphlen;

@@ -1,7 +1,7 @@
 /*
  * internal.h
  *
- * $Id: internal.h,v 1.29.4.2 2016/08/26 20:59:32 mjl Exp $
+ * $Id: internal.h,v 1.29.4.3 2016/09/17 06:02:44 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -32,6 +32,7 @@ typedef unsigned __int32 uint32_t;
 typedef unsigned __int64 uint64_t;
 typedef __int8 int8_t;
 typedef __int16 int16_t;
+typedef __int32 int32_t;
 typedef int ssize_t;
 typedef int pid_t;
 typedef int socklen_t;

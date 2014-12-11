@@ -1,7 +1,7 @@
 /*
  * scamper_icmp_resp.c
  *
- * $Id: scamper_icmp_resp.c,v 1.32 2013/09/04 23:32:44 mjl Exp $
+ * $Id: scamper_icmp_resp.c,v 1.32.12.1 2016/09/17 12:12:08 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmp_resp.c,v 1.32 2013/09/04 23:32:44 mjl Exp $";
+  "$Id: scamper_icmp_resp.c,v 1.32.12.1 2016/09/17 12:12:08 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -39,7 +39,7 @@ static const char rcsid[] =
 #include "scamper_icmp_resp.h"
 #include "scamper_debug.h"
 
-#if !defined(NDEBUG) && !defined(WITHOUT_DEBUGFILE)
+#if !defined(NDEBUG) || !defined(WITHOUT_DEBUGFILE)
 void scamper_icmp_resp_print(const scamper_icmp_resp_t *ir)
 {
   char *t = NULL, tbuf[64];

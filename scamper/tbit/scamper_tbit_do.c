@@ -1,7 +1,7 @@
 /*
  * scamper_do_tbit.c
  *
- * $Id: scamper_tbit_do.c,v 1.103.6.3 2016/06/22 08:18:57 mjl Exp $
+ * $Id: scamper_tbit_do.c,v 1.103.6.6 2016/09/17 12:31:27 mjl Exp $
  *
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2009-2010 Stephen Eichler
@@ -37,7 +37,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_do.c,v 1.103.6.3 2016/06/22 08:18:57 mjl Exp $";
+  "$Id: scamper_tbit_do.c,v 1.103.6.6 2016/09/17 12:31:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -412,8 +412,11 @@ static void tbit_result(scamper_task_t *task, uint8_t result)
 {
   scamper_tbit_t *tbit = tbit_getdata(task);
   tbit_state_t *state = tbit_getstate(task);
-  char buf[16], addr[64];
   int d = 0;
+
+#ifdef HAVE_SCAMPER_DEBUG
+  char addr[64], buf[16];
+#endif
 
   switch(result)
     {
@@ -447,9 +450,11 @@ static void tbit_result(scamper_task_t *task, uint8_t result)
   if(tbit->result == SCAMPER_TBIT_RESULT_NONE)
     {
       tbit->result = result;
-      scamper_addr_tostr(tbit->dst, addr, sizeof(addr));
-      scamper_debug(__func__, "%s %s", addr,
+#ifdef HAVE_SCAMPER_DEBUG
+      scamper_debug(__func__, "%s %s",
+		    scamper_addr_tostr(tbit->dst, addr, sizeof(addr)),
 		    scamper_tbit_res2str(tbit, buf, sizeof(buf)));
+#endif
     }
 
   if(d == 0)
@@ -3855,7 +3860,7 @@ static int tbit_app_http(scamper_tbit_t *tbit, tbit_options_t *o)
 
       if(string_tolong(port, &lo) != 0 || lo < 1 || lo > 65535)
 	return -1;
-      dport = lo;
+      dport = (uint16_t)lo;
       *ptr = '/';
     }
 
@@ -4107,7 +4112,7 @@ void *scamper_do_tbit_alloc(char *str)
 	case TBIT_OPT_FO:
 	  for(i=0; i<tmp; i++)
 	    o.fo_cookie[i] = hex2byte(opt->str[i*2], opt->str[(i*2)+1]);
-	  o.fo_cookielen = tmp;
+	  o.fo_cookielen = (uint8_t)tmp;
 	  break;
 
 	case TBIT_OPT_WSCALE:
