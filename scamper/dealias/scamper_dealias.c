@@ -1,7 +1,7 @@
 /*
  * scamper_dealias.c
  *
- * $Id: scamper_dealias.c,v 1.47 2014/04/04 22:03:05 mjl Exp $
+ * $Id: scamper_dealias.c,v 1.47.10.1 2016/08/26 21:12:18 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2012-2013 The Regents of the University of California
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias.c,v 1.47 2014/04/04 22:03:05 mjl Exp $";
+  "$Id: scamper_dealias.c,v 1.47.10.1 2016/08/26 21:12:18 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1006,6 +1006,7 @@ int scamper_dealias_radargun_fudge(scamper_dealias_t *dealias,
   for(x=0; x<rg->probedefc; x++)
     if(dr[x].probec > 0)
       free(dr[x].probes);
+  free(dr);
   return 0;
 
  err:
@@ -1014,6 +1015,7 @@ int scamper_dealias_radargun_fudge(scamper_dealias_t *dealias,
       for(x=0; x<rg->probedefc; x++)
 	if(dr[x].probec > 0)
 	  free(dr[x].probes);
+      free(dr);
     }
   return -1;
 }

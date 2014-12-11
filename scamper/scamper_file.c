@@ -1,7 +1,7 @@
 /*
  * scamper_file.c
  *
- * $Id: scamper_file.c,v 1.68 2014/09/26 01:51:05 mjl Exp $
+ * $Id: scamper_file.c,v 1.68.6.1 2016/08/26 21:03:14 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file.c,v 1.68 2014/09/26 01:51:05 mjl Exp $";
+  "$Id: scamper_file.c,v 1.68.6.1 2016/08/26 21:03:14 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -697,14 +697,14 @@ static scamper_file_t *file_open(int fd, char *fn, char mode, int type)
       return NULL;
     }
 
-  sf->type = type;
-  sf->fd   = fd;
-
   if(fn != NULL && (sf->filename = strdup(fn)) == NULL)
     {
+      free(sf);
       return NULL;
     }
 
+  sf->type = type;
+  sf->fd   = fd;
   if(open_func(sf) == -1)
     {
       scamper_file_close(sf);

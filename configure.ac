@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([scamper], [20141211e], [mjl@luckie.org.nz])
+AC_INIT([scamper], [20141211f], [mjl@luckie.org.nz])
 
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([scamper/scamper.c])
@@ -146,6 +146,14 @@ AC_CHECK_HEADERS([netinet/ip_fw.h netinet6/ip6_fw.h], [], [],
 #include <netinet/ip_compat.h>
 ]])
 
+AC_CHECK_HEADERS(net/pfvar.h, [], [],
+[[
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <net/if.h>
+]])
+
 # Checks for typedefs, structures, and compiler characteristics.
 AC_C_CONST
 AC_TYPE_UID_T
@@ -202,6 +210,41 @@ AC_CHECK_MEMBER([struct sockaddr.sa_len],
 	[Define if struct sockaddr has an sa_len member])],[:],
 	[#include <sys/types.h>
 	 #include <sys/socket.h>])
+
+if test "x$ac_cv_header_net_pfvar_h" == xyes; then
+   AC_CHECK_MEMBER([struct pfioc_trans_e.type],
+	[AC_DEFINE([HAVE_STRUCT_PFIOC_TRANS_E_TYPE],[1],
+	[Define if struct pfioc_trans_e has a type member])],[:],
+	[#include <sys/types.h>
+	 #include <sys/socket.h>
+	 #include <netinet/in.h>
+	 #include <net/if.h>
+	 #include <net/pfvar.h>])
+   AC_CHECK_MEMBER([struct pfioc_trans_e.rs_num],
+	[AC_DEFINE([HAVE_STRUCT_PFIOC_TRANS_E_RS_NUM],[1],
+	[Define if struct pfioc_trans_e has a rs_num member])],[:],
+	[#include <sys/types.h>
+	 #include <sys/socket.h>
+	 #include <netinet/in.h>
+	 #include <net/if.h>
+	 #include <net/pfvar.h>])
+   AC_CHECK_MEMBER([struct pf_rule.nat],
+	[AC_DEFINE([HAVE_STRUCT_PF_RULE_NAT],[1],
+	[Define if struct pf_rule has a nat member])],[:],
+	[#include <sys/types.h>
+	 #include <sys/socket.h>
+	 #include <netinet/in.h>
+	 #include <net/if.h>
+	 #include <net/pfvar.h>])
+   AC_CHECK_MEMBER([struct pf_rule.rdr],
+	[AC_DEFINE([HAVE_STRUCT_PF_RULE_RDR],[1],
+	[Define if struct pf_rule has a rdr member])],[:],
+	[#include <sys/types.h>
+	 #include <sys/socket.h>
+	 #include <netinet/in.h>
+	 #include <net/if.h>
+	 #include <net/pfvar.h>]) 
+fi
 
 # Check for structs
 AC_MSG_CHECKING([for struct ip6_ext])

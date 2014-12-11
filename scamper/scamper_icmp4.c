@@ -1,7 +1,7 @@
 /*
  * scamper_icmp4.c
  *
- * $Id: scamper_icmp4.c,v 1.111.6.1 2015/12/06 08:20:53 mjl Exp $
+ * $Id: scamper_icmp4.c,v 1.111.6.2 2016/08/26 21:16:16 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmp4.c,v 1.111.6.1 2015/12/06 08:20:53 mjl Exp $";
+  "$Id: scamper_icmp4.c,v 1.111.6.2 2016/08/26 21:16:16 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -326,6 +326,8 @@ static uint16_t icmp4_ip_len(const struct ip *ip)
   uint16_t len;
 
 #if defined(__linux__) || defined(__OpenBSD__) || defined(__sun__) || defined(_WIN32)
+  len = ntohs(ip->ip_len);
+#elif defined(__FreeBSD__) && __FreeBSD_version >= 1100030
   len = ntohs(ip->ip_len);
 #else
   len = ip->ip_len + (ip->ip_hl << 2);

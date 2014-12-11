@@ -1,7 +1,7 @@
 /*
  * scamper_task.c
  *
- * $Id: scamper_task.c,v 1.57.6.1 2015/12/03 08:15:49 mjl Exp $
+ * $Id: scamper_task.c,v 1.57.6.2 2016/08/26 20:49:01 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_task.c,v 1.57.6.1 2015/12/03 08:15:49 mjl Exp $";
+  "$Id: scamper_task.c,v 1.57.6.2 2016/08/26 20:49:01 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -203,6 +203,8 @@ static void tx_nd_check(scamper_dl_rec_t *dl)
 {
   scamper_task_sig_t sig;
   scamper_addr_t ip;
+  struct in_addr ip4;
+  struct in6_addr ip6;
   s2t_t fm, *s2t;
 
   if(splaytree_count(tx_nd) <= 0)
@@ -211,12 +213,14 @@ static void tx_nd_check(scamper_dl_rec_t *dl)
   if(SCAMPER_DL_IS_ARP_OP_REPLY(dl) && SCAMPER_DL_IS_ARP_PRO_IPV4(dl))
     {
       ip.type = SCAMPER_ADDR_TYPE_IPV4;
-      ip.addr = dl->dl_arp_spa;
+      memcpy(&ip4, dl->dl_arp_spa, sizeof(ip4));
+      ip.addr = &ip4;
     }
   else if(SCAMPER_DL_IS_ICMP6_ND_NADV(dl))
     {
       ip.type = SCAMPER_ADDR_TYPE_IPV6;
-      ip.addr = dl->dl_icmp6_nd_target;
+      memcpy(&ip6, dl->dl_icmp6_nd_target, sizeof(ip6));
+      ip.addr = &ip6;
     }
   else return;
 

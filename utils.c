@@ -1,7 +1,7 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.173.2.4 2016/06/15 07:52:08 mjl Exp $
+ * $Id: utils.c,v 1.173.2.6 2016/08/26 20:55:00 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.173.2.4 2016/06/15 07:52:08 mjl Exp $";
+  "$Id: utils.c,v 1.173.2.6 2016/08/26 20:55:00 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -35,7 +35,7 @@ static const char rcsid[] =
 #include "internal.h"
 #include "utils.h"
 
-#if defined(HAVE_SOCKADDR_SA_LEN)
+#if defined(HAVE_STRUCT_SOCKADDR_SA_LEN)
 int sockaddr_len(const struct sockaddr *sa)
 {
   return sa->sa_len;
@@ -127,7 +127,7 @@ int sockaddr_compose(struct sockaddr *sa,
     }
   else return -1;
 
-#if defined(HAVE_SOCKADDR_SA_LEN)
+#if defined(HAVE_STRUCT_SOCKADDR_SA_LEN)
   sa->sa_len    = len;
 #endif
 
@@ -147,7 +147,7 @@ int sockaddr_compose_un(struct sockaddr *sa, const char *file)
   sn->sun_family = AF_UNIX;
   snprintf(sn->sun_path, sizeof(sn->sun_path), "%s", file);
 
-#if defined (HAVE_SOCKADDR_SA_LEN)
+#if defined(HAVE_STRUCT_SOCKADDR_SA_LEN)
   sn->sun_len    = sizeof(struct sockaddr_un);
 #endif
 
@@ -1268,12 +1268,12 @@ int string_addrport(const char *in, char **first, int *port)
 	goto err;
     }
 
-  free(dup); dup = NULL;
   if(string_tolong(ptr, &lo) != 0 || lo < 1 || lo > 65535)
     goto err;
 
   *first = first_tmp;
   *port  = lo;
+  free(dup);
   return 0;
 
  err:

@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.241.2.3 2015/12/03 08:12:55 mjl Exp $
+ * $Id: scamper.c,v 1.241.2.4 2016/07/16 04:36:49 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper.c,v 1.241.2.3 2015/12/03 08:12:55 mjl Exp $";
+  "$Id: scamper.c,v 1.241.2.4 2016/07/16 04:36:49 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -428,58 +428,6 @@ static int ppswindow_set(int p, int w)
   return 0;
 }
 
-/*
- * split_addrport
- *
- * given an input string, return the ip address / name in the first part
- * (if present) and the port number in the second.  do some basic sanity
- * checking as well.
- */
-static int split_addrport(const char *in, char **first, int *port)
-{
-  char *ptr, *dup = NULL, *first_tmp = NULL;
-  long lo;
-
-  if(string_isnumber(in))
-    {
-      if(string_tolong(in, &lo) == -1 || lo < 1 || lo > 65535)
-	goto err;
-      *first = NULL;
-      *port  = lo;
-      return 0;
-    }
-
-  if((dup = strdup(in)) == NULL)
-    goto err;
-
-  if(dup[0] == '[')
-    {
-      string_nullterm_char(dup, ']', &ptr);
-      if(ptr == NULL || *ptr != ':' || (first_tmp = strdup(dup+1)) == NULL)
-	goto err;
-      ptr++;
-    }
-  else
-    {
-      string_nullterm_char(dup, ':', &ptr);
-      if(ptr == NULL || (first_tmp = strdup(dup)) == NULL)
-	goto err;
-    }
-
-  free(dup); dup = NULL;
-  if(string_tolong(ptr, &lo) != 0 || lo < 1 || lo > 65535)
-    goto err;
-
-  *first = first_tmp;
-  *port  = lo;
-  return 0;
-
- err:
-  if(first_tmp != NULL) free(first_tmp);
-  if(dup != NULL) free(dup);
-  return -1;
-}
-
 static int check_options(int argc, char *argv[])
 {
   static const scamper_multicall_t multicall[] = {
@@ -789,7 +737,7 @@ static int check_options(int argc, char *argv[])
     {
       /* if listening on control socket there should be no leftover args */
       if(arglist_len != 0 ||
-	 split_addrport(opt_ctrl_inet, &ctrl_inet_addr, &ctrl_inet_port) != 0)
+	 string_addrport(opt_ctrl_inet, &ctrl_inet_addr, &ctrl_inet_port) != 0)
 	{
 	  usage(OPT_CTRL_INET);
 	  return -1;

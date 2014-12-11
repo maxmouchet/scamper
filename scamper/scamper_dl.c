@@ -1,7 +1,7 @@
 /*
  * scamper_dl: manage BPF/PF_PACKET datalink instances for scamper
  *
- * $Id: scamper_dl.c,v 1.181.6.2 2015/12/03 07:14:14 mjl Exp $
+ * $Id: scamper_dl.c,v 1.181.6.3 2016/08/26 21:14:03 mjl Exp $
  *
  *          Matthew Luckie
  *          Ben Stasiewicz added fragmentation support.
@@ -35,7 +35,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dl.c,v 1.181.6.2 2015/12/03 07:14:14 mjl Exp $";
+  "$Id: scamper_dl.c,v 1.181.6.3 2016/08/26 21:14:03 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -824,7 +824,7 @@ static int dl_bpf_node_init(const scamper_fd_t *fdn, scamper_dl_t *node)
     case DLT_NULL:
       node->dlt_cb = dlt_null_cb;
       if(osinfo->os_id == SCAMPER_OSINFO_OS_FREEBSD &&
-	 osinfo->os_rel[0] >= 6)
+	 osinfo->os_rel_dots > 0 && osinfo->os_rel[0] >= 6)
 	{
 	  node->tx_type = SCAMPER_DL_TX_NULL;
 	}
@@ -918,7 +918,7 @@ static int dl_bpf_init(void)
 
   osinfo = scamper_osinfo_get();
   if(osinfo->os_id == SCAMPER_OSINFO_OS_FREEBSD &&
-     osinfo->os_rel[0] == 4 &&
+     osinfo->os_rel_dots >= 2 && osinfo->os_rel[0] == 4 &&
      (osinfo->os_rel[1] == 3 || osinfo->os_rel[1] == 4))
     {
       printerror(0, NULL, __func__,

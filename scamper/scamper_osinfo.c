@@ -1,7 +1,7 @@
 /*
  * scamper_osinfo.c
  *
- * $Id: scamper_osinfo.c,v 1.2 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_osinfo.c,v 1.2.6.1 2016/08/26 21:05:26 mjl Exp $
  *
  * Copyright (C) 2006 Matthew Luckie
  * Copyright (C) 2014 The Regents of the University of California
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_osinfo.c,v 1.2 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_osinfo.c,v 1.2.6.1 2016/08/26 21:05:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -32,7 +32,9 @@ static const char rcsid[] =
 #endif
 #include "internal.h"
 
+#include "scamper_debug.h"
 #include "scamper_osinfo.h"
+#include "mjl_list.h"
 #include "utils.h"
 
 static scamper_osinfo_t *osinfo = NULL;
@@ -52,19 +54,30 @@ int scamper_osinfo_init(void)
 {
   struct utsname    utsname;
   int               i;
-  char             *str;
+  char             *str, *ptr;
+  slist_t          *nos = NULL;
+  size_t            size;
 
   /* call uname to get the information */
   if(uname(&utsname) < 0)
-    goto err;
+    {
+      printerror(errno, strerror, __func__, "could not uname");
+      goto err;
+    }
 
   /* allocate our wrapping struct */
   if((osinfo = malloc_zero(sizeof(scamper_osinfo_t))) == NULL)
-    goto err;
+    {
+      printerror(errno, strerror, __func__, "could not malloc osinfo");
+      goto err;
+    }
 
   /* copy sysname in */
   if((osinfo->os = strdup(utsname.sysname)) == NULL)
-    goto err;
+    {
+      printerror(errno, strerror, __func__, "could not strdup sysname");
+      goto err;
+    }
 
   /* parse the OS name */
   if(strcasecmp(osinfo->os, "FreeBSD") == 0)
@@ -81,36 +94,70 @@ int scamper_osinfo_init(void)
     osinfo->os_id = SCAMPER_OSINFO_OS_DARWIN;
 
   /* parse the release integer string */
-  str = utsname.release;
-  while(*str != '\0')
+  if((nos = slist_alloc()) == NULL)
     {
-      if(*str == '.')
+      printerror(errno, strerror, __func__, "could not alloc nos");
+      goto err;
+    }
+
+  str = utsname.release;
+  for(;;)
+    {
+      ptr = str;
+      while(isdigit((int)*ptr) != 0)
+	ptr++;
+
+      if(*ptr == '.')
 	{
-	  *str = '\0';
-	  osinfo->os_rel_dots++;
+	  *ptr = '\0';
+	  if(slist_tail_push(nos, str) == NULL)
+	    {
+	      printerror(errno, strerror, __func__, "could not push str");
+	      goto err;
+	    }
+	  str = ptr + 1;
+	  continue;
 	}
-      else if(isdigit((int)*str) == 0)
+
+      *ptr = '\0';
+      if(str != ptr)
 	{
-	  *str = '\0';
+	  if(slist_tail_push(nos, str) == NULL)
+	    {
+	      printerror(errno, strerror, __func__, "could not push str");
+	      goto err;
+	    }
 	  break;
 	}
-      str++;
     }
-  if((osinfo->os_rel = malloc_zero(osinfo->os_rel_dots * sizeof(long))) == NULL)
-    goto err;
-  str = utsname.release;
-  for(i=0; i < osinfo->os_rel_dots; i++)
+
+  osinfo->os_rel_dots = slist_count(nos);
+  if(osinfo->os_rel_dots != 0)
     {
-      if(string_tolong(str, &osinfo->os_rel[i]) != 0)
-	goto err;
+      size = osinfo->os_rel_dots * sizeof(long);
+      if((osinfo->os_rel = malloc_zero(size)) == NULL)
+	{
+	  printerror(errno, strerror, __func__, "could not malloc os_rel");
+	  goto err;
+	}
 
-      while(*str != '\0') str++;
-      str++;
+      i = 0;
+      while((str = slist_head_pop(nos)) != NULL)
+	{
+	  if(string_tolong(str, &osinfo->os_rel[i]) != 0)
+	    {
+	      printerror(errno, strerror, __func__, "could not tolong");
+	      goto err;
+	    }
+	  i++;
+	}
     }
 
+  slist_free(nos);
   return 0;
 
  err:
+  if(nos != NULL) slist_free(nos);
   return -1;
 }
 #endif

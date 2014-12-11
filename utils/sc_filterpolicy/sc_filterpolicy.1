@@ -6,7 +6,7 @@
 .\" Copyright (c) 2015 Matthew Luckie
 .\"                    All rights reserved
 .\"
-.\" $Id: sc_filterpolicy.1,v 1.7.2.2 2015/12/07 07:18:43 mjl Exp $
+.\" $Id: sc_filterpolicy.1,v 1.7.2.3 2016/08/26 21:01:06 mjl Exp $
 .\"
 .Dd December 2, 2015
 .Dt SC_FILTERPOLICY 1
@@ -123,13 +123,13 @@ We classify the IP address as responsive if it sends a UDP response.
 .Sy DNS:
 test responsiveness to UDP packets sent to port 53 (the default port for
 DNS) with a query for www.google.com.
-We classify the IP addresss as responsive if it sends a UDP response.
+We classify the IP address as responsive if it sends a UDP response.
 .It
 .Sy SNMP:
 test responsiveness to UDP packets sent to port 161 (the default port for
 SNMP) with a get for sysDescr via the public community using the SNMPv2c
 protocol.
-We classify the IP addresss as responsive if it sends a UDP response.
+We classify the IP address as responsive if it sends a UDP response.
 .It
 .Sy VNC:
 test responsiveness to TCP SYN packets sent to port 5900 (the default
@@ -144,7 +144,7 @@ are as follows:
 .It Fl ?
 prints a list of command line options and a synopsis of each.
 .It Fl a Ar input-file
-specifies the name of the input file which constists of a sequence
+specifies the name of the input file which consists of a sequence
 of systems to test.  See the examples section for input-file
 formatting examples.
 .It Fl D

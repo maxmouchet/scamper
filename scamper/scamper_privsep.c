@@ -1,11 +1,12 @@
 /*
  * scamper_privsep.c: code that does root-required tasks
  *
- * $Id: scamper_privsep.c,v 1.76.4.1 2015/12/06 08:31:08 mjl Exp $
+ * $Id: scamper_privsep.c,v 1.76.4.3 2016/08/26 22:12:06 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2013-2014 The Regents of the University of California
+ * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -31,7 +32,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_privsep.c,v 1.76.4.1 2015/12/06 08:31:08 mjl Exp $";
+  "$Id: scamper_privsep.c,v 1.76.4.3 2016/08/26 22:12:06 mjl Exp $";
 #endif
 
 #include "internal.h"
@@ -64,10 +65,7 @@ typedef struct privsep_func
 static pid_t root_pid  = -1; /* the process id of the root code */
 static int   root_fd   = -1; /* the fd the root code send/recv on */
 static int   lame_fd   = -1; /* the fd that the lame code uses */
-
-#if !defined(HAVE_ACCRIGHTS)
 static void *cmsgbuf   = NULL; /* cmsgbuf sized for one fd */
-#endif
 
 /*
  * the privilege separation code works by allowing the lame process to send
@@ -88,8 +86,12 @@ static void *cmsgbuf   = NULL; /* cmsgbuf sized for one fd */
 #define SCAMPER_PRIVSEP_IPFW_CLEANUP  0x0bU
 #define SCAMPER_PRIVSEP_IPFW_ADD      0x0cU
 #define SCAMPER_PRIVSEP_IPFW_DEL      0x0dU
+#define SCAMPER_PRIVSEP_PF_INIT       0x0eU
+#define SCAMPER_PRIVSEP_PF_CLEANUP    0x0fU
+#define SCAMPER_PRIVSEP_PF_ADD        0x10U
+#define SCAMPER_PRIVSEP_PF_DEL        0x11U
 
-#define SCAMPER_PRIVSEP_MAXTYPE (SCAMPER_PRIVSEP_IPFW_DEL)
+#define SCAMPER_PRIVSEP_MAXTYPE (SCAMPER_PRIVSEP_PF_DEL)
 
 /*
  * privsep_open_rawsock
@@ -278,7 +280,7 @@ static int privsep_ipfw_init(uint16_t plen, const uint8_t *param)
     }
   return scamper_firewall_ipfw_init();
 #else
-  scamper_debug(__func__, "not on ipfw system", plen);
+  scamper_debug(__func__, "not on ipfw system");
   errno = EINVAL;
   return -1;
 #endif
@@ -296,7 +298,7 @@ static int privsep_ipfw_cleanup(uint16_t plen, const uint8_t *param)
   scamper_firewall_ipfw_cleanup();
   return 0;
 #else
-  scamper_debug(__func__, "not on ipfw system", plen);
+  scamper_debug(__func__, "not on ipfw system");
   errno = EINVAL;
   return -1;
 #endif
@@ -362,19 +364,11 @@ static int privsep_ipfw_add(uint16_t plen, const uint8_t *param)
 
   memcpy(&n, param+off, sizeof(n)); off += sizeof(n);
   memcpy(&p, param+off, sizeof(p)); off += sizeof(p);
-
-  if(af == AF_INET)
-    memcpy(&s4, param+off, al);
-  else
-    memcpy(&s6, param+off, al);
-  off += al;
+  memcpy(s, param+off, al); off += al;
 
   if(df != 0)
     {
-      if(af == AF_INET)
-	memcpy(&d4, param+off, al);
-      else
-	memcpy(&d6, param+off, al);
+      memcpy(d, param+off, al);
       off += al;
     }
 
@@ -394,7 +388,7 @@ static int privsep_ipfw_add(uint16_t plen, const uint8_t *param)
   errno = EINVAL;
   return -1;
 #else
-  scamper_debug(__func__, "not on ipfw system", plen);
+  scamper_debug(__func__, "not on ipfw system");
   errno = EINVAL;
   return -1;
 #endif
@@ -423,7 +417,134 @@ static int privsep_ipfw_del(uint16_t plen, const uint8_t *param)
   errno = EINVAL;
   return -1;
 #else
-  scamper_debug(__func__, "not on ipfw system", plen);
+  scamper_debug(__func__, "not on ipfw system");
+  errno = EINVAL;
+  return -1;
+#endif
+}
+
+static int privsep_pf_init(uint16_t plen, const uint8_t *param)
+{
+#ifdef HAVE_PF
+  const char *name = (const char *)param;
+  if(plen == 0)
+    {
+      scamper_debug(__func__, "plen == 0", plen);
+      errno = EINVAL;
+      return -1;
+    }
+  if(string_isprint(name, plen) == 0)
+    {
+      scamper_debug(__func__, "name is not printable");
+      errno = EINVAL;
+      return -1;
+    }
+  if(name[plen] != '\0' || strlen(name) + 1 != plen)
+    {
+      scamper_debug(__func__, "malformed initialisation");
+      errno = EINVAL;
+      return -1;
+    }
+  return scamper_firewall_pf_init(name);
+#else
+  scamper_debug(__func__, "not on pf system");
+  errno = EINVAL;
+  return -1;
+#endif
+}
+
+static int privsep_pf_cleanup(uint16_t plen, const uint8_t *param)
+{
+#ifdef HAVE_PF
+  if(plen != 0)
+    {
+      scamper_debug(__func__, "plen %d != 0", plen);
+      errno = EINVAL;
+      return -1;
+    }
+  scamper_firewall_pf_cleanup();
+  return 0;
+#else
+  scamper_debug(__func__, "not on pf system");
+  errno = EINVAL;
+  return -1;
+#endif
+}
+
+static int privsep_pf_add(uint16_t plen, const uint8_t *param)
+{
+#ifdef HAVE_PF
+  int n, af, p, sp, dp;
+  struct in_addr s4, d4;
+  struct in6_addr s6, d6;
+  void *s, *d;
+  uint16_t off = 0, al;
+
+  if(plen < sizeof(int))
+    {
+      scamper_debug(__func__, "plen %d < %d", plen, sizeof(int));
+      goto inval;
+    }
+
+  memcpy(&af, param+off, sizeof(af)); off += sizeof(af);
+  if(af == AF_INET)
+    {
+      if(plen != (sizeof(int) * 5) + (sizeof(struct in_addr) * 2))
+	goto inval;
+      s = &s4;
+      d = &d4;
+      al = 4;
+    }
+  else if(af == AF_INET6)
+    {
+      if(plen != (sizeof(int) * 5) + (sizeof(struct in6_addr) * 2))
+	goto inval;
+      s = &s6;
+      d = &d6;
+      al = 16;
+    }
+  else goto inval;
+
+  memcpy(&n, param+off, sizeof(n)); off += sizeof(n);
+  memcpy(&p, param+off, sizeof(p)); off += sizeof(p);
+  memcpy(s, param+off, al); off += al;
+  memcpy(d, param+off, al); off += al;
+  memcpy(&sp, param+off, sizeof(sp)); off += sizeof(sp);
+  memcpy(&dp, param+off, sizeof(dp)); off += sizeof(dp);
+
+  if(off != plen)
+    goto inval;
+  if(sp < 0 || sp > 65535 || dp < 0 || dp > 65535)
+    goto inval;
+  if(p != IPPROTO_TCP && p != IPPROTO_UDP)
+    goto inval;
+
+  return scamper_firewall_pf_add(n, af, p, s, d, sp, dp);
+
+ inval:
+  errno = EINVAL;
+  return -1;
+#else
+  scamper_debug(__func__, "not on pf system");
+  errno = EINVAL;
+  return -1;
+#endif
+}
+
+static int privsep_pf_del(uint16_t plen, const uint8_t *param)
+{
+#ifdef HAVE_PF
+  int n;
+  if(plen != sizeof(int))
+    {
+      scamper_debug(__func__, "plen %d != %d", plen, sizeof(int));
+      errno = EINVAL;
+      return -1;
+    }
+  memcpy(&n, param, sizeof(n));
+  return scamper_firewall_pf_del(n);
+#else
+  scamper_debug(__func__, "not on pf system");
   errno = EINVAL;
   return -1;
 #endif
@@ -605,10 +726,7 @@ static int privsep_send_fd(int fd, int error, uint8_t msg_type)
 {
   struct msghdr   msg;
   struct iovec    vec;
-
-#if !defined(HAVE_ACCRIGHTS)
   struct cmsghdr *cmsg;
-#endif
 
   scamper_debug(__func__, "fd: %d error: %d msg_type: 0x%02x",
 		fd, error, msg_type);
@@ -624,10 +742,6 @@ static int privsep_send_fd(int fd, int error, uint8_t msg_type)
 
   if(fd != -1)
     {
-#if defined(HAVE_ACCRIGHTS)
-      msg.msg_accrights = (caddr_t)&fd;
-      msg.msg_accrightslen = sizeof(fd);
-#else
       msg.msg_control = (caddr_t)cmsgbuf;
       msg.msg_controllen = CMSG_SPACE(sizeof(fd));
 
@@ -636,7 +750,6 @@ static int privsep_send_fd(int fd, int error, uint8_t msg_type)
       cmsg->cmsg_level = SOL_SOCKET;
       cmsg->cmsg_type = SCM_RIGHTS;
       *(int *)CMSG_DATA(cmsg) = fd;
-#endif
     }
 
   if(sendmsg(root_fd, &msg, 0) == -1)
@@ -654,10 +767,7 @@ static int privsep_recv_fd(void)
   struct iovec    vec;
   ssize_t         rc;
   int             fd = -1, error = 0;
-
-#if !defined(HAVE_ACCRIGHTS)
   struct cmsghdr *cmsg;
-#endif
 
   memset(&vec, 0, sizeof(vec));
   memset(&msg, 0, sizeof(msg));
@@ -668,13 +778,8 @@ static int privsep_recv_fd(void)
   msg.msg_iov = &vec;
   msg.msg_iovlen = 1;
 
-#if defined(HAVE_ACCRIGHTS)
-  msg.msg_accrights = (caddr_t)&fd;
-  msg.msg_accrightslen = sizeof(fd);
-#else
   msg.msg_control = cmsgbuf;
   msg.msg_controllen = CMSG_SPACE(sizeof(fd));
-#endif
 
   if((rc = recvmsg(lame_fd, &msg, 0)) == -1)
     {
@@ -688,18 +793,11 @@ static int privsep_recv_fd(void)
 
   if(error == 0)
     {
-#if defined(HAVE_ACCRIGHTS)
-      if(msg.msg_accrightslen != sizeof(fd))
-	{
-	  fd = -1;
-	}
-#else
       cmsg = CMSG_FIRSTHDR(&msg);
       if(cmsg != NULL && cmsg->cmsg_type == SCM_RIGHTS)
 	{
 	  fd = (*(int *)CMSG_DATA(cmsg));
 	}
-#endif
     }
   else
     {
@@ -733,6 +831,10 @@ static int privsep_do(void)
     {privsep_ipfw_cleanup,  privsep_send_rc},
     {privsep_ipfw_add,      privsep_send_rc},
     {privsep_ipfw_del,      privsep_send_rc},
+    {privsep_pf_init,       privsep_send_rc},
+    {privsep_pf_cleanup,    privsep_send_rc},
+    {privsep_pf_add,        privsep_send_rc},
+    {privsep_pf_del,        privsep_send_rc},
   };
 
   privsep_msg_t   msg;
@@ -1051,6 +1153,48 @@ int scamper_privsep_ipfw_del(int n, int af)
   return privsep_dotask(SCAMPER_PRIVSEP_IPFW_DEL, len, param);
 }
 
+int scamper_privsep_pf_init(const char *anchor)
+{
+  int len = strlen(anchor) + 1;
+  return privsep_dotask(SCAMPER_PRIVSEP_PF_INIT, len, (const uint8_t *)anchor);
+}
+
+int scamper_privsep_pf_cleanup(void)
+{
+  return privsep_dotask(SCAMPER_PRIVSEP_PF_CLEANUP, 0, NULL);
+}
+
+int scamper_privsep_pf_add(int n,int af,int p,void *s,void *d,int sp,int dp)
+{
+  uint8_t param[(sizeof(int) * 5) + (16 * 2)];
+  uint16_t len = 0;
+  uint16_t al;
+
+  if(af == AF_INET)
+    al = 4;
+  else if(af == AF_INET6)
+    al = 16;
+  else
+    return -1;
+
+  memcpy(param+len, &af, sizeof(af)); len += sizeof(af);
+  memcpy(param+len, &n, sizeof(n)); len += sizeof(n);
+  memcpy(param+len, &p, sizeof(p)); len += sizeof(p);
+  memcpy(param+len, s, al); len += al;
+  memcpy(param+len, d, al); len += al;
+  memcpy(param+len, &sp, sizeof(sp)); len += sizeof(sp);
+  memcpy(param+len, &dp, sizeof(dp)); len += sizeof(dp);
+
+  return privsep_dotask(SCAMPER_PRIVSEP_PF_ADD, len, param);
+}
+
+int scamper_privsep_pf_del(int n)
+{
+  uint8_t param[sizeof(int)];
+  memcpy(param, &n, sizeof(int));
+  return privsep_dotask(SCAMPER_PRIVSEP_PF_DEL, sizeof(int), param);
+}
+
 /*
  * scamper_privsep
  *
@@ -1132,13 +1276,11 @@ int scamper_privsep_init()
   lame_fd = sockets[0];
   root_fd = sockets[1];
 
-#if !defined(HAVE_ACCRIGHTS)
   if((cmsgbuf = malloc_zero(CMSG_SPACE(sizeof(int)))) == NULL)
     {
       printerror(errno, strerror, __func__, "could not malloc cmsgbuf");
       return -1;
     }
-#endif
 
   if((pid = fork()) == -1)
     {
@@ -1202,7 +1344,6 @@ int scamper_privsep_init()
   freeaddrinfo(res0);
 
   /* change the root directory of the unpriviledged directory */
-#ifndef NDEBUG
   if(chroot(PRIVSEP_DIR) == -1)
     {
       printerror(errno, strerror, __func__,
@@ -1216,7 +1357,6 @@ int scamper_privsep_init()
       printerror(errno, strerror, __func__, "could not chdir /");
       return -1;
     }
-#endif
 
   /* change the operating group */
   if(setgroups(1, &gid) == -1)

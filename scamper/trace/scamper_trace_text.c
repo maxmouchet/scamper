@@ -6,7 +6,7 @@
  * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_text.c,v 1.20.6.1 2015/12/03 07:54:55 mjl Exp $
+ * $Id: scamper_trace_text.c,v 1.20.6.2 2016/08/26 21:08:15 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_text.c,v 1.20.6.1 2015/12/03 07:54:55 mjl Exp $";
+  "$Id: scamper_trace_text.c,v 1.20.6.2 2016/08/26 21:08:15 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -231,8 +231,12 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
   int      spare;
   int      replyc;
 
+  replyc = 0;
+  for(hop=trace->hops[h]; hop != NULL; hop = hop->hop_next)
+    replyc++;
+
   /* if we got no responses at all for this hop */
-  if(trace->hops[h] == NULL)
+  if(replyc == 0)
     {
       if((trace->flags & SCAMPER_TRACE_FLAG_ALLATTEMPTS) == 0)
 	{
@@ -249,14 +253,9 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
 	    }
 	  str[4+((i-1)*2)+1] = '\0';
 	}
-
       return str;
     }
-
-  replyc = 0;
-  for(hop=trace->hops[h]; hop != NULL; hop = hop->hop_next)
-    replyc++;
-
+  
   if(replyc == 1)
     {
       hop = trace->hops[h];
@@ -668,35 +667,40 @@ int scamper_file_text_trace_write(const scamper_file_t *sf,
   if(fd != STDOUT_FILENO && (foff = lseek(fd, 0, SEEK_CUR)) == -1)
     goto cleanup;
 
-  if((hops = malloc_zero(sizeof(char *) * trace->hop_count)) == NULL)
-    goto cleanup;
-
   /* get a string that specifies the source and destination of the trace */
   header = header_tostr(trace);
-
   len = strlen(header) + 2;
-  for(i=0; i < trace->hop_count; i++)
+
+  if(trace->hop_count > 0)
     {
-      if((hops[i] = hop_tostr(trace, i)) == NULL)
+      if((hops = malloc_zero(sizeof(char *) * trace->hop_count)) == NULL)
 	goto cleanup;
-      len += strlen(hops[i]);
+
+      for(i=0; i < trace->hop_count; i++)
+	{
+	  if((hops[i] = hop_tostr(trace, i)) == NULL)
+	    goto cleanup;
+	  len += strlen(hops[i]);
+	}
+
+      /* if we have PMTU data to print for the trace, then write it too */
+      if(trace->pmtud != NULL &&
+	 trace->pmtud->ver >= 1 && trace->pmtud->ver <= 2)
+	{
+	  if((mtus = malloc_zero(sizeof(char *) * trace->hop_count)) == NULL)
+	    goto cleanup;
+
+	  if(pmtud_tostr[trace->pmtud->ver](trace, mtus) != 0)
+	    goto cleanup;
+
+	  for(i=0; i<trace->hop_count; i++)
+	    if(mtus[i] != NULL)
+	      len += strlen(mtus[i]);
+	}
+
+      len += trace->hop_count; /* \n on each line */
     }
 
-  /* if we have PMTU data to print for the trace, then write it too */
-  if(trace->pmtud != NULL && trace->pmtud->ver >= 1 && trace->pmtud->ver <= 2)
-    {
-      if((mtus = malloc_zero(sizeof(char *) * trace->hop_count)) == NULL)
-	goto cleanup;
-
-      if(pmtud_tostr[trace->pmtud->ver](trace, mtus) != 0)
-	goto cleanup;
-
-      for(i=0; i<trace->hop_count; i++)
-	if(mtus[i] != NULL)
-	  len += strlen(mtus[i]);
-    }
-
-  len += trace->hop_count; /* \n on each line */
   len += 1; /* final \0 */
 
   if((str = malloc_zero(len)) == NULL)
@@ -704,12 +708,16 @@ int scamper_file_text_trace_write(const scamper_file_t *sf,
 
   off = 0;
   string_concat(str, len, &off, "%s\n", header);
-  for(i=0; i < trace->hop_count; i++)
+
+  if(hops != NULL)
     {
-      string_concat(str, len, &off, "%s", hops[i]);
-      if(mtus != NULL && mtus[i] != NULL)
-	string_concat(str, len, &off, "%s", mtus[i]);
-      string_concat(str, len, &off, "\n");
+      for(i=0; i < trace->hop_count; i++)
+	{
+	  string_concat(str, len, &off, "%s", hops[i]);
+	  if(mtus != NULL && mtus[i] != NULL)
+	    string_concat(str, len, &off, "%s", mtus[i]);
+	  string_concat(str, len, &off, "\n");
+	}
     }
 
   /*

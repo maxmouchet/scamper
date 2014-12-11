@@ -1,7 +1,7 @@
 /*
  * scamper_rtsock: code to deal with a route socket or equivalent
  *
- * $Id: scamper_rtsock.c,v 1.80 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_rtsock.c,v 1.80.6.1 2016/08/26 21:14:38 mjl Exp $
  *
  *          Matthew Luckie
  *
@@ -42,7 +42,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_rtsock.c,v 1.80 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_rtsock.c,v 1.80.6.1 2016/08/26 21:14:38 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -237,7 +237,8 @@ int scamper_rtsock_roundup(size_t len)
   if(broken == -1)
     {
       osinfo = scamper_osinfo_get();
-      if(osinfo->os_id == SCAMPER_OSINFO_OS_DARWIN && osinfo->os_rel[0] >= 10)
+      if(osinfo->os_id == SCAMPER_OSINFO_OS_DARWIN &&
+	 osinfo->os_rel_dots > 0 && osinfo->os_rel[0] >= 10)
 	broken = 1;
       else
 	broken = 0;

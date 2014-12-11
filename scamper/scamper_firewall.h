@@ -1,9 +1,10 @@
 /*
  * scamper_firewall.h
  *
- * $Id: scamper_firewall.h,v 1.4 2010/05/03 07:13:58 mjl Exp $
+ * $Id: scamper_firewall.h,v 1.4.32.1 2016/08/26 21:33:41 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
+ * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -58,14 +59,21 @@ scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *);
 void scamper_firewall_entry_free(scamper_firewall_entry_t *);
 
 /* routines to handle initialising structures to manage the firewall */
-int scamper_firewall_init(char *opt);
+int scamper_firewall_init(const char *opt);
 void scamper_firewall_cleanup(void);
 
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#ifdef HAVE_IPFW
 int scamper_firewall_ipfw_init(void);
 void scamper_firewall_ipfw_cleanup(void);
 int scamper_firewall_ipfw_add(int n,int af,int p,void *s,void *d,int sp,int dp);
 int scamper_firewall_ipfw_del(int n,int af);
+#endif
+
+#ifdef HAVE_PF
+int scamper_firewall_pf_init(const char *anchor);
+int scamper_firewall_pf_add(int n,int af,int p,void *s,void *d,int sp,int dp);
+int scamper_firewall_pf_del(int n);
+void scamper_firewall_pf_cleanup(void);
 #endif
 
 #endif /* __SCAMPER_FIREWALL_H */

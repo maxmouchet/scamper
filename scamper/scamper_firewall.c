@@ -1,9 +1,10 @@
 /*
  * scamper_firewall.c
  *
- * $Id: scamper_firewall.c,v 1.44 2014/09/26 16:08:26 mjl Exp $
+ * $Id: scamper_firewall.c,v 1.44.6.1 2016/08/26 21:36:18 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
+ * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,13 +24,24 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_firewall.c,v 1.44 2014/09/26 16:08:26 mjl Exp $";
+  "$Id: scamper_firewall.c,v 1.44.6.1 2016/08/26 21:36:18 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 #include "internal.h"
+
+#ifdef HAVE_NETINET_IP_FW_H
+#include <netinet/ip_fw.h>
+#ifdef HAVE_NETINET6_IP_FW_H
+#include <netinet6/ip6_fw.h>
+#endif
+#endif
+
+#ifdef HAVE_NET_PFVAR_H
+#include <net/pfvar.h>
+#endif
 
 #include "scamper_addr.h"
 #include "scamper_debug.h"
@@ -40,6 +52,8 @@ static const char rcsid[] =
 #include "mjl_splaytree.h"
 #include "utils.h"
 
+#if defined(HAVE_IPFW) || defined(HAVE_PF)
+
 struct scamper_firewall_entry
 {
   int                      slot;
@@ -49,6 +63,7 @@ struct scamper_firewall_entry
 };
 
 static splaytree_t *entries = NULL;
+static heap_t *freeslots = NULL;
 
 static int firewall_rule_cmp(const scamper_firewall_rule_t *a,
 			     const scamper_firewall_rule_t *b)
@@ -88,20 +103,19 @@ static int firewall_rule_cmp(const scamper_firewall_rule_t *a,
   return 0;
 }
 
-static int firewall_entry_cmp(const void *a, const void *b)
+static void firewall_rule_free(scamper_firewall_rule_t *sfw)
 {
-  return firewall_rule_cmp(((const scamper_firewall_entry_t *)a)->rule,
-			   ((const scamper_firewall_entry_t *)b)->rule);
-}
+  if(sfw == NULL)
+    return;
 
-#ifdef HAVE_IPFW
-/*
- * variables required to keep state with ipfw, which is rule-number based.
- */
-static heap_t *freeslots = NULL;
-static int ipfw_inited = 0;
-static int have_ipv6 = 0;
-static int have_ipv4 = 0;
+  if(sfw->sfw_5tuple_src != NULL)
+    scamper_addr_free(sfw->sfw_5tuple_src);
+  if(sfw->sfw_5tuple_dst != NULL)
+    scamper_addr_free(sfw->sfw_5tuple_dst);
+  free(sfw);
+
+  return;
+}
 
 static scamper_firewall_rule_t *firewall_rule_dup(scamper_firewall_rule_t *sfw)
 {
@@ -117,27 +131,29 @@ static scamper_firewall_rule_t *firewall_rule_dup(scamper_firewall_rule_t *sfw)
   return dup;
 }
 
-static void firewall_rule_free(scamper_firewall_rule_t *sfw)
+static int firewall_entry_cmp(const scamper_firewall_entry_t *a,
+			      const scamper_firewall_entry_t *b)
 {
-  if(sfw == NULL)
-    {
-      return;
-    }
+  return firewall_rule_cmp(a->rule, b->rule);
+}
 
-  if(sfw->sfw_5tuple_src != NULL)
-    scamper_addr_free(sfw->sfw_5tuple_src);
-  if(sfw->sfw_5tuple_dst != NULL)
-    scamper_addr_free(sfw->sfw_5tuple_dst);
-  free(sfw);
-
-  return;
+/*
+ * firewall_entry_slot_cmp
+ *
+ * provide ordering for the freeslots heap by returning the earliest available
+ * slot number in a range
+ */
+static int firewall_entry_slot_cmp(const scamper_firewall_entry_t *a,
+				   const scamper_firewall_entry_t *b)
+{
+  if(a->slot > b->slot) return -1;
+  if(a->slot < b->slot) return 1;
+  return 0;
 }
 
 /*
  * firewall_entry_free
  *
- * this function is not ipfw specific, its just that there is no other
- * code path that currently uses it.
  */
 static void firewall_entry_free(scamper_firewall_entry_t *entry)
 {
@@ -148,21 +164,52 @@ static void firewall_entry_free(scamper_firewall_entry_t *entry)
   return;
 }
 
-/*
- * freeslots_cmp
- *
- * provide ordering for the freeslots heap by returning the earliest available
- * slot number in a range
- */
-static int freeslots_cmp(const void *va, const void *vb)
+static int firewall_freeslots_alloc(long start, long end)
 {
-  scamper_firewall_entry_t *a = (scamper_firewall_entry_t *)va;
-  scamper_firewall_entry_t *b = (scamper_firewall_entry_t *)vb;
+  scamper_firewall_entry_t *entry;
+  long i;
 
-  if(a->slot > b->slot) return -1;
-  if(a->slot < b->slot) return 1;
+  if((freeslots = heap_alloc((heap_cmp_t)firewall_entry_slot_cmp)) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not create freeslots heap");
+      return -1;
+    }
+
+  for(i=start; i<=end; i++)
+    {
+      if((entry = malloc_zero(sizeof(scamper_firewall_entry_t))) == NULL)
+	{
+	  printerror(errno, strerror, __func__, "could not alloc entry %d", i);
+	  return -1;
+	}
+      entry->slot = i;
+      if(heap_insert(freeslots, entry) == NULL)
+	{
+	  printerror(errno, strerror, __func__, "could not add entry %d", i);
+	  return -1;
+	}
+    }
+
   return 0;
 }
+
+static int firewall_entries_alloc(void)
+{
+  if((entries = splaytree_alloc((splaytree_cmp_t)firewall_entry_cmp)) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not create entries tree");
+      return -1;
+    }
+  return 0;
+}
+#endif /* HAVE_IPFW || HAVE_PF */
+
+#ifdef HAVE_IPFW
+/* variables to keep state with ipfw, which is rule-number based */
+static int ipfw_use = 0;
+static int ipfw_inited = 0;
+static int ipfw_have_ipv6 = 0;
+static int ipfw_have_ipv4 = 0;
 
 static int ipfw_sysctl_check(void)
 {
@@ -181,7 +228,7 @@ static int ipfw_sysctl_check(void)
   else
     {
       if(i != 0)
-	have_ipv4 = 1;
+	ipfw_have_ipv4 = 1;
       else
 	scamper_debug(__func__, "ipfw ipv4 not enabled");
     }
@@ -201,11 +248,12 @@ static int ipfw_sysctl_check(void)
       i = 0;
       osinfo = scamper_osinfo_get();
       if((osinfo->os_id == SCAMPER_OSINFO_OS_FREEBSD &&
+	  osinfo->os_rel_dots >= 2 &&
 	  osinfo->os_rel[0] == 6 && osinfo->os_rel[1] < 3) ||
 	 (osinfo->os_id == SCAMPER_OSINFO_OS_DARWIN &&
-	  osinfo->os_rel[0] == 8))
+	  osinfo->os_rel_dots > 0 && osinfo->os_rel[0] == 8))
 	{
-	  have_ipv6 = have_ipv4;
+	  ipfw_have_ipv6 = ipfw_have_ipv4;
 	}
       else i++;
 
@@ -215,7 +263,7 @@ static int ipfw_sysctl_check(void)
   else
     {
       if(i != 0)
-	have_ipv6 = 1;
+	ipfw_have_ipv6 = 1;
       else
 	scamper_debug(__func__, "ipfw ipv6 not enabled");
     }
@@ -236,8 +284,8 @@ int scamper_firewall_ipfw_init(void)
       printerror(errno, strerror, __func__, "could not open socket for ipfw");
       return -1;
     }
-  ipfw_inited = 1;
 
+  ipfw_inited = 1;
   return 0;
 }
 
@@ -504,12 +552,12 @@ int scamper_firewall_ipfw_init(void)
   if(fw4s != -1 || fw6s != -1 || ipfw_sysctl_check() != 0 || ipfw_inited != 0)
     return -1;
 
-  if(have_ipv4 != 0 && (fw4s = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) < 0)
+  if(ipfw_have_ipv4 != 0 && (fw4s = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) < 0)
     {
       printerror(errno, strerror, __func__, "could not open socket for ipfw");
       return -1;
     }
-  if(have_ipv6 != 0 && (fw6s = socket(AF_INET6, SOCK_RAW, IPPROTO_RAW)) < 0)
+  if(ipfw_have_ipv6 != 0 && (fw6s = socket(AF_INET6, SOCK_RAW, IPPROTO_RAW)) < 0)
     {
       printerror(errno, strerror, __func__, "could not open socket for ip6fw");
       return -1;
@@ -658,129 +706,392 @@ int scamper_firewall_ipfw_del(int n, int af)
 }
 #endif /* _IPFW_H */
 
-static int firewall_rule_delete(scamper_firewall_entry_t *entry)
+static int ipfw_init(char *opts)
 {
-#if defined(HAVE_IPFW)
-  int af;
+  long start, end;
+  char *ptr;
 
-  if(entry->rule->sfw_5tuple_src->type == SCAMPER_ADDR_TYPE_IPV4)
-    af = AF_INET;
-  else
-    af = AF_INET6;
-
-#ifdef WITHOUT_PRIVSEP
-  scamper_firewall_ipfw_del(entry->slot, af);
-#else
-  scamper_privsep_ipfw_del(entry->slot, af);
-#endif
-#endif
-
-  /* put the rule back into the freeslots heap */
-  if(heap_insert(freeslots, entry) == NULL)
+  if(opts == NULL)
     {
-      printerror(errno, strerror, __func__,
-		 "could not add entry %d", entry->slot);
-      firewall_entry_free(entry);
+      scamper_debug(__func__, "no IPFW configuration parameters supplied");
       return -1;
     }
 
-  /* free up the firewall rule associated with the entry */
-  firewall_rule_free(entry->rule);
-  entry->rule = NULL;
-
-  return 0;
-}
-
-static scamper_firewall_entry_t *firewall_entry_get(void)
-{
-  return heap_remove(freeslots);
-}
-
-static int ipfw_init(void)
-{
-  scamper_firewall_entry_t *entry;
-  int i;
+  string_nullterm_char(opts, '-', &ptr);
+  if(ptr == NULL || string_isnumber(opts) == 0 || string_isnumber(ptr) == 0)
+    {
+      scamper_debug(__func__, "invalid IFPW options");
+      return -1;
+    }
+  if(string_tolong(opts, &start) != 0 || start < 1 || start > 65534)
+    {
+      scamper_debug(__func__, "invalid start rule number for IPFW");
+      return -1;
+    }
+  if(string_tolong(ptr, &end) != 0 || end <= start || end > 65534)
+    {
+      scamper_debug(__func__, "invalid end rule number for IPFW");
+      return -1;
+    }
 
   if(ipfw_sysctl_check() != 0)
     return -1;
 
-  if((freeslots = heap_alloc(freeslots_cmp)) == NULL)
-    {
-      printerror(errno, strerror, __func__, "could not create freeslots heap");
-      return -1;
-    }
+  if(firewall_entries_alloc() != 0)
+    return -1;
 
-  for(i=1; i<500; i++)
-    {
-      if((entry = malloc_zero(sizeof(scamper_firewall_entry_t))) == NULL)
-	{
-	  printerror(errno, strerror, __func__, "could not alloc entry %d", i);
-	  goto err;
-	}
-      entry->slot = i;
-      if(heap_insert(freeslots, entry) == NULL)
-	{
-	  printerror(errno, strerror, __func__, "could not add entry %d", i);
-	  goto err;
-	}
-    }
+  if(firewall_freeslots_alloc(start, end) != 0)
+    return -1;
 
 #ifdef WITHOUT_PRIVSEP
   if(scamper_firewall_ipfw_init() != 0)
-    goto err;
+    return -1;
 #else
   if(scamper_privsep_ipfw_init() != 0)
-    goto err;
+    return -1;
 #endif
 
-  return 0;
-
- err:
-  return -1;
-}
-
-static int ipfw_cleanup_foreach(void *param, void *item)
-{
-  scamper_firewall_entry_t *entry = item;
-
-  firewall_rule_delete(entry);
-  entry->slot = -1;
-
+  ipfw_use = 1;
   return 0;
 }
 
-static void ipfw_cleanup(void)
+static int ipfw_add(int ruleno, scamper_firewall_rule_t *sfw)
 {
-  scamper_firewall_entry_t *entry;
+  int af, p, sp, dp;
+  void *s, *d;
 
-  splaytree_inorder(entries, ipfw_cleanup_foreach, NULL);
+  assert(ipfw_use != 0);
 
-  if(freeslots != NULL)
+  if(sfw->sfw_5tuple_src->type == SCAMPER_ADDR_TYPE_IPV4)
     {
-      while((entry = heap_remove(freeslots)) != NULL)
+      if(ipfw_have_ipv4 == 0)
 	{
-	  firewall_entry_free(entry);
+	  scamper_debug(__func__, "IPv4 rule requested but no IPv4 firewall");
+	  return -1;
 	}
-
-      heap_free(freeslots, NULL);
-      freeslots = NULL;
+      af = AF_INET;
+    }
+  else if(sfw->sfw_5tuple_src->type == SCAMPER_ADDR_TYPE_IPV6)
+    {
+      if(ipfw_have_ipv6 == 0)
+	{
+	  scamper_debug(__func__, "IPv6 rule requested but no IPv6 firewall");
+	  return -1;
+	}
+      af = AF_INET6;
+    }
+  else
+    {
+      scamper_debug(__func__, "invalid src type");
+      return -1;
     }
 
+  p  = sfw->sfw_5tuple_proto;
+  dp = sfw->sfw_5tuple_dport;
+  sp = sfw->sfw_5tuple_sport;
+  s  = sfw->sfw_5tuple_src->addr;
+  if(sfw->sfw_5tuple_dst == NULL)
+    d = NULL;
+  else
+    d = sfw->sfw_5tuple_dst->addr;
+
 #ifdef WITHOUT_PRIVSEP
-  scamper_firewall_ipfw_cleanup();
+  if(scamper_firewall_ipfw_add(ruleno, af, p, s, d, sp, dp) != 0)
+    return -1;
 #else
-  if(ipfw_inited != 0)
-    scamper_privsep_ipfw_cleanup();
+  if(scamper_privsep_ipfw_add(ruleno, af, p, s, d, sp, dp) != 0)
+    return -1;
 #endif
 
+  return 0;
+}
+
+int ipfw_del(const scamper_firewall_entry_t *entry)
+{
+  int af = scamper_addr_af(entry->rule->sfw_5tuple_src);
+#ifdef WITHOUT_PRIVSEP
+  return scamper_firewall_ipfw_del(entry->slot, af);
+#else
+  return scamper_privsep_ipfw_del(entry->slot, af);
+#endif
+}
+
+#endif /* HAVE_IPFW */
+
+#ifdef HAVE_PF
+static int pf_use = 0;
+static int pf_inited = 0;
+static int pf_fd = -1;
+static pid_t pf_pid = 0;
+static char *pf_name = NULL;
+
+/*
+ * scamper_firewall_pf_init
+ *
+ * code that can be called both inside scamper_firewall.c and
+ * scamper_privsep.c for initalising the PF firewall.
+ */
+int scamper_firewall_pf_init(const char *name)
+{
+  struct pf_status status;
+  size_t len;
+
+  if(pf_fd != -1 || pf_inited != 0)
+    return -1;
+  if((len = strlen(name)) == 0 || string_isprint(name, len) == 0)
+    return -1;
+
+  if((pf_name = strdup(name)) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not dup name");
+      return -1;
+    }
+
+  if((pf_fd = open("/dev/pf", O_RDWR)) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not open socket");
+      return -1;
+    }
+
+  if(ioctl(pf_fd, DIOCGETSTATUS, &status) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not get status");
+      return -1;
+    }
+  if(status.running == 0)
+    {
+      scamper_debug(__func__, "pf not running");
+      return -1;
+    }
+
+  pf_pid = getpid();
+  pf_inited = 1;
+  return 0;
+}
+
+void scamper_firewall_pf_cleanup(void)
+{
+  if(pf_fd != -1)
+    {
+      close(pf_fd);
+      pf_fd = -1;
+    }
+  if(pf_name != NULL)
+    {
+      free(pf_name);
+      pf_name = NULL;
+    }
   return;
 }
 
+int scamper_firewall_pf_add(int n,int af,int p,void *s,void *d,int sp,int dp)
+{
+  char anchor[PF_ANCHOR_NAME_SIZE];
+  struct pfioc_trans_e pfte;
+  struct pfioc_trans pft;
+  struct pfioc_rule pfr;
+  size_t off;
+
+  off = 0;
+  string_concat(anchor, sizeof(anchor), &off, "%s/%d.%d", pf_name, pf_pid, n);
+
+  memset(&pft, 0, sizeof(pft));
+  pft.size = 1;
+  pft.esize = sizeof(pfte);
+  pft.array = &pfte;
+  memset(&pfte, 0, sizeof(pfte));
+  strncpy(pfte.anchor, anchor, sizeof(pfte.anchor)-1);
+  pfte.anchor[sizeof(pfte.anchor)-1] = '\0';
+
+#if defined(HAVE_STRUCT_PFIOC_TRANS_E_TYPE)
+  pfte.type = PF_TRANS_RULESET;
+#endif
+#if defined(HAVE_STRUCT_PFIOC_TRANS_E_RS_NUM)
+  pfte.rs_num = PF_RULESET_FILTER;
+#endif
+
+  if(ioctl(pf_fd, DIOCXBEGIN, &pft) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not begin transaction");
+      return -1;
+    }
+
+  memset(&pfr, 0, sizeof(pfr));
+  strncpy(pfr.anchor, anchor, sizeof(pfr.anchor)-1);
+  pfte.anchor[sizeof(pfr.anchor)-1] = '\0';
+  pfr.ticket = pfte.ticket;
+  pfr.rule.af = af;
+  pfr.rule.proto = p;
+  pfr.rule.direction = PF_IN;
+  pfr.rule.src.addr.type = PF_ADDR_ADDRMASK;
+  pfr.rule.dst.addr.type = PF_ADDR_ADDRMASK;
+#if defined(HAVE_STRUCT_PF_RULE_NAT)
+  pfr.rule.nat.addr.type = PF_ADDR_NONE;
+#endif
+#if defined(HAVE_STRUCT_PF_RULE_RDR)
+  pfr.rule.rdr.addr.type = PF_ADDR_NONE;
+#endif
+
+  if(af == AF_INET)
+    {
+      memcpy(&pfr.rule.src.addr.v.a.addr.v4, s, 4);
+      memset(&pfr.rule.src.addr.v.a.mask.v4, 255, 4);
+      memcpy(&pfr.rule.dst.addr.v.a.addr.v4, d, 4);
+      memset(&pfr.rule.dst.addr.v.a.mask.v4, 255, 4);
+    }
+  else
+    {
+      memcpy(&pfr.rule.src.addr.v.a.addr.v6, s, 16);
+      memset(&pfr.rule.src.addr.v.a.mask.v6, 255, 16);
+      memcpy(&pfr.rule.src.addr.v.a.addr.v6, d, 16);
+      memset(&pfr.rule.dst.addr.v.a.mask.v6, 255, 16);
+    }
+
+  pfr.rule.src.port_op = PF_OP_EQ;
+  pfr.rule.src.port[0] = htons(sp);
+  pfr.rule.dst.port_op = PF_OP_EQ;
+  pfr.rule.dst.port[0] = htons(dp);
+  pfr.rule.action = PF_DROP;
+  pfr.rule.quick = 1;
+
+  if(ioctl(pf_fd, DIOCADDRULE, &pfr) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not add rule");
+      return -1;
+    }
+
+  if(ioctl(pf_fd, DIOCXCOMMIT, &pft) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not commit rule");
+      return -1;
+    }
+
+  return 0;
+}
+
+int scamper_firewall_pf_del(int ruleno)
+{
+  struct pfioc_trans_e pfte;
+  struct pfioc_trans pft;
+  size_t off;
+
+  memset(&pft, 0, sizeof(pft));
+  pft.size = 1;
+  pft.esize = sizeof(pfte);
+  pft.array = &pfte;
+  memset(&pfte, 0, sizeof(pfte));
+
+  off = 0;
+  string_concat(pfte.anchor, sizeof(pfte.anchor), &off,
+		"%s/%d.%d", pf_name,pf_pid,ruleno);
+
+#if defined(HAVE_STRUCT_PFIOC_TRANS_E_TYPE)
+  pfte.type = PF_TRANS_RULESET;
+#endif
+#if defined(HAVE_STRUCT_PFIOC_TRANS_E_RS_NUM)
+  pfte.rs_num = PF_RULESET_FILTER;
+#endif
+
+  if(ioctl(pf_fd, DIOCXBEGIN, &pft) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not begin transaction");
+      return -1;
+    }
+
+  if(ioctl(pf_fd, DIOCXCOMMIT, &pft) == -1)
+    {
+      printerror(errno, strerror, __func__, "could not commit rule");
+      return -1;
+    }
+
+  return 0;
+}
+
+static int pf_add(int n, scamper_firewall_rule_t *sfw)
+{
+  int af, p, sp, dp;
+  void *s, *d;
+
+  assert(pf_use != 0);
+
+  if(sfw->sfw_5tuple_src->type != SCAMPER_ADDR_TYPE_IPV4 &&
+     sfw->sfw_5tuple_src->type != SCAMPER_ADDR_TYPE_IPV6)
+    return -1;
+
+  af = scamper_addr_af(sfw->sfw_5tuple_src);
+  p  = sfw->sfw_5tuple_proto;
+  dp = sfw->sfw_5tuple_dport;
+  sp = sfw->sfw_5tuple_sport;
+  s  = sfw->sfw_5tuple_src->addr;
+  d  = sfw->sfw_5tuple_dst->addr;
+
+#ifdef WITHOUT_PRIVSEP
+  if(scamper_firewall_pf_add(n, af, p, s, d, sp, dp) != 0)
+    return -1;
+#else
+  if(scamper_privsep_pf_add(n, af, p, s, d, sp, dp) != 0)
+    return -1;
+#endif
+  return 0;
+}
+
+static int pf_del(int n)
+{
+#ifdef WITHOUT_PRIVSEP
+  return scamper_firewall_pf_del(n);
+#else
+  return scamper_privsep_pf_del(n);
+#endif
+}
+
+static int pf_init(char *opts)
+{
+  char *name_str, *num_str;
+  long num;
+
+  name_str = opts;
+  string_nullterm_char(opts, ':', &num_str);
+  if(strlen(name_str) < 1)
+    {
+      scamper_debug(__func__, "invalid name");
+      return -1;
+    }
+  if(num_str == NULL)
+    {
+      scamper_debug(__func__, "missing number");
+      return -1;
+    }
+
+  if(string_isnumber(num_str) == 0 ||
+     string_tolong(num_str, &num) != 0 || num < 1 || num > 65535)
+    {
+      scamper_debug(__func__, "%s is not a valid number", num_str);
+      return -1;
+    }
+
+  if(firewall_entries_alloc() != 0)
+    return -1;
+
+  if(firewall_freeslots_alloc(1, num) != 0)
+    return -1;
+
+#ifdef WITHOUT_PRIVSEP
+  if(scamper_firewall_pf_init(name_str) != 0)
+    return -1;
+#else
+  if(scamper_privsep_pf_init(name_str) != 0)
+    return -1;
+#endif
+
+  pf_use = 1;
+  return 0;
+}
+#endif /* HAVE_PF */
+
 scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sfw)
 {
+#if defined(HAVE_IPFW) || defined(HAVE_PF)
   scamper_firewall_entry_t findme, *entry = NULL;
-  int n, af, p, sp, dp;
-  void *s, *d;
 
   /* sanity check the rule */
   if((sfw->sfw_5tuple_proto != IPPROTO_TCP &&
@@ -794,30 +1105,6 @@ scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sf
       goto err;
     }
 
-  if(sfw->sfw_5tuple_src->type == SCAMPER_ADDR_TYPE_IPV4)
-    {
-      if(have_ipv4 == 0)
-	{
-	  scamper_debug(__func__, "IPv4 rule requested but no IPv4 firewall");
-	  goto err;
-	}
-      af = AF_INET;
-    }
-  else if(sfw->sfw_5tuple_src->type == SCAMPER_ADDR_TYPE_IPV6)
-    {
-      if(have_ipv6 == 0)
-	{
-	  scamper_debug(__func__, "IPv6 rule requested but no IPv6 firewall");
-	  goto err;
-	}
-      af = AF_INET6;
-    }
-  else
-    {
-      scamper_debug(__func__, "invalid src type");
-      goto err;
-    }
-
   findme.rule = sfw;
   if((entry = splaytree_find(entries, &findme)) != NULL)
     {
@@ -825,7 +1112,7 @@ scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sf
       return entry;
     }
 
-  if((entry = firewall_entry_get()) == NULL)
+  if((entry = heap_remove(freeslots)) == NULL)
     goto err;
 
   entry->refcnt = 1;
@@ -835,25 +1122,23 @@ scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sf
       goto err;
     }
 
-  n  = entry->slot;
-  p  = sfw->sfw_5tuple_proto;
-  dp = sfw->sfw_5tuple_dport;
-  sp = sfw->sfw_5tuple_sport;
-  s  = sfw->sfw_5tuple_src->addr;
-  if(sfw->sfw_5tuple_dst == NULL)
-    d = NULL;
-  else
-    d = sfw->sfw_5tuple_dst->addr;
-
-#ifdef WITHOUT_PRIVSEP
-  if(scamper_firewall_ipfw_add(n, af, p, s, d, sp, dp) != 0)
-    goto err;
-#else
-  if(scamper_privsep_ipfw_add(n, af, p, s, d, sp, dp) != 0)
-    goto err;
+#ifdef HAVE_IPFW
+  if(ipfw_use != 0)
+    {
+      if(ipfw_add(entry->slot, sfw) != 0)
+	goto err;
+      return entry;
+    }
 #endif
 
-  return entry;
+#ifdef HAVE_PF
+  if(pf_use != 0)
+    {
+      if(pf_add(entry->slot, sfw) != 0)
+	goto err;
+      return entry;
+    }
+#endif
 
  err:
   if(entry != NULL)
@@ -862,24 +1147,53 @@ scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sf
 	firewall_rule_free(entry->rule);
       free(entry);
     }
+
+#endif /* HAVE_IPFW || HAVE_PF */
+
   return NULL;
 }
-#endif /* HAVE_IPFW */
 
-#ifndef HAVE_IPFW
+#if defined(HAVE_IPFW) || defined(HAVE_PF)
 static int firewall_rule_delete(scamper_firewall_entry_t *entry)
 {
-  return 0;
-}
+#if defined(HAVE_IPFW)
+  if(ipfw_use != 0)
+    {
+      if(ipfw_del(entry) != 0)
+	return -1;
+      goto done;
+    }
+#endif
 
-scamper_firewall_entry_t *scamper_firewall_entry_get(scamper_firewall_rule_t *sfw)
-{
-  return NULL;
+#if defined(HAVE_PF)
+  if(pf_use != 0)
+    {
+      if(pf_del(entry->slot) != 0)
+	return -1;
+      goto done;
+    }
+#endif
+
+ done:
+  /* put the rule back into the freeslots heap */
+  if(heap_insert(freeslots, entry) == NULL)
+    {
+      printerror(errno, strerror, __func__,
+		 "could not add entry %d", entry->slot);
+      return -1;
+    }
+
+  /* free up the firewall rule associated with the entry */
+  firewall_rule_free(entry->rule);
+  entry->rule = NULL;
+
+  return 0;
 }
 #endif
 
 void scamper_firewall_entry_free(scamper_firewall_entry_t *entry)
 {
+#if defined(HAVE_IPFW) || defined(HAVE_PF)
   entry->refcnt--;
   if(entry->refcnt > 0)
     return;
@@ -894,34 +1208,103 @@ void scamper_firewall_entry_free(scamper_firewall_entry_t *entry)
    * is called before this function is called.
    */
   if(entry->slot >= 0)
-    {
-      firewall_rule_delete(entry);
-    }
-
+    firewall_rule_delete(entry);
+#endif
   return;
 }
+
+#if defined(HAVE_IPFW) || defined(HAVE_PF)
+static int firewall_entry_cleanup(void *param, scamper_firewall_entry_t *entry)
+{
+  firewall_rule_delete(entry);
+  entry->slot = -1;
+  return 0;
+}
+#endif
 
 void scamper_firewall_cleanup(void)
 {
-#if defined(HAVE_IPFW)
-  ipfw_cleanup();
-#endif
+#if defined(HAVE_IPFW) || defined(HAVE_PF)
+  scamper_firewall_entry_t *entry;
+
   if(entries != NULL)
-    splaytree_free(entries, NULL);
+    splaytree_inorder(entries,(splaytree_inorder_t)firewall_entry_cleanup,NULL);
+
+  if(freeslots != NULL)
+    {
+      while((entry = heap_remove(freeslots)) != NULL)
+	firewall_entry_free(entry);
+      heap_free(freeslots, NULL);
+      freeslots = NULL;
+    }
+
+  if(entries != NULL)
+    {
+      splaytree_free(entries, NULL);
+      entries = NULL;
+    }
+#endif
+
+#ifdef HAVE_IPFW
+  if(ipfw_use != 0)
+    {
+#ifdef WITHOUT_PRIVSEP
+      scamper_firewall_ipfw_cleanup();
+#else
+      if(ipfw_inited != 0)
+	scamper_privsep_ipfw_cleanup();
+#endif
+    }
+#endif
+
+#ifdef HAVE_PF
+  if(pf_use != 0)
+    {
+#ifdef WITHOUT_PRIVSEP
+      scamper_firewall_pf_cleanup();
+#else
+      if(pf_inited != 0)
+	scamper_privsep_pf_cleanup();
+#endif
+    }
+#endif
+
   return;
 }
 
-int scamper_firewall_init(char *opt)
+int scamper_firewall_init(const char *opt)
 {
-  if((entries = splaytree_alloc(firewall_entry_cmp)) == NULL)
+#if defined(HAVE_IPFW) || defined(HAVE_PF)
+  char *dup, *ptr;
+  int rc = -1;
+
+  if((dup = strdup(opt)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not create entries tree");
+      printerror(errno, strerror, __func__, "could not dup opt");
       return -1;
     }
+  string_nullterm_char(dup, ':', &ptr);
 
 #if defined(HAVE_IPFW)
-  return ipfw_init();
-#else
-  return 0;
+  if(strcasecmp(dup, "ipfw") == 0)
+    {
+      rc = ipfw_init(ptr);
+      goto done;
+    }
 #endif
+
+#if defined(HAVE_PF)
+  if(strcasecmp(dup, "pf") == 0)
+    {
+      rc = pf_init(ptr);
+      goto done;
+    }
+#endif
+
+ done:
+  free(dup);
+  return rc;
+
+#endif /* HAVE_IPFW || HAVE_PF */
+  return -1;
 }

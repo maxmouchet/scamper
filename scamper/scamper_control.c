@@ -1,7 +1,7 @@
 /*
  * scamper_control.c
  *
- * $Id: scamper_control.c,v 1.161.2.1 2015/12/06 08:06:42 mjl Exp $
+ * $Id: scamper_control.c,v 1.161.2.2 2016/08/26 20:52:42 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_control.c,v 1.161.2.1 2015/12/06 08:06:42 mjl Exp $";
+  "$Id: scamper_control.c,v 1.161.2.2 2016/08/26 20:52:42 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1955,6 +1955,11 @@ static int client_read_line(void *param, uint8_t *buf, size_t len)
   /* make sure all the characters in the string are printable */
   if(string_isprint((char *)buf, len) == 0)
     {
+      if(client->source != NULL)
+	{
+	  scamper_source_control_finish(client->source);
+	  scamper_source_abandon(client->source);
+	}
       client_send(client, "ERR invalid character in line");
       client->mode = CLIENT_MODE_FLUSH;
       return 0;

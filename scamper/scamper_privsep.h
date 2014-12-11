@@ -1,7 +1,7 @@
 /*
  * scamper_privsep.h
  *
- * $Id: scamper_privsep.h,v 1.23.16.1 2015/12/06 08:29:51 mjl Exp $
+ * $Id: scamper_privsep.h,v 1.23.16.2 2016/08/26 21:32:59 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -45,6 +45,11 @@ int scamper_privsep_ipfw_init(void);
 int scamper_privsep_ipfw_cleanup(void);
 int scamper_privsep_ipfw_add(int n,int af,int p,void *s,void *d,int sp,int dp);
 int scamper_privsep_ipfw_del(int n,int af);
+
+int scamper_privsep_pf_init(const char *anchor);
+int scamper_privsep_pf_cleanup(void);
+int scamper_privsep_pf_add(int n,int af,int p,void *s,void *d,int sp,int dp);
+int scamper_privsep_pf_del(int n);
 
 int scamper_privsep_unlink(const char *file);
 
