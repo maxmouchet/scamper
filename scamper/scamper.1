@@ -8,7 +8,7 @@
 .\" Copyright (c) 2012-2015 The Regents of the University of California
 .\"                         All rights reserved
 .\"
-.\" $Id: scamper.1,v 1.53.2.3 2015/12/07 07:22:51 mjl Exp $
+.\" $Id: scamper.1,v 1.53.2.4 2016/03/17 19:00:28 mjl Exp $
 .\"
 .\"  nroff -man scamper.1
 .\"  groff -man -Tascii scamper.1 | man2html -title scamper.1
@@ -606,7 +606,7 @@ specifies an unsigned integer to include with the data collected; the meaning
 of the user-id is entirely up to the user and has no effect on the behaviour
 of dealias.
 .It Fl w Ar wait-timeout
-specifies how long to wait in milliseconds for a reply from the remote host.
+specifies how long to wait in seconds for a reply from the remote host.
 .It Fl W Ar wait-probe
 specifies how long to wait in milliseconds between probes.
 .It Fl x Ar exclude

@@ -4,7 +4,7 @@
  * Copyright (C) 2009-2011 The University of Waikato
  * Authors: Ben Stasiewicz, Matthew Luckie
  *
- * $Id: scamper_tbit_text.c,v 1.12 2012/04/27 15:35:34 mjl Exp $
+ * $Id: scamper_tbit_text.c,v 1.12.14.2 2016/06/15 07:24:10 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,18 +43,16 @@ int scamper_file_text_tbit_write(const scamper_file_t *sf,
 {
   scamper_tbit_pkt_t *pkt;
   scamper_tbit_app_http_t *http;
-  char buf[131072];
+  char buf[131072], *str;
   char src[64], dst[64], tmp[256], ipid[12], fstr[32], tfstr[32], sack[128];
   struct timeval diff;
   uint32_t i;
-  uint32_t seq, ack, server_isn, client_isn, off, id, u32;
+  uint32_t seq, ack, server_isn, client_isn, off, u32;
   uint16_t len, u16, datalen;
   uint8_t proto, flags, iphlen, tcphlen, mf, ecn, u8, *ptr;
   size_t soff = 0, toff;
   int frag;
   int fd = scamper_file_getfd(sf);
-
-  ipid[0] = '\0';
 
   string_concat(buf, sizeof(buf), &soff,
 		"tbit from %s to %s\n server-mss %d, result: %s\n",
@@ -67,11 +65,16 @@ int scamper_file_text_tbit_write(const scamper_file_t *sf,
     {
       http = tbit->app_data;
       string_concat(buf, sizeof(buf), &soff, " app: http");
+      if(http->type == SCAMPER_TBIT_APP_HTTP_TYPE_HTTPS)
+	str = "https";
+      else
+	str = "http";
       if(http->host != NULL && http->file != NULL)
-	string_concat(buf, sizeof(buf), &soff, ", url: http://%s%s",
-		      http->host, http->file);
+	string_concat(buf, sizeof(buf), &soff, ", url: %s://%s%s",
+		      str, http->host, http->file);
       else if(http->host != NULL)
-	string_concat(buf, sizeof(buf), &soff, ", url: http://%s", http->host);
+	string_concat(buf, sizeof(buf), &soff, ", url: %s://%s",
+		      str, http->host);
       else
 	string_concat(buf, sizeof(buf), &soff, ", file: %s", http->file);
       string_concat(buf, sizeof(buf), &soff, "\n");
@@ -83,7 +86,8 @@ int scamper_file_text_tbit_write(const scamper_file_t *sf,
   for(i=0; i<tbit->pktc; i++)
     {
       pkt = tbit->pkts[i];
-      frag = 0; mf = 0; id = 0; off = 0;
+      frag = 0; mf = 0; off = 0;
+      ipid[0] = '\0';
 
       if((pkt->data[0] >> 4) == 4)
         {
@@ -93,11 +97,10 @@ int scamper_file_text_tbit_write(const scamper_file_t *sf,
 	  ecn = pkt->data[1] & 0x3;
 	  if(pkt->data[6] & 0x20)
 	    mf = 1;
-	  id  = bytes_ntohs(pkt->data+4);
+	  snprintf(ipid, sizeof(ipid), " %04x", bytes_ntohs(pkt->data+4));
 	  off = (bytes_ntohs(pkt->data+6) & 0x1fff) * 8;
 	  if(mf != 0 || off != 0)
 	    frag = 1;
-	  snprintf(ipid, sizeof(ipid), " %04x", bytes_ntohs(pkt->data+4));
         }
       else if((pkt->data[0] >> 4) == 6)
         {
@@ -120,8 +123,9 @@ int scamper_file_text_tbit_write(const scamper_file_t *sf,
 		case IPPROTO_FRAGMENT:
 		  if(pkt->data[iphlen+3] & 0x1)
 		    mf = 1;
+		  snprintf(ipid, sizeof(ipid), "%x",
+			   bytes_ntohl(pkt->data+iphlen+4));
 		  off = (bytes_ntohs(pkt->data+iphlen+2) & 0xfff8);
-		  id  = bytes_ntohl(pkt->data+iphlen+4);
 		  proto = pkt->data[iphlen+0];
 		  iphlen += 8;
 		  frag = 1;
@@ -141,14 +145,14 @@ int scamper_file_text_tbit_write(const scamper_file_t *sf,
 		    pkt->dir == SCAMPER_TBIT_PKT_DIR_TX ? "TX" : "RX");
 
       if(frag != 0)
-	snprintf(fstr,sizeof(fstr),"%u:%u%s", id, off, mf != 0 ? " MF" : "");
+	snprintf(fstr,sizeof(fstr),":%u%s", off, mf != 0 ? " MF" : "");
       else
 	fstr[0] = '\0';
 
       if(off != 0)
 	{
 	  string_concat(buf, sizeof(buf), &soff,
-			"%-13s %4dF%21s %s %s", "", len, "", ipid, fstr);
+			"%-13s %4dF%22s %s%s", "", len, "", ipid, fstr);
 	}
       else if(proto == IPPROTO_TCP)
         {
@@ -243,7 +247,7 @@ int scamper_file_text_tbit_write(const scamper_file_t *sf,
 	    string_concat(tmp, sizeof(tmp), &toff, "(%d)", datalen);
 	  string_concat(tmp, sizeof(tmp), &toff, sack);
 	  string_concat(buf, sizeof(buf), &soff, "%-23s%s", tmp, ipid);
-	  if(frag != 0) string_concat(buf, sizeof(buf), &soff, fstr);
+	  if(frag != 0) string_concat(buf, sizeof(buf), &soff, "%s", fstr);
 	  if(datalen > 0 && (pkt->data[0] >> 4) == 4 && pkt->data[6] & 0x40)
 	    string_concat(buf, sizeof(buf), &soff, " DF");
 	  if(ecn == 3)      string_concat(buf, sizeof(buf), &soff, " CE");

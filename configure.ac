@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([scamper], [20141211c], [mjl@luckie.org.nz])
+AC_INIT([scamper], [20141211e], [mjl@luckie.org.nz])
 
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([scamper/scamper.c])
@@ -168,6 +168,7 @@ AC_FUNC_FORK
 AC_CHECK_FUNCS(arc4random)
 AC_CHECK_FUNCS(arc4random_uniform)
 AC_CHECK_FUNCS(atexit)
+AC_CHECK_FUNCS(calloc)
 AC_CHECK_FUNCS(daemon)
 AC_CHECK_FUNCS(endpwent)
 AC_CHECK_FUNCS(epoll_wait)

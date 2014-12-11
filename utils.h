@@ -1,11 +1,12 @@
 /*
  * utils.h
  *
- * $Id: utils.h,v 1.110.2.1 2015/10/19 00:39:32 mjl Exp $
+ * $Id: utils.h,v 1.110.2.3 2016/06/15 07:54:24 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
+ * Copyright (C) 2015      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -58,7 +59,11 @@ int stat_mtime(const char *filename, time_t *mtime);
  * Functions for dealing with memory allocation
  */
 #ifndef DMALLOC
+#ifdef HAVE_CALLOC
+#define malloc_zero(size) calloc(1, (size))
+#else
 void *malloc_zero(const size_t size);
+#endif
 void *memdup(const void *ptr, const size_t len);
 int   realloc_wrap(void **ptr, size_t len);
 #else
@@ -138,6 +143,7 @@ char *string_lastof_char(char *str, const char delim);
 char *string_firstof_char(char *str, const char delim);
 char *string_concat(char *str, size_t len, size_t *off, const char *fs, ...);
 const char *string_findlc(const char *str, const char *find);
+int   string_addrport(const char *in, char **addr, int *port);
 
 /* check the character to see if it is possibly hex */
 int ishex(char c);

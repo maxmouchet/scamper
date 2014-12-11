@@ -2,7 +2,7 @@
  * linked list routines
  * by Matthew Luckie
  *
- * Copyright (C) 2004-2015 Matthew Luckie. All rights reserved.
+ * Copyright (C) 2004-2016 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_list.c,v 1.68.4.2 2015/10/17 07:39:14 mjl Exp $";
+  "$Id: mjl_list.c,v 1.68.4.4 2016/06/22 08:13:56 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -651,7 +651,7 @@ static void slist_qsort_3(slist_node_t **a, slist_cmp_t cmp, int l, int r)
 
   while(i <= gt)
     {
-      rc = cmp(a[i]->item, c->item);
+      rc = a[i]->item != c->item ? cmp(a[i]->item, c->item) : 0;
       if(rc < 0)
 	slist_swap(a, lt++, i++);
       else if(rc > 0)
@@ -1320,7 +1320,7 @@ static void dlist_rebuild(dlist_t *list, dlist_node_t **v)
   list->tail = v[list->length-1];
   list->tail->next = NULL;
   list->head->prev = NULL;
-  for(i=0; i<list->length-1; i++)
+  for(i=0; i<list->length; i++)
     {
       if(i > 0)
 	v[i]->prev = v[i-1];
@@ -1352,7 +1352,7 @@ static void dlist_qsort_3(dlist_node_t **a, dlist_cmp_t cmp, int l, int r)
 
   while(i <= gt)
     {
-      rc = cmp(a[i]->item, c->item);
+      rc = a[i]->item != c->item ? cmp(a[i]->item, c->item) : 0;
       if(rc < 0)
 	dlist_swap(a, lt++, i++);
       else if(rc > 0)

@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# $Id: bootstrap.pl,v 1.2.22.2 2015/12/06 08:57:24 mjl Exp $
+# $Id: bootstrap.pl,v 1.2.22.3 2016/06/22 08:05:54 mjl Exp $
 #
 # script to ship scamper with generated configure script ready to build.
 
@@ -106,7 +106,7 @@ if(!-r "m4/ax_check_openssl.m4")
 	last if(defined($sum));
     }
     if(!defined($sum) || $sum ne
-       "6abec1e9efba7081fc2dc547714bad021a43d41fdd1628c47112f9f10383ce6e")
+       "8574f228ef7294a8d53863f45f7f1456e087bbfadda14429f452a027d87f81a3")
     {
 	print STDERR "ax_check_openssl.m4 has unexpected sha256 sum\n";
 	exit -1;

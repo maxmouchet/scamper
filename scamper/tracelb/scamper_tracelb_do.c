@@ -1,10 +1,11 @@
 /*
  * scamper_do_tracelb.c
  *
- * $Id: scamper_tracelb_do.c,v 1.271 2014/06/12 17:32:08 mjl Exp $
+ * $Id: scamper_tracelb_do.c,v 1.271.6.1 2016/01/08 08:00:08 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
  * MDA traceroute technique authored by
@@ -28,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb_do.c,v 1.271 2014/06/12 17:32:08 mjl Exp $";
+  "$Id: scamper_tracelb_do.c,v 1.271.6.1 2016/01/08 08:00:08 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -61,6 +62,7 @@ static const char rcsid[] =
 #include "utils.h"
 #include "mjl_list.h"
 #include "mjl_heap.h"
+#include "mjl_splaytree.h"
 
 #define SCAMPER_DO_TRACELB_ATTEMPTS_MIN    1
 #define SCAMPER_DO_TRACELB_ATTEMPTS_DEF    2
@@ -239,6 +241,7 @@ typedef struct tracelb_state
   scamper_fd_t            *icmp;         /* fd to listen to icmp packets */
   scamper_fd_t            *probe;        /* fd to probe with */
   scamper_fd_t            *dl;           /* datalink fd to tx on */
+  splaytree_t             *addrs;        /* set of addresses */
 
 #ifndef _WIN32
   scamper_fd_t            *rtsock;       /* route socket */
@@ -258,9 +261,6 @@ typedef struct tracelb_state
   tracelb_path_t         **paths;        /* paths established */
   int                      pathc;        /* count of paths */
 } tracelb_state_t;
-
-/* address cache used to avoid reallocating the same address multiple times */
-extern scamper_addrcache_t *addrcache;
 
 /* temporary buffer shared amongst traceroutes */
 static uint8_t             *pktbuf     = NULL;
@@ -722,6 +722,37 @@ static int tracelb_link_continue(const scamper_tracelb_t *trace,
     }
 
   return 1;
+}
+
+/*
+ * tracelb_addr
+ *
+ * keep a per-tracelb cache of addresses to avoid unnecessary malloc
+ * of addresses.
+ */
+static scamper_addr_t *tracelb_addr(tracelb_state_t *state,int type,void *addr)
+{
+  scamper_addr_t *a, fm;
+
+  fm.type = type;
+  fm.addr = addr;
+  if((a = splaytree_find(state->addrs, &fm)) != NULL)
+    return a;
+
+  if((a = scamper_addr_alloc(type, addr)) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not alloc addr");
+      return NULL;
+    }
+
+  if(splaytree_insert(state->addrs, a) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not insert addr");
+      scamper_addr_free(a);
+      return NULL;
+    }
+
+  return a;
 }
 
 /*
@@ -3171,15 +3202,13 @@ static void do_tracelb_handle_icmp(scamper_task_t *task,
       addr = &ir->ir_ip_src.v6;
     }
 
-  if((icmpfrom = scamper_addrcache_get(addrcache, type, addr)) == NULL)
+  if((icmpfrom = tracelb_addr(state, type, addr)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get icmpfrom");
       tracelb_handleerror(task, errno);
       return;
     }
 
   func[pr->mode](task, ir, pr, icmpfrom);
-  scamper_addr_free(icmpfrom);
   return;
 }
 
@@ -3522,13 +3551,8 @@ static void do_tracelb_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
   /* if this is an inbound packet with a timestamp attached */
   if(handletcp_func[pr->mode] != NULL)
     {
-      if((from = scamper_addrcache_get(addrcache, trace->dst->type,
-				       dl->dl_ip_src)) == NULL)
-	{
-	  printerror(errno, strerror, __func__, "could not get addr");
-	  goto err;
-	}
-
+      if((from = tracelb_addr(state, trace->dst->type, dl->dl_ip_src)) == NULL)
+	goto err;
       handletcp_func[pr->mode](task, dl, pr, from);
     }
 
@@ -3670,13 +3694,15 @@ static void tracelb_state_free(scamper_tracelb_t *trace,tracelb_state_t *state)
   tracelb_paths_dump(state);
   tracelb_links_dump(state);
 
+  /* free the address tree */
+  if(state->addrs != NULL)
+    splaytree_free(state->addrs, (splaytree_free_t)scamper_addr_free);
+
   /* free the active branch records */
   if(state->active != NULL)
     {
       while((br = heap_remove(state->active)) != NULL)
-	{
-	  tracelb_branch_free(state, br);
-	}
+	tracelb_branch_free(state, br);
       heap_free(state->active, NULL);
     }
 
@@ -3684,9 +3710,7 @@ static void tracelb_state_free(scamper_tracelb_t *trace,tracelb_state_t *state)
   if(state->waiting != NULL)
     {
       while((br = heap_remove(state->waiting)) != NULL)
-	{
-	  tracelb_branch_free(state, br);
-	}
+	tracelb_branch_free(state, br);
       heap_free(state->waiting, NULL);
     }
 
@@ -3710,9 +3734,7 @@ static void tracelb_state_free(scamper_tracelb_t *trace,tracelb_state_t *state)
   if(state->paths != NULL)
     {
       for(i=0; i<state->pathc; i++)
-	{
-	  tracelb_path_free(state->paths[i]);
-	}
+	tracelb_path_free(state->paths[i]);
       free(state->paths);
     }
 
@@ -3720,9 +3742,7 @@ static void tracelb_state_free(scamper_tracelb_t *trace,tracelb_state_t *state)
   if(state->links != NULL)
     {
       for(i=0; i<state->linkc; i++)
-	{
-	  tracelb_link_free(state->links[i]);
-	}
+	tracelb_link_free(state->links[i]);
       free(state->links);
     }
 
@@ -3817,6 +3837,12 @@ static int tracelb_state_alloc(scamper_task_t *task)
       break;
 
     default:
+      goto err;
+    }
+
+  if((state->addrs = splaytree_alloc((splaytree_cmp_t)scamper_addr_cmp))==NULL)
+    {
+      printerror(errno, strerror, __func__, "could not alloc addr tree");
       goto err;
     }
 
@@ -4437,7 +4463,7 @@ void *scamper_do_tracelb_alloc(char *str)
       goto err;
     }
 
-  if((trace->dst = scamper_addrcache_resolve(addrcache,AF_UNSPEC,addr))==NULL)
+  if((trace->dst = scamper_addr_resolve(AF_UNSPEC, addr)) == NULL)
     {
       goto err;
     }

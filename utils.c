@@ -1,7 +1,7 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.173.2.2 2015/10/19 00:39:05 mjl Exp $
+ * $Id: utils.c,v 1.173.2.4 2016/06/15 07:52:08 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.173.2.2 2015/10/19 00:39:05 mjl Exp $";
+  "$Id: utils.c,v 1.173.2.4 2016/06/15 07:52:08 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -409,7 +409,7 @@ void *memdup(const void *ptr, const size_t len)
  *
  * allocate some memory, zero it, and return a pointer to it.
  */
-#ifndef DMALLOC
+#if !defined(DMALLOC) && !defined(HAVE_CALLOC)
 void *malloc_zero(const size_t size)
 {
   void *ptr;
@@ -419,7 +419,9 @@ void *malloc_zero(const size_t size)
     }
   return ptr;
 }
-#else
+#endif
+
+#ifdef DMALLOC
 void *malloc_zero_dm(const size_t size, const char *file, const int line)
 {
   void *ptr;
@@ -649,7 +651,7 @@ static void array_qsort_3(void **a, array_cmp_t cmp, int l, int r)
 
   while(i <= gt)
     {
-      rc = cmp(a[i], c);
+      rc = a[i] != c ? cmp(a[i], c) : 0;
       if(rc < 0)
 	array_swap(a, lt++, i++);
       else if(rc > 0)
@@ -1226,6 +1228,58 @@ char *string_concat(char *str, size_t len, size_t *off, const char *fs, ...)
 
   *off = *off + ((size_t)wc < left ? wc : left);
   return str;
+}
+
+/*
+ * string_addrport
+ *
+ * given an input string, return the ip address / name in the first part
+ * (if present) and the port number in the second.  do some basic sanity
+ * checking as well.
+ */
+int string_addrport(const char *in, char **first, int *port)
+{
+  char *ptr, *dup = NULL, *first_tmp = NULL;
+  long lo;
+
+  if(string_isnumber(in))
+    {
+      if(string_tolong(in, &lo) == -1 || lo < 1 || lo > 65535)
+	goto err;
+      *first = NULL;
+      *port  = lo;
+      return 0;
+    }
+
+  if((dup = strdup(in)) == NULL)
+    goto err;
+
+  if(dup[0] == '[')
+    {
+      string_nullterm_char(dup, ']', &ptr);
+      if(ptr == NULL || *ptr != ':' || (first_tmp = strdup(dup+1)) == NULL)
+	goto err;
+      ptr++;
+    }
+  else
+    {
+      string_nullterm_char(dup, ':', &ptr);
+      if(ptr == NULL || (first_tmp = strdup(dup)) == NULL)
+	goto err;
+    }
+
+  free(dup); dup = NULL;
+  if(string_tolong(ptr, &lo) != 0 || lo < 1 || lo > 65535)
+    goto err;
+
+  *first = first_tmp;
+  *port  = lo;
+  return 0;
+
+ err:
+  if(first_tmp != NULL) free(first_tmp);
+  if(dup != NULL) free(dup);
+  return -1;
 }
 
 void mem_concat(void *dst,const void *src,size_t len,size_t *off,size_t size)

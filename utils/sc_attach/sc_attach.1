@@ -7,7 +7,7 @@
 .\"               2012 The Regents of the University of California
 .\"                    All rights reserved
 .\"
-.\" $Id: sc_attach.1,v 1.6 2013/09/04 19:26:23 mjl Exp $
+.\" $Id: sc_attach.1,v 1.6.12.1 2016/06/15 08:03:50 mjl Exp $
 .\"
 .\"  nroff -man sc_attach.1
 .\"  groff -man -Tascii sc_attach.1 | man2html -title sc_attach.1
@@ -25,7 +25,7 @@
 .Op Fl c Ar command
 .Op Fl i Ar infile
 .Op Fl o Ar outfile
-.Op Fl p Ar port
+.Op Fl p Ar [ip:]port
 .Op Fl P Ar priority
 .Ek
 .\""""""""""""
@@ -66,10 +66,13 @@ If '-' is specified, commands are read from stdin.
 specifies the name of the output file to be written.
 The output file will use the warts format.
 If '-' is specified, output will be sent to stdout.
-.It Fl p Ar port
-specifies the port on the local host where
+.It Fl p Ar [ip:]port
+specifies the IP address and port where a
 .Xr scamper 1
 is accepting control socket connections.
+If an IP address is not specified,
+.Nm
+connects to the specified port on the local host.
 .It Fl P Ar priority
 specifies the mixing priority
 .Xr scamper 1

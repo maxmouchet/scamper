@@ -3,7 +3,7 @@
  *
  * the warts file format
  *
- * $Id: scamper_file_warts.c,v 1.243.2.1 2015/10/17 07:07:54 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.243.2.2 2016/01/08 08:29:27 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_warts.c,v 1.243.2.1 2015/10/17 07:07:54 mjl Exp $";
+  "$Id: scamper_file_warts.c,v 1.243.2.2 2016/01/08 08:29:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -189,11 +189,30 @@ static int warts_addr_cmp(const warts_addr_t *a, const warts_addr_t *b)
   return scamper_addr_cmp(a->addr, b->addr);
 }
 
+static warts_addr_t *warts_addr_alloc(scamper_addr_t *addr, uint32_t id)
+{
+  warts_addr_t *wa;
+  if((wa = malloc(sizeof(warts_addr_t))) == NULL)
+    return NULL;
+  wa->addr = scamper_addr_use(addr);
+  wa->id = id;
+  wa->ondisk = 0;
+  return wa;
+}
+
+static void warts_addr_free(warts_addr_t *wa)
+{
+  if(wa == NULL)
+    return;
+  if(wa->addr != NULL) scamper_addr_free(wa->addr);
+  free(wa);
+  return;
+}
+
 uint32_t warts_addr_size(warts_addrtable_t *t, scamper_addr_t *addr)
 {
   warts_addr_t f, *wa;
 
-  memset(&f, 0, sizeof(f));
   f.addr = addr;
   if(array_find((void **)t->addrs, t->addrc, &f,
 		(array_cmp_t)warts_addr_cmp) != NULL)
@@ -201,16 +220,11 @@ uint32_t warts_addr_size(warts_addrtable_t *t, scamper_addr_t *addr)
       return 1 + 4;
     }
 
-  if((wa = malloc_zero(sizeof(warts_addr_t))) != NULL)
+  if((wa = warts_addr_alloc(addr, t->addrc)) != NULL &&
+     array_insert((void ***)&t->addrs, &t->addrc, wa,
+		  (array_cmp_t)warts_addr_cmp) != 0)
     {
-      wa->addr = scamper_addr_use(addr);
-      wa->id   = t->addrc;
-
-      if(array_insert((void ***)&t->addrs, &t->addrc, wa,
-		      (array_cmp_t)warts_addr_cmp) != 0)
-	{
-	  free(wa);
-	}
+      warts_addr_free(wa);
     }
 
   return 1 + 1 + scamper_addr_size(addr);
@@ -222,10 +236,7 @@ void warts_addrtable_clean(warts_addrtable_t *table)
   if(table->addrs != NULL)
     {
       for(i=0; i<table->addrc; i++)
-	{
-	  scamper_addr_free(table->addrs[i]->addr);
-	  free(table->addrs[i]);
-	}
+	warts_addr_free(table->addrs[i]);
       free(table->addrs);
     }
   return;

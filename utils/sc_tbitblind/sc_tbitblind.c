@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_tbitblind.c,v 1.2.2.3 2015/10/21 08:31:41 mjl Exp $";
+  "$Id: sc_tbitblind.c,v 1.2.2.4 2016/06/22 08:20:39 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -127,7 +127,7 @@ static void usage(uint32_t opt_mask)
 
 static int check_options(int argc, char *argv[])
 {
-  char ch;
+  int ch;
   long lo;
   char *opts = "A:a:c:l:o:O:p:rt:T:w:";
   char *opt_port = NULL, *opt_text = NULL, *opt_limit = NULL;

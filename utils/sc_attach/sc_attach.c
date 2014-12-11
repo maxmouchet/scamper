@@ -8,7 +8,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_attach.c,v 1.14 2013/09/04 19:19:47 mjl Exp $";
+  "$Id: sc_attach.c,v 1.14.12.1 2016/06/15 08:01:10 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -33,7 +33,8 @@ static const char rcsid[] =
 
 static uint32_t               options       = 0;
 static char                  *infile        = NULL;
-static unsigned int           port          = 0;
+static char                  *dst_addr      = NULL;
+static int                    dst_port      = 0;
 static uint32_t               priority      = 1;
 static int                    scamper_fd    = -1;
 static int                    stdin_fd      = -1;
@@ -53,6 +54,12 @@ static int                    done          = 0;
 static void cleanup(void)
 {
   char *command;
+
+  if(dst_addr != NULL)
+    {
+      free(dst_addr);
+      dst_addr = NULL;
+    }
 
   if(lastcommand != NULL)
     {
@@ -101,7 +108,7 @@ static void usage(uint32_t opt_mask)
 {
   fprintf(stderr,
 	  "usage: sc_attach [-?dDv] [-c command] [-i infile] [-o outfile]\n"
-	  "                 [-p port] [-P priority]\n");
+	  "                 [-p [ip:]port] [-P priority]\n");
 
   if(opt_mask == 0) return;
 
@@ -129,7 +136,7 @@ static void usage(uint32_t opt_mask)
     fprintf(stderr, "     -o output warts file\n");
 
   if(opt_mask & OPT_PORT)
-    fprintf(stderr, "     -p port to find scamper on\n");
+    fprintf(stderr, "     -p [ip:]port to find scamper on\n");
 
   if(opt_mask & OPT_PRIORITY)
     fprintf(stderr, "     -P priority\n");
@@ -192,7 +199,7 @@ static int check_options(int argc, char *argv[])
 	  break;
 
 	case 'v':
-	  printf("$Id: sc_attach.c,v 1.14 2013/09/04 19:19:47 mjl Exp $\n");
+	  printf("$Id: sc_attach.c,v 1.14.12.1 2016/06/15 08:01:10 mjl Exp $\n");
 	  return -1;
 
 	case '?':
@@ -210,13 +217,11 @@ static int check_options(int argc, char *argv[])
       return -1;
     }
 
-  /* find out which port scamper can be found listening on */
-  if(string_tolong(opt_port, &lo) != 0 || lo < 1 || lo > 65535)
+  if(string_addrport(opt_port, &dst_addr, &dst_port) != 0)
     {
       usage(OPT_PORT);
       return -1;
     }
-  port = lo;
 
   if((options & OPT_PRIORITY) != 0)
     {
@@ -310,19 +315,32 @@ static int do_outfile(void)
  */
 static int do_scamperconnect(void)
 {
-  struct sockaddr_in sin;
+  struct sockaddr_storage sas;
+  struct sockaddr *sa = (struct sockaddr *)&sas;
   struct in_addr in;
 
-  in.s_addr = inet_addr("127.0.0.1");
-  sockaddr_compose((struct sockaddr *)&sin, AF_INET, &in, port);
+  if(dst_addr != NULL)
+    {
+      if(sockaddr_compose_str(sa, dst_addr, dst_port) != 0)
+	{
+	  fprintf(stderr, "%s: could not compose sockaddr from %s:%d\n",
+		  __func__, dst_addr, dst_port);
+	  return -1;
+	}
+    }
+  else
+    {
+      in.s_addr = htonl(INADDR_LOOPBACK);
+      sockaddr_compose(sa, AF_INET, &in, dst_port);
+    }
 
-  if((scamper_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+  if((scamper_fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP)) < 0)
     {
       fprintf(stderr, "could not allocate new socket\n");
       return -1;
     }
 
-  if(connect(scamper_fd, (const struct sockaddr *)&sin, sizeof(sin)) != 0)
+  if(connect(scamper_fd, sa, sockaddr_len(sa)) != 0)
     {
       fprintf(stderr, "could not connect to scamper process\n");
       return -1;

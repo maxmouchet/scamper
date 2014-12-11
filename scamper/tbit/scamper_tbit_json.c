@@ -6,7 +6,7 @@
  *
  * Author: Matthew Luckie
  *
- * $Id: scamper_tbit_json.c,v 1.3.6.1 2015/10/17 09:03:06 mjl Exp $
+ * $Id: scamper_tbit_json.c,v 1.3.6.2 2016/02/02 15:43:03 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_json.c,v 1.3.6.1 2015/10/17 09:03:06 mjl Exp $";
+  "$Id: scamper_tbit_json.c,v 1.3.6.2 2016/02/02 15:43:03 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -136,9 +136,12 @@ static char *tbit_header_tostr(const scamper_tbit_t *tbit,
     {
       pmtud = tbit->data;
       string_concat(buf, sizeof(buf), &off,
-		    ", \"mtu\":%u, \"ptb_retx\":%u, \"ptbsrc\":\"%s\"",
-		    pmtud->mtu, pmtud->ptb_retx,
-		    scamper_addr_tostr(pmtud->ptbsrc, tmp, sizeof(tmp)));
+		    ", \"mtu\":%u, \"ptb_retx\":%u",
+		    pmtud->mtu, pmtud->ptb_retx);
+      if(pmtud->ptbsrc != NULL)
+	string_concat(buf, sizeof(buf), &off,
+		      ", \"ptbsrc\":\"%s\"",
+		      scamper_addr_tostr(pmtud->ptbsrc, tmp, sizeof(tmp)));
       string_concat(buf, sizeof(buf), &off, ", \"pmtud_options\":[%s]",
 		    tbit_bits_encode(tmp, sizeof(tmp), pmtud->options, 8,
 				     pmtud_options,

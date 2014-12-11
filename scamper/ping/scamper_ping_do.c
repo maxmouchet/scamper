@@ -1,11 +1,12 @@
 /*
  * scamper_do_ping.c
  *
- * $Id: scamper_ping_do.c,v 1.143.6.2 2015/12/03 07:09:40 mjl Exp $
+ * $Id: scamper_ping_do.c,v 1.143.6.3 2016/01/08 07:57:34 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
+ * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_do.c,v 1.143.6.2 2015/12/03 07:09:40 mjl Exp $";
+  "$Id: scamper_ping_do.c,v 1.143.6.3 2016/01/08 07:57:34 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -105,9 +106,6 @@ static pid_t pid;
 static DWORD pid;
 #endif
 
-/* address cache used to avoid reallocating the same address multiple times */
-extern scamper_addrcache_t *addrcache;
-
 typedef struct ping_probe
 {
   struct timeval     tx;
@@ -117,6 +115,7 @@ typedef struct ping_probe
 typedef struct ping_state
 {
   ping_probe_t     **probes;
+  scamper_addr_t    *last_addr;
   uint16_t           replies;
   uint16_t           seq;
   uint8_t           *payload;
@@ -209,6 +208,25 @@ static void ping_handleerror(scamper_task_t *task, int error)
 {
   ping_stop(task, SCAMPER_PING_STOP_ERROR, error);
   return;
+}
+
+static scamper_addr_t *ping_addr(scamper_ping_t *ping,
+				 ping_state_t *state, void *addr)
+{
+  if(scamper_addr_raw_cmp(ping->dst, addr) == 0)
+    return scamper_addr_use(ping->dst);
+  if(state->last_addr != NULL)
+    {
+      if(scamper_addr_raw_cmp(state->last_addr, addr) == 0)
+	return scamper_addr_use(state->last_addr);
+      scamper_addr_free(state->last_addr);
+    }
+  if((state->last_addr = scamper_addr_alloc(ping->dst->type, addr)) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not get reply addr");
+      return NULL;
+    }
+  return scamper_addr_use(state->last_addr);
 }
 
 static uint16_t match_ipid(scamper_task_t *task, uint16_t ipid)
@@ -412,13 +430,9 @@ static void do_ping_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
       goto err;
     }
 
-  /* figure out where the response came from */
-  if((reply->addr = scamper_addrcache_get(addrcache, ping->dst->type,
-					  dl->dl_ip_src)) == NULL)
-    {
-      printerror(errno, strerror, __func__, "could not get reply addr");
-      goto err;
-    }
+  /* record where the response came from */
+  if((reply->addr = ping_addr(ping, state, dl->dl_ip_src)) == NULL)
+    goto err;
 
   /* put together details of the reply */
   timeval_cpy(&reply->tx, &probe->tx);
@@ -673,8 +687,7 @@ static void do_ping_handle_icmp(scamper_task_t *task, scamper_icmp_resp_t *ir)
   /* figure out where the response came from */
   if(scamper_icmp_resp_src(ir, &addr) != 0)
     goto err;
-  reply->addr = scamper_addrcache_get(addrcache, addr.type, addr.addr);
-  if(reply->addr == NULL)
+  if((reply->addr = ping_addr(ping, state, addr.addr)) == NULL)
     goto err;
 
   /* put together details of the reply */
@@ -711,11 +724,8 @@ static void do_ping_handle_icmp(scamper_task_t *task, scamper_icmp_resp_t *ir)
 	  reply->v4rr = v4rr;
 
 	  for(i=0; i<rrc; i++)
-	    {
-	      v4rr->rr[i] = scamper_addrcache_get_ipv4(addrcache, &rrs[i]);
-	      if(v4rr->rr[i] == NULL)
-		goto err;
-	    }
+	    if((v4rr->rr[i] = scamper_addr_alloc_ipv4(&rrs[i])) == NULL)
+	      goto err;
 	}
 
       if((ir->ir_flags & SCAMPER_ICMP_RESP_FLAG_IPOPT_TS) ||
@@ -731,12 +741,9 @@ static void do_ping_handle_icmp(scamper_task_t *task, scamper_icmp_resp_t *ir)
 	      v4ts->tsc = tsc;
 	      for(i=0; i<tsc; i++)
 		{
-		  if(tsips != NULL)
-		    {
-		      v4ts->ips[i]=scamper_addrcache_get_ipv4(addrcache,&tsips[i]);
-		      if(v4ts->ips[i] == NULL)
-			goto err;
-		    }
+		  if(tsips != NULL &&
+		     (v4ts->ips[i]=scamper_addr_alloc_ipv4(&tsips[i])) == NULL)
+		    goto err;
 		  v4ts->tss[i] = tstss[i];
 		}
 	    }
@@ -910,6 +917,9 @@ static void ping_state_free(ping_state_t *state)
 
   if(state->payload != NULL)
     free(state->payload);
+
+  if(state->last_addr != NULL)
+    scamper_addr_free(state->last_addr);
 
   free(state);
   return;
@@ -1445,8 +1455,7 @@ static int ping_tsopt(scamper_ping_t *ping, uint8_t *flags, char *tsopt)
       i--;
       while(i>=0)
 	{
-	  ts->ips[i] = scamper_addrcache_resolve(addrcache, AF_INET, ips[i]);
-	  if(ts->ips[i] == NULL)
+	  if((ts->ips[i] = scamper_addr_resolve(AF_INET, ips[i])) == NULL)
 	    {
 	      scamper_ping_v4ts_free(ts);
 	      return -1;
@@ -1661,7 +1670,7 @@ void *scamper_do_ping_alloc(char *str)
     {
       goto err;
     }
-  if((ping->dst = scamper_addrcache_resolve(addrcache,AF_UNSPEC,addr)) == NULL)
+  if((ping->dst = scamper_addr_resolve(AF_UNSPEC, addr)) == NULL)
     {
       goto err;
     }
@@ -1781,8 +1790,7 @@ void *scamper_do_ping_alloc(char *str)
       af = scamper_addr_af(ping->dst);
       if(af != AF_INET && af != AF_INET6)
 	goto err;
-
-      if((ping->src = scamper_addrcache_resolve(addrcache, af, src)) == NULL)
+      if((ping->src = scamper_addr_resolve(af, src)) == NULL)
 	goto err;
     }
 

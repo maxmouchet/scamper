@@ -1,7 +1,7 @@
 /*
  * scamper_do_tbit.c
  *
- * $Id: scamper_tbit_do.c,v 1.103.6.2 2015/10/21 08:22:51 mjl Exp $
+ * $Id: scamper_tbit_do.c,v 1.103.6.3 2016/06/22 08:18:57 mjl Exp $
  *
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2009-2010 Stephen Eichler
@@ -37,7 +37,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_do.c,v 1.103.6.2 2015/10/21 08:22:51 mjl Exp $";
+  "$Id: scamper_tbit_do.c,v 1.103.6.3 2016/06/22 08:18:57 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -788,7 +788,7 @@ static int tbit_reassemble(scamper_task_t *task, scamper_dl_rec_t **out,
 		    (array_cmp_t)tbit_frag_cmp);
   if(frag == NULL)
     {
-      if((frag = malloc_zero(sizeof(tbit_frags_t))) == NULL)
+      if((frag = malloc_zero(sizeof(tbit_frag_t))) == NULL)
 	{
 	  printerror(errno, strerror, __func__, "could not malloc frag");
 	  goto err;
