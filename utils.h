@@ -1,11 +1,11 @@
 /*
  * utils.h
  *
- * $Id: utils.h,v 1.109 2014/11/01 15:21:35 mjl Exp $
+ * $Id: utils.h,v 1.110 2014/12/03 01:33:21 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012-2013 The Regents of the University of California
+ * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -111,6 +111,7 @@ const char *addr_tostr(int af, const void *addr, char *buf, size_t len);
 int sockaddr_compose(struct sockaddr *sa,
 		     const int af, const void *addr, const int port);
 int sockaddr_compose_un(struct sockaddr *sa, const char *name);
+int sockaddr_compose_str(struct sockaddr *sa, const char *ip, const int port);
 int sockaddr_len(const struct sockaddr *sa);
 struct sockaddr *sockaddr_dup(const struct sockaddr *sa);
 char *sockaddr_tostr(const struct sockaddr *sa, char *buf, const size_t len);

@@ -1,12 +1,12 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.171 2014/11/01 18:28:35 mjl Exp $
+ * $Id: utils.c,v 1.173.2.1 2015/08/08 03:33:58 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2011      Matthew Luckie
- * Copyright (C) 2012-2013 The Regents of the University of California
+ * Copyright (C) 2012-2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.171 2014/11/01 18:28:35 mjl Exp $";
+  "$Id: utils.c,v 1.173.2.1 2015/08/08 03:33:58 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -158,6 +158,43 @@ int sockaddr_compose_un(struct sockaddr *sa, const char *file)
 #endif
 }
 
+int sockaddr_compose_str(struct sockaddr *sa, const char *addr, const int port)
+{
+  struct addrinfo hints, *res, *res0;
+  int rc = -1;
+  void *va;
+
+  memset(&hints, 0, sizeof(struct addrinfo));
+  hints.ai_flags    = AI_NUMERICHOST;
+  hints.ai_socktype = SOCK_DGRAM;
+  hints.ai_protocol = IPPROTO_UDP;
+  hints.ai_family   = AF_UNSPEC;
+
+  if(getaddrinfo(addr, NULL, &hints, &res0) != 0 || res0 == NULL)
+    return rc;
+
+  for(res = res0; res != NULL; res = res->ai_next)
+    {
+      if(res->ai_family == PF_INET)
+	{
+	  va = &((struct sockaddr_in *)res->ai_addr)->sin_addr;
+	  sockaddr_compose(sa, AF_INET, va, port);
+	  rc = 0;
+	  break;
+	}
+      else if(res->ai_family == PF_INET6)
+	{
+	  va = &((struct sockaddr_in6 *)res->ai_addr)->sin6_addr;
+	  sockaddr_compose(sa, AF_INET6, va, port);
+	  rc = 0;
+	  break;
+	}
+    }
+
+  freeaddrinfo(res0);
+  return rc;
+}
+
 #if defined(AF_LINK) && !defined(_WIN32)
 static char *link_tostr(const struct sockaddr_dl *sdl,
 			char *buf, const size_t len)
@@ -238,7 +275,7 @@ char *sockaddr_tostr(const struct sockaddr *sa, char *buf, const size_t len)
 #endif
 
       snprintf(buf, len, "%s:%d", addr,
-	       ((const struct sockaddr_in *)sa)->sin_port);
+	       ntohs(((const struct sockaddr_in *)sa)->sin_port));
     }
   else if(sa->sa_family == AF_INET6)
     {
@@ -257,7 +294,7 @@ char *sockaddr_tostr(const struct sockaddr *sa, char *buf, const size_t len)
 #endif
 
       snprintf(buf, len, "%s.%d", addr,
-	       ((const struct sockaddr_in6 *)sa)->sin6_port);
+	       ntohs(((const struct sockaddr_in6 *)sa)->sin6_port));
     }
 #if defined(AF_LINK) && !defined(_WIN32)
   else if(sa->sa_family == AF_LINK)
@@ -597,38 +634,38 @@ static void array_swap(void **a, int i, int j)
   return;
 }
 
-static void array_qsort_0(void **a, array_cmp_t cmp, int l, int r)
+static void array_qsort_3(void **a, array_cmp_t cmp, int l, int r)
 {
+  int lt, gt, i, rc;
   void *c;
-  int i, p;
-
+  
   if(l >= r)
     return;
 
-  array_swap(a, (l+r)/2, l);
+  lt = l;
+  gt = r;
+  i  = l;
+  c  = a[l];
 
-  c = a[l];
-  p = l;
-
-  for(i=l+1; i<=r; i++)
+  while(i <= gt)
     {
-      if(cmp(a[i], c) < 0)
-	{
-	  p++;
-	  array_swap(a, p, i);
-	}
+      rc = cmp(a[i], c);
+      if(rc < 0)
+	array_swap(a, lt++, i++);
+      else if(rc > 0)
+	array_swap(a, i, gt--);
+      else
+	i++;
     }
-  array_swap(a, p, l);
 
-  array_qsort_0(a, cmp, l, p-1);
-  array_qsort_0(a, cmp, p+1, r);
-
+  array_qsort_3(a, cmp, l, lt-1);
+  array_qsort_3(a, cmp, gt+1, r);
   return;
 }
 
 void array_qsort(void **a, int n, array_cmp_t cmp)
 {
-  array_qsort_0(a, cmp, 0, n-1);
+  array_qsort_3(a, cmp, 0, n-1);
   return;
 }
 

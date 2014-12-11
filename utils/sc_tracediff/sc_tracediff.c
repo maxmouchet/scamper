@@ -1,7 +1,7 @@
 /*
  * sc_tracediff
  *
- * $Id: sc_tracediff.c,v 1.10 2012/02/28 00:21:11 mjl Exp $
+ * $Id: sc_tracediff.c,v 1.10.14.1 2015/08/08 04:05:06 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_tracediff.c,v 1.10 2012/02/28 00:21:11 mjl Exp $";
+  "$Id: sc_tracediff.c,v 1.10.14.1 2015/08/08 04:05:06 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -477,6 +477,7 @@ int main(int argc, char *argv[])
 	    {
 	      filec_open--;
 	      scamper_file_close(file[i]);
+	      file[i] = NULL;
 	      continue;
 	    }
 	  assert(type == SCAMPER_FILE_OBJ_TRACE);

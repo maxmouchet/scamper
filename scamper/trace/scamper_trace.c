@@ -1,7 +1,7 @@
 /*
  * scamper_trace.c
  *
- * $Id: scamper_trace.c,v 1.92 2012/03/29 00:01:12 mjl Exp $
+ * $Id: scamper_trace.c,v 1.93 2014/12/11 19:45:55 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2003-2011 The University of Waikato
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace.c,v 1.92 2012/03/29 00:01:12 mjl Exp $";
+  "$Id: scamper_trace.c,v 1.93 2014/12/11 19:45:55 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -274,8 +274,6 @@ int scamper_trace_hop_addr_cmp(const scamper_trace_hop_t *a,
   return scamper_addr_cmp(a->hop_addr, b->hop_addr);
 }
 
-
-
 /*
  * scamper_trace_addr
  *
@@ -288,18 +286,45 @@ scamper_addr_t *scamper_trace_addr(const void *va)
   return ((const scamper_trace_t *)va)->dst;
 }
 
-const char *scamper_trace_type_tostr(const scamper_trace_t *trace)
+const char *scamper_trace_type_tostr(const scamper_trace_t *t, char *b, size_t l)
 {
-  switch(trace->type)
+  static const char *m[] = {
+    NULL,
+    "icmp-echo",
+    "udp",
+    "tcp",
+    "icmp-echo-paris",
+    "udp-paris",
+    "tcp-ack",
+  };
+  if(t->type > sizeof(m) / sizeof(char *) || m[t->type] == NULL)
     {
-    case SCAMPER_TRACE_TYPE_UDP:             return "udp";
-    case SCAMPER_TRACE_TYPE_UDP_PARIS:       return "udp-paris";
-    case SCAMPER_TRACE_TYPE_ICMP_ECHO:       return "icmp-echo";
-    case SCAMPER_TRACE_TYPE_ICMP_ECHO_PARIS: return "icmp-echo-paris";
-    case SCAMPER_TRACE_TYPE_TCP:             return "tcp";
-    case SCAMPER_TRACE_TYPE_TCP_ACK:         return "tcp-ack";
+      snprintf(b, l, "%d", t->type);
+      return b;
     }
-  return NULL;
+  return m[t->type];
+}
+
+const char *scamper_trace_stop_tostr(const scamper_trace_t *t, char *b, size_t l)
+{
+  static const char *r[] = {
+    "NONE",
+    "COMPLETED",
+    "UNREACH",
+    "ICMP",
+    "LOOP",
+    "GAPLIMIT",
+    "ERROR",
+    "HOPLIMIT",
+    "GSS",
+    "HALTED",
+  };
+  if(t->stop_reason > sizeof(r) / sizeof(char *) || r[t->stop_reason] == NULL)
+    {
+      snprintf(b, l, "%d", t->stop_reason);
+      return b;
+    }
+  return r[t->stop_reason];
 }
 
 /*

@@ -1,12 +1,12 @@
 /*
  * scamper_dl.h
  *
- * $Id: scamper_dl.h,v 1.57 2013/07/08 17:48:31 mjl Exp $
+ * $Id: scamper_dl.h,v 1.57.14.2 2015/08/08 05:12:01 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
- * Copyright (c) 2013      The Regents of the University of California
+ * Copyright (c) 2013-2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -115,13 +115,13 @@
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP && \
  (((dl)->dl_af == AF_INET  && (dl)->dl_ip_proto == 1) || \
   ((dl)->dl_af == AF_INET6 && (dl)->dl_ip_proto == 58)) && \
- (dl)->dl_icmp_ip_proto == 17))
+ (dl)->dl_icmp_ip_proto == 17)
 
 #define SCAMPER_DL_IS_ICMP_Q_TCP(dl) ( \
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP && \
  (((dl)->dl_af == AF_INET  && (dl)->dl_ip_proto == 1) || \
   ((dl)->dl_af == AF_INET6 && (dl)->dl_ip_proto == 58)) && \
- (dl)->dl_icmp_ip_proto == 6))
+ (dl)->dl_icmp_ip_proto == 6)
 
 #define SCAMPER_DL_IS_ICMP_Q_ICMP_ECHO_REQ(dl) ( \
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP && \
@@ -190,6 +190,11 @@
    (dl)->dl_icmp_type == 3 && (dl)->dl_icmp_code == 4) || \
   ((dl)->dl_af == AF_INET6 && (dl)->dl_ip_proto == 58 && \
    (dl)->dl_icmp_type == 2)))
+
+#define SCAMPER_DL_IS_ICMP_PARAMPROB(dl) ( \
+ (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP && \
+ (dl)->dl_af == AF_INET && (dl)->dl_ip_proto == 1 && \
+ (dl)->dl_icmp_type == 12)
 
 #define SCAMPER_DL_IS_ICMP6_ND_NADV(dl) ( \
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP && \

@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.240 2014/11/01 15:21:35 mjl Exp $
+ * $Id: scamper.c,v 1.241 2014/12/03 01:33:21 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper.c,v 1.240 2014/11/01 15:21:35 mjl Exp $";
+  "$Id: scamper.c,v 1.241 2014/12/03 01:33:21 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -98,7 +98,7 @@ static const char rcsid[] =
 #define OPT_FIREWALL        0x00200000 /* F: */
 #define OPT_CMDLIST         0x00400000 /* I: */
 #define OPT_INFILE          0x00800000 /* f: */
-#define OPT_CTRL_PORT       0x01000000 /* P: */
+#define OPT_CTRL_INET       0x01000000 /* P: */
 #define OPT_CTRL_UNIX       0x02000000 /* U: */
 #define OPT_EPOLL           0x04000000
 #define OPT_RAWTCP          0x08000000
@@ -114,7 +114,8 @@ static const char rcsid[] =
  * outfile:     where to send results by default
  * outtype:     format to use when writing results to outfile
  * intype:      format of input file
- * ctrl_port:   port to use for control socket on loopback
+ * ctrl_inet_addr: address to use for control socket
+ * ctrl_inet_port: port to use for control socket
  * ctrl_unix:   file to use for unix domain control
  * monitorname: canonical name of monitor assigned by human
  * listname:    name of list assigned by human
@@ -133,7 +134,8 @@ static int    window       = SCAMPER_WINDOW_DEF;
 static char  *outfile      = "-";
 static char  *outtype      = "text";
 static char  *intype       = NULL;
-static int    ctrl_port    = 0;
+static char  *ctrl_inet_addr = NULL;
+static int    ctrl_inet_port = 0;
 static char  *ctrl_unix    = NULL;
 static char  *monitorname  = NULL;
 static char  *listname     = NULL;
@@ -199,7 +201,7 @@ static void usage(uint32_t opt_mask)
 #ifndef WITHOUT_DEBUGFILE
     "               [-d debugfile]\n"
 #endif
-    "               [-i IPs | -I cmds | -f file | -P port | -U unix-dom]\n");
+    "               [-i IPs | -I cmds | -f file | -P [ip:]port | -U unix]\n");
 
   if(opt_mask == 0) return;
 
@@ -289,8 +291,8 @@ static void usage(uint32_t opt_mask)
       usage_str('p', buf);
     }
 
-  if((opt_mask & OPT_CTRL_PORT) != 0)
-    usage_str('P', "port for control socket on the loopback interface");
+  if((opt_mask & OPT_CTRL_INET) != 0)
+    usage_str('P', "[ip:]port for control socket, default to loopback");
 
   if((opt_mask & OPT_CTRL_UNIX) != 0)
     usage_str('U', "name of control socket in the file system");
@@ -422,6 +424,58 @@ static int ppswindow_set(int p, int w)
   return 0;
 }
 
+/*
+ * split_addrport
+ *
+ * given an input string, return the ip address / name in the first part
+ * (if present) and the port number in the second.  do some basic sanity
+ * checking as well.
+ */
+static int split_addrport(const char *in, char **first, int *port)
+{
+  char *ptr, *dup = NULL, *first_tmp = NULL;
+  long lo;
+
+  if(string_isnumber(in))
+    {
+      if(string_tolong(in, &lo) == -1 || lo < 1 || lo > 65535)
+	goto err;
+      *first = NULL;
+      *port  = lo;
+      return 0;
+    }
+
+  if((dup = strdup(in)) == NULL)
+    goto err;
+
+  if(dup[0] == '[')
+    {
+      string_nullterm_char(dup, ']', &ptr);
+      if(ptr == NULL || *ptr != ':' || (first_tmp = strdup(dup+1)) == NULL)
+	goto err;
+      ptr++;
+    }
+  else
+    {
+      string_nullterm_char(dup, ':', &ptr);
+      if(ptr == NULL || (first_tmp = strdup(dup)) == NULL)
+	goto err;
+    }
+
+  free(dup); dup = NULL;
+  if(string_tolong(ptr, &lo) != 0 || lo < 1 || lo > 65535)
+    goto err;
+
+  *first = first_tmp;
+  *port  = lo;
+  return 0;
+
+ err:
+  if(first_tmp != NULL) free(first_tmp);
+  if(dup != NULL) free(dup);
+  return -1;
+}
+
 static int check_options(int argc, char *argv[])
 {
   static const scamper_multicall_t multicall[] = {
@@ -443,10 +497,10 @@ static int check_options(int argc, char *argv[])
      scamper_do_sniff_arg_validate, scamper_do_sniff_usage},
   };
   int   i;
-  long  lo, lo_w = window, lo_p = pps;
+  long  lo_w = window, lo_p = pps;
   char  opts[64];
   char *opt_cycleid = NULL, *opt_listid = NULL, *opt_listname = NULL;
-  char *opt_ctrl_port = NULL, *opt_ctrl_unix = NULL, *opt_monitorname = NULL;
+  char *opt_ctrl_inet = NULL, *opt_ctrl_unix = NULL, *opt_monitorname = NULL;
   char *opt_pps = NULL, *opt_command = NULL, *opt_window = NULL;
   char *opt_debugfile = NULL, *opt_firewall = NULL, *opt_pidfile = NULL;
   size_t argv0 = strlen(argv[0]);
@@ -585,8 +639,8 @@ static int check_options(int argc, char *argv[])
 	  break;
 
 	case 'P':
-	  options |= OPT_CTRL_PORT;
-	  opt_ctrl_port = optarg;
+	  options |= OPT_CTRL_INET;
+	  opt_ctrl_inet = optarg;
 	  break;
 
 	case 'U':
@@ -625,7 +679,7 @@ static int check_options(int argc, char *argv[])
    * if one of -CPUi is not provided, pretend that -f was for backward
    * compatibility
    */
-  if((options & (OPT_IP|OPT_CTRL_PORT|OPT_CTRL_UNIX|OPT_CMDLIST)) == 0)
+  if((options & (OPT_IP|OPT_CTRL_INET|OPT_CTRL_UNIX|OPT_CMDLIST)) == 0)
     {
       options |= OPT_INFILE;
     }
@@ -694,9 +748,9 @@ static int check_options(int argc, char *argv[])
     }
 
   /* only one of the following should be specified */
-  o = options & (OPT_IP|OPT_CTRL_PORT|OPT_CTRL_UNIX|OPT_CMDLIST|OPT_INFILE);
+  o = options & (OPT_IP|OPT_CTRL_INET|OPT_CTRL_UNIX|OPT_CMDLIST|OPT_INFILE);
   if(((o & OPT_IP)        != 0 && (o & ~OPT_IP)        != 0) ||
-     ((o & OPT_CTRL_PORT) != 0 && (o & ~OPT_CTRL_PORT) != 0) ||
+     ((o & OPT_CTRL_INET)   != 0 && (o & ~OPT_CTRL_INET)   != 0) ||
      ((o & OPT_CTRL_UNIX) != 0 && (o & ~OPT_CTRL_UNIX) != 0) ||
      ((o & OPT_CMDLIST)   != 0 && (o & ~OPT_CMDLIST)   != 0) ||
      ((o & OPT_INFILE)    != 0 && (o & ~OPT_INFILE)    != 0))
@@ -710,47 +764,38 @@ static int check_options(int argc, char *argv[])
   arglist_len = argc - optind;
 
   /* if one of -CPUi is used, then a default command must be set */
-  if((options & (OPT_CTRL_PORT | OPT_CTRL_UNIX | OPT_IP | OPT_INFILE)) != 0 &&
+  if((options & (OPT_CTRL_INET | OPT_CTRL_UNIX | OPT_IP | OPT_INFILE)) != 0 &&
      scamper_command_set((options & OPT_COMMAND) ?
 			 opt_command : SCAMPER_COMMAND_DEF) == -1)
     {
       return -1;
     }
 
-  if((options & OPT_DAEMON) && (options & (OPT_CTRL_PORT|OPT_CTRL_UNIX)) == 0)
+  if((options & OPT_DAEMON) && (options & (OPT_CTRL_INET|OPT_CTRL_UNIX)) == 0)
     {
-      usage(OPT_DAEMON | OPT_CTRL_PORT | OPT_CTRL_UNIX);
+      usage(OPT_DAEMON | OPT_CTRL_INET | OPT_CTRL_UNIX);
       return -1;
     }
 
-  if(options & OPT_CTRL_PORT)
+  if(options & OPT_CTRL_INET)
     {
-      /* port on which to listen for control socket connections */
-      if(string_isnumber(opt_ctrl_port) == 0 ||
-	 string_tolong(opt_ctrl_port, &lo) == -1 || lo < 1 || lo > 65535)
-	{
-	  usage(OPT_CTRL_PORT);
-	  return -1;
-	}
-      ctrl_port = lo;
-
       /* if listening on control socket there should be no leftover args */
-      if(arglist_len != 0)
+      if(arglist_len != 0 ||
+	 split_addrport(opt_ctrl_inet, &ctrl_inet_addr, &ctrl_inet_port) != 0)
 	{
-	  usage(OPT_CTRL_PORT);
+	  usage(OPT_CTRL_INET);
 	  return -1;
 	}
     }
   else if(options & OPT_CTRL_UNIX)
     {
-      ctrl_unix = opt_ctrl_unix;
-
       /* if listening on control socket there should be no leftover args */
       if(arglist_len != 0)
 	{
 	  usage(OPT_CTRL_UNIX);
 	  return -1;
 	}
+      ctrl_unix = opt_ctrl_unix;
     }
   else if(options & (OPT_IP | OPT_CMDLIST))
     {
@@ -1103,9 +1148,9 @@ static int scamper(int argc, char *argv[])
     }
 
   /* if we have been told to open a control socket then do that now */
-  if(options & OPT_CTRL_PORT)
+  if(options & OPT_CTRL_INET)
     {
-      if(scamper_control_init_port(ctrl_port) != 0)
+      if(scamper_control_init_inet(ctrl_inet_addr, ctrl_inet_port) != 0)
 	return -1;
 
       /* wait for more tasks when finished with the active window */
@@ -1206,7 +1251,7 @@ static int scamper(int argc, char *argv[])
 	  return -1;
 	}
     }
-  else if((options & (OPT_CTRL_PORT|OPT_CTRL_UNIX)) == 0)
+  else if((options & (OPT_CTRL_INET|OPT_CTRL_UNIX)) == 0)
     {
       if(intype == NULL)
 	source = scamper_source_file_alloc(&ssp, arglist[0], command, 1, 0);
@@ -1417,7 +1462,7 @@ static void cleanup(void)
 
   scamper_dl_cleanup();
 
-  if(options & (OPT_CTRL_PORT|OPT_CTRL_UNIX))
+  if(options & (OPT_CTRL_INET|OPT_CTRL_UNIX))
     scamper_control_cleanup();
 
   scamper_outfiles_cleanup();
@@ -1432,6 +1477,12 @@ static void cleanup(void)
     {
       scamper_addrcache_free(addrcache);
       addrcache = NULL;
+    }
+
+  if(ctrl_inet_addr != NULL)
+    {
+      free(ctrl_inet_addr);
+      ctrl_inet_addr = NULL;
     }
 
   if(monitorname != NULL)

@@ -1,7 +1,7 @@
 /*
  * scamper_trace.h
  *
- * $Id: scamper_trace.h,v 1.132 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_trace.h,v 1.133 2014/12/11 19:45:55 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -380,8 +380,10 @@ void scamper_trace_free(scamper_trace_t *trace);
 uint16_t scamper_trace_pathlength(const scamper_trace_t *trace);
 int scamper_trace_probe_headerlen(const scamper_trace_t *trace);
 scamper_addr_t *scamper_trace_addr(const void *va);
-const char *scamper_trace_type_tostr(const scamper_trace_t *trace);
 int scamper_trace_iscomplete(const scamper_trace_t *trace);
+
+const char *scamper_trace_type_tostr(const scamper_trace_t *t, char *b, size_t l);
+const char *scamper_trace_stop_tostr(const scamper_trace_t *t, char *b, size_t l);
 
 /*
  * scamper_trace_loop:

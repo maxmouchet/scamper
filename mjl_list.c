@@ -2,7 +2,7 @@
  * linked list routines
  * by Matthew Luckie
  *
- * Copyright (C) 2004-2013 Matthew Luckie. All rights reserved.
+ * Copyright (C) 2004-2015 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_list.c,v 1.68 2014/11/01 15:33:00 mjl Exp $";
+  "$Id: mjl_list.c,v 1.68.4.1 2015/08/08 03:36:12 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -611,37 +611,37 @@ static void slist_rebuild(slist_t *list, slist_node_t **v)
 }
 
 /*
- * slist_qsort_0:
+ * slist_qsort_3:
  *
- * recursive function that implements quicksort on an array of slist_node_t
- * structures.
+ * recursive function that implements quicksort with a three-way partition
+ * on an array of slist_node_t structures.
  */
-static void slist_qsort_0(slist_node_t **a, slist_cmp_t cmp, int l, int r)
+static void slist_qsort_3(slist_node_t **a, slist_cmp_t cmp, int l, int r)
 {
   slist_node_t *c;
-  int i, p;
+  int i, lt, gt, rc;
 
   if(l >= r)
     return;
 
-  slist_swap(a, (l+r)/2, l);
+  c  = a[l];
+  lt = l;
+  gt = r;
+  i  = l;
 
-  c = a[l];
-  p = l;
-
-  for(i=l+1; i<=r; i++)
+  while(i <= gt)
     {
-      if(cmp(a[i]->item, c->item) < 0)
-	{
-	  p++;
-	  slist_swap(a, p, i);
-	}
+      rc = cmp(a[i]->item, c->item);
+      if(rc < 0)
+	slist_swap(a, lt++, i++);
+      else if(rc > 0)
+	slist_swap(a, i, gt--);
+      else
+	i++;
     }
-  slist_swap(a, p, l);
 
-  slist_qsort_0(a, cmp, l, p-1);
-  slist_qsort_0(a, cmp, p+1, r);
-
+  slist_qsort_3(a, cmp, l, lt-1);
+  slist_qsort_3(a, cmp, gt+1, r);
   return;
 }
 
@@ -658,7 +658,7 @@ int slist_qsort(slist_t *list, slist_cmp_t cmp)
 
   if((v = slist_node_array(list)) == NULL)
     return -1;
-  slist_qsort_0(v, cmp, 0, list->length-1);
+  slist_qsort_3(v, cmp, 0, list->length-1);
   slist_rebuild(list, v);
   free(v);
 
@@ -1292,37 +1292,37 @@ static void dlist_rebuild(dlist_t *list, dlist_node_t **v)
 }
 
 /*
- * dlist_qsort_0:
+ * dlist_qsort_3:
  *
- * recursive function that implements quicksort on an array of dlist_node_t
- * structures.
+ * recursive function that implements quicksort with a three-way partition
+ * on an array of slist_node_t structures.
  */
-static void dlist_qsort_0(dlist_node_t **a, dlist_cmp_t cmp, int l, int r)
+static void dlist_qsort_3(dlist_node_t **a, dlist_cmp_t cmp, int l, int r)
 {
   dlist_node_t *c;
-  int i, p;
+  int i, lt, gt, rc;
 
   if(l >= r)
     return;
 
-  dlist_swap(a, (l+r)/2, l);
+  c  = a[l];
+  lt = l;
+  gt = r;
+  i  = l;
 
-  c = a[l];
-  p = l;
-
-  for(i=l+1; i<=r; i++)
+  while(i <= gt)
     {
-      if(cmp(a[i]->item, c->item) < 0)
-	{
-	  p++;
-	  dlist_swap(a, p, i);
-	}
+      rc = cmp(a[i]->item, c->item);
+      if(rc < 0)
+	dlist_swap(a, lt++, i++);
+      else if(rc > 0)
+	dlist_swap(a, i, gt--);
+      else
+	i++;
     }
-  dlist_swap(a, p, l);
 
-  dlist_qsort_0(a, cmp, l, p-1);
-  dlist_qsort_0(a, cmp, p+1, r);
-
+  dlist_qsort_3(a, cmp, l, lt-1);
+  dlist_qsort_3(a, cmp, gt+1, r);
   return;
 }
 
@@ -1339,7 +1339,7 @@ int dlist_qsort(dlist_t *list, dlist_cmp_t cmp)
 
   if((v = dlist_node_array(list)) == NULL)
     return -1;
-  dlist_qsort_0(v, cmp, 0, list->length-1);
+  dlist_qsort_3(v, cmp, 0, list->length-1);
   dlist_rebuild(list, v);
   free(v);
 

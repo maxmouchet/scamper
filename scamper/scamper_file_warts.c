@@ -1,9 +1,9 @@
 /*
  * scamper_file_warts.c
  *
- * the WAND ARTS file format replacement
+ * the warts file format
  *
- * $Id: scamper_file_warts.c,v 1.242 2014/11/01 18:19:24 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.243 2014/11/08 06:16:31 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_warts.c,v 1.242 2014/11/01 18:19:24 mjl Exp $";
+  "$Id: scamper_file_warts.c,v 1.243 2014/11/08 06:16:31 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

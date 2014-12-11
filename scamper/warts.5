@@ -174,15 +174,15 @@ The format of a list structure is:
 .It
 8 bytes: Warts header, type 0x0001
 .It
-Variable: Flags
-.It
-uint16_t: Parameter length (optional, included if any flags are set)
-.It
 uint32_t: List ID assigned by warts from a counter
 .It
 uint32_t: List ID assigned by a person.
 .It
 String: List Name assigned by a person
+.It
+Variable: Flags
+.It
+uint16_t: Parameter length (optional, included if any flags are set)
 .It
 String: Description, included if flag 1 is set
 .It

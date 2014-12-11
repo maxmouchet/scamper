@@ -1,7 +1,7 @@
 /*
  * scamper_ping.h
  *
- * $Id: scamper_ping.h,v 1.45 2014/03/06 20:24:37 mjl Exp $
+ * $Id: scamper_ping.h,v 1.45.10.1 2015/08/08 05:18:35 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -116,6 +116,7 @@
 #define SCAMPER_PING_FLAG_TSANDADDR       0x10 /* -T tsandaddr */
 #define SCAMPER_PING_FLAG_ICMPSUM         0x20 /* -C csum */
 #define SCAMPER_PING_FLAG_DL              0x40 /* always use datalink socket */
+#define SCAMPER_PING_FLAG_TBT             0x80 /* -O tbt: too big trick */
 
 /*
  * scamper_ping_reply_v4rr

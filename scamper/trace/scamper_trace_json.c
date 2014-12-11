@@ -7,7 +7,7 @@
  * Copyright (C) 2013-2014 The Regents of the University of California
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_trace_json.c,v 1.6 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_trace_json.c,v 1.7.2.1 2015/08/08 05:59:33 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_json.c,v 1.6 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_trace_json.c,v 1.7.2.1 2015/08/08 05:59:33 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -86,40 +86,16 @@ static char *hop_tostr(scamper_trace_hop_t *hop)
   return strdup(buf);
 }
 
-static char *stop_reason_tostr(uint8_t reason, char *buf, size_t len)
-{
-  static char *r[] = {
-    "NONE",
-    "COMPLETED",
-    "UNREACH",
-    "ICMP",
-    "LOOP",
-    "GAPLIMIT",
-    "ERROR",
-    "HOPLIMIT",
-    "GSS",
-  };
-  if(reason > sizeof(r) / sizeof(char *))
-    {
-      snprintf(buf, len, "%d", reason);
-      return buf;
-    }
-  return r[reason];
-}
-
 static char *header_tostr(const scamper_trace_t *trace)
 {
   char buf[512], tmp[64];
-  const char *ptr;
   size_t off = 0;
   time_t tt = trace->start.tv_sec;
 
   string_concat(buf, sizeof(buf), &off, "\"version\":\"0.1\",\"type\":\"trace\"");
   string_concat(buf, sizeof(buf), &off, ", \"userid\":%u", trace->userid);
-  if((ptr = scamper_trace_type_tostr(trace)) != NULL)
-    string_concat(buf, sizeof(buf), &off, ", \"method\":\"%s\"", ptr);
-  else
-    string_concat(buf, sizeof(buf), &off, ", \"method\":\"%u\"", trace->type);
+  string_concat(buf, sizeof(buf), &off, ", \"method\":\"%s\"",
+		scamper_trace_type_tostr(trace, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off, ", \"src\":\"%s\"",
 		scamper_addr_tostr(trace->src, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off, ", \"dst\":\"%s\"",
@@ -131,7 +107,7 @@ static char *header_tostr(const scamper_trace_t *trace)
     string_concat(buf, sizeof(buf), &off, ", \"icmp_sum\":%u", trace->dport);
   string_concat(buf, sizeof(buf), &off,
 		", \"stop_reason\":\"%s\", \"stop_data\":%u",
-		stop_reason_tostr(trace->stop_reason, tmp, sizeof(tmp)),
+		scamper_trace_stop_tostr(trace, tmp, sizeof(tmp)),
 		trace->stop_data);
   strftime(tmp, sizeof(tmp), "%Y-%m-%d %H:%M:%S", localtime(&tt));
   string_concat(buf, sizeof(buf), &off,

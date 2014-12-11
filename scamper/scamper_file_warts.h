@@ -1,9 +1,9 @@
 /*
  * scamper_file_warts.h
  *
- * the Waikato ARTS file format replacement
+ * the warts file format
  *
- * $Id: scamper_file_warts.h,v 1.20 2012/03/29 00:01:12 mjl Exp $
+ * $Id: scamper_file_warts.h,v 1.21 2014/11/08 06:16:31 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato

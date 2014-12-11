@@ -7,7 +7,7 @@
 .\" Copyright (c) 2007-2011 University of Waikato
 .\"                         All rights reserved
 .\"
-.\" $Id: scamper.1,v 1.52 2014/10/09 18:29:04 mjl Exp $
+.\" $Id: scamper.1,v 1.53 2014/12/03 01:33:21 mjl Exp $
 .\"
 .\"  nroff -man scamper.1
 .\"  groff -man -Tascii scamper.1 | man2html -title scamper.1
@@ -35,7 +35,7 @@
 .Op Fl d Ar debugfile
 .Op Fl e Ar pidfile
 .Op Fl O Ar options
-.Op Fl i Ar IPs | Fl I Ar cmds | Fl f Ar file | Fl P Ar port | Fl U Ar unix-dom
+.Op Fl i Ar IPs | Fl I Ar cmds | Fl f Ar file | Fl P Ar [ip:]port | Fl U Ar unix-dom
 .Ek
 .\""""""""""""
 .Sh DESCRIPTION
@@ -72,10 +72,9 @@ can be supplied a list of complete commands on the command line with the
 option.
 Finally,
 .Nm
-can be instructed to listen on a port specified with the
+can be instructed to listen on an IP address and port specified with the
 .Fl P
-option only accessible on the local host, or on a unix domain socket
-specified with the
+option, or on a unix domain socket specified with the
 .Fl U
 option, where it can take commands dynamically.
 .Pp
@@ -241,10 +240,13 @@ option on each.
 .It Fl I Ar cmds.
 specifies complete commands, including target addresses, for scamper to
 execute.
-.It Fl P Ar port
+.It Fl P Ar [ip:]port
 specifies that
 .Nm
-provide a control socket listening on the specified port on the local host.
+provide a control socket listening on the specified IP address and port on
+the local host.  If an IP address is not specified,
+.Nm
+will bind to the port specified on the loopback address.
 .It Fl U Ar unix domain socket
 specifies that
 .Nm

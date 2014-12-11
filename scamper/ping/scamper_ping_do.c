@@ -1,7 +1,7 @@
 /*
  * scamper_do_ping.c
  *
- * $Id: scamper_ping_do.c,v 1.143 2014/09/17 03:26:08 mjl Exp $
+ * $Id: scamper_ping_do.c,v 1.143.6.1 2015/08/08 05:20:11 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_do.c,v 1.143 2014/09/17 03:26:08 mjl Exp $";
+  "$Id: scamper_ping_do.c,v 1.143.6.1 2015/08/08 05:20:11 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -248,16 +248,23 @@ static void do_ping_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
 
   if(SCAMPER_DL_IS_ICMP(dl))
     {
-      if(SCAMPER_PING_METHOD_IS_ICMP(ping) == 0 ||
-	 (ping->reply_pmtu == 0 && (ping->flags & SCAMPER_PING_FLAG_DL) == 0))
+      if((ping->flags & SCAMPER_PING_FLAG_DL) == 0)
 	return;
-
+      
       if(SCAMPER_DL_IS_ICMP_ECHO_REPLY(dl) ||
 	 SCAMPER_DL_IS_ICMP_TIME_REPLY(dl))
 	{
+	  if((SCAMPER_PING_METHOD_IS_ICMP_ECHO(ping) &&
+	      SCAMPER_DL_IS_ICMP_ECHO_REPLY(dl) == 0) ||
+	     (SCAMPER_PING_METHOD_IS_ICMP_TIME(ping) &&
+	      SCAMPER_DL_IS_ICMP_TIME_REPLY(dl) == 0))
+	    return;
 	  if(dl->dl_icmp_id != ping->probe_sport)
 	    return;
 	  seq = dl->dl_icmp_seq;
+	  if(seq < ping->probe_dport)
+	    seq = seq + 0x10000;
+	  seq = seq - ping->probe_dport;
 
 	  /*
 	   * keep a quote of an ICMP echo reply if we're trying to get it to
@@ -281,17 +288,70 @@ static void do_ping_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
 		}
 	    }
 	}
-      else if(SCAMPER_DL_IS_ICMP_Q_ICMP_ECHO_REQ(dl) ||
-	      SCAMPER_DL_IS_ICMP_Q_ICMP_TIME_REQ(dl))
+      else if(SCAMPER_DL_IS_ICMP_UNREACH(dl) ||
+	      SCAMPER_DL_IS_ICMP_TTL_EXP(dl) ||
+	      SCAMPER_DL_IS_ICMP_PACKET_TOO_BIG(dl) ||
+	      SCAMPER_DL_IS_ICMP_PARAMPROB(dl))
 	{
-	  if(dl->dl_icmp_icmp_id != ping->probe_sport)
-	    return;
-	  seq = dl->dl_icmp_icmp_seq;
+	  if(SCAMPER_PING_METHOD_IS_ICMP(ping))
+	    {
+	      if((SCAMPER_PING_METHOD_IS_ICMP_ECHO(ping) &&
+		  SCAMPER_DL_IS_ICMP_Q_ICMP_ECHO_REQ(dl) == 0) ||
+		 (SCAMPER_PING_METHOD_IS_ICMP_TIME(ping) &&
+		  SCAMPER_DL_IS_ICMP_Q_ICMP_TIME_REQ(dl) == 0))
+		return;
+	      if(dl->dl_icmp_icmp_id != ping->probe_sport)
+		return;
+	      seq = dl->dl_icmp_icmp_seq;
+	      if(seq < ping->probe_dport)
+		seq = seq + 0x10000;
+	      seq = seq - ping->probe_dport;
+	    }
+	  else if(SCAMPER_PING_METHOD_IS_TCP(ping))
+	    {
+	      if(SCAMPER_DL_IS_ICMP_Q_TCP(dl) == 0 ||
+		 dl->dl_icmp_tcp_dport != ping->probe_dport)
+		return;
+	      if(ping->probe_method == SCAMPER_PING_METHOD_TCP_ACK)
+		{
+		  if(dl->dl_icmp_tcp_sport != ping->probe_sport)
+		    return;
+		  if(ping->dst->type == SCAMPER_ADDR_TYPE_IPV4)
+		    seq = match_ipid(task, dl->dl_icmp_ip_id);
+		  else
+		    seq = state->seq - 1;
+		}
+	      else
+		{
+		  if(dl->dl_icmp_tcp_sport > ping->probe_sport + state->seq ||
+		     dl->dl_icmp_tcp_sport < ping->probe_sport)
+		    return;
+		  seq = dl->dl_icmp_tcp_sport - ping->probe_sport;
+		}
+	    }
+	  else if(SCAMPER_PING_METHOD_IS_UDP(ping))
+	    {
+	      if(SCAMPER_DL_IS_ICMP_Q_UDP(dl) == 0 ||
+		 dl->dl_icmp_udp_sport != ping->probe_sport)
+		return;
+	      if(ping->probe_method == SCAMPER_PING_METHOD_UDP)
+		{
+		  if(dl->dl_icmp_udp_dport != ping->probe_dport)
+		    return;
+		  if(ping->dst->type == SCAMPER_ADDR_TYPE_IPV4)
+		    seq = match_ipid(task, dl->dl_icmp_ip_id);
+		  else
+		    seq = state->seq - 1;
+		}
+	      else if(ping->probe_method == SCAMPER_PING_METHOD_UDP_DPORT)
+		{
+		  if(dl->dl_icmp_udp_dport > ping->probe_dport + state->seq ||
+		     dl->dl_icmp_udp_dport < ping->probe_dport)
+		    return;
+		  seq = dl->dl_icmp_udp_dport - ping->probe_dport;
+		}
+	    }
 	}
-
-      if(seq < ping->probe_dport)
-	seq = seq + 0x10000;
-      seq = seq - ping->probe_dport;
     }
   else if(SCAMPER_DL_IS_TCP(dl))
     {
@@ -380,12 +440,34 @@ static void do_ping_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
       reply->flags |= SCAMPER_PING_REPLY_FLAG_REPLY_IPID;
     }
 
-  /*
-   * if this is the first reply we have for this hop, then increment
-   * the replies counter we keep state with
-   */
   if(ping->ping_replies[seq] == NULL)
-    state->replies++;
+    {
+      if((ping->flags & SCAMPER_PING_FLAG_TBT) == 0)
+	{
+	  /*
+	   * if this is the first reply we have for this hop, then increment
+	   * the replies counter we keep state with
+	   */
+	  state->replies++;
+	}
+      else
+	{
+	  if(state->replies == 0 &&
+	     SCAMPER_PING_REPLY_IS_ICMP_ECHO_REPLY(reply) == 0)
+	    {
+	      /*
+	       * when doing TBT, anything that is not an echo reply causes
+	       * TBT to halt
+	       */
+	      ping_stop(task, SCAMPER_PING_STOP_COMPLETED, 0);
+	    }
+	  else if(reply->flags & SCAMPER_PING_REPLY_FLAG_REPLY_IPID)
+	    {
+	      /* when doing TBT, only packets with an IPID count */
+	      state->replies++;
+	    }
+	}
+    }
 
   /* put the reply into the ping table */
   scamper_ping_reply_append(ping, reply);
@@ -1227,7 +1309,8 @@ static int ping_arg_param_validate(int optid, char *param, long *out)
       break;
 
     case PING_OPT_OPTION:
-      if(strcasecmp(param, "spoof") != 0 && strcasecmp(param, "dl") != 0)
+      if(strcasecmp(param, "spoof") != 0 && strcasecmp(param, "dl") != 0 &&
+	 strcasecmp(param, "tbt") != 0)
 	goto err;
       break;
 
@@ -1486,6 +1569,8 @@ void *scamper_do_ping_alloc(char *str)
 	    flags |= SCAMPER_PING_FLAG_SPOOF;
 	  else if(strcasecmp(opt->str, "dl") == 0)
 	    flags |= SCAMPER_PING_FLAG_DL;
+	  else if(strcasecmp(opt->str, "tbt") == 0)
+	    flags |= SCAMPER_PING_FLAG_TBT;
 	  else
 	    {
 	      scamper_debug(__func__, "unknown option %s", opt->str);
@@ -1583,7 +1668,6 @@ void *scamper_do_ping_alloc(char *str)
   if(ping->dst->type == SCAMPER_ADDR_TYPE_IPV4)
     {
       cmps = 20;
-
       if(flags & SCAMPER_PING_FLAG_V4RR)
 	cmps += 40;
       else if(ping->probe_tsps != NULL)
@@ -1592,8 +1676,6 @@ void *scamper_do_ping_alloc(char *str)
 	cmps += 40;
       else if(flags & SCAMPER_PING_FLAG_TSANDADDR)
 	cmps += 36;
-
-      /* record an IP address in the payload */
       if(flags & SCAMPER_PING_FLAG_SPOOF)
 	cmps += 4;
     }
@@ -1655,6 +1737,15 @@ void *scamper_do_ping_alloc(char *str)
 
   if(probe_size < cmps)
     goto err;
+
+  /* TBT method is about getting IPv6 fragments */
+  if(flags & SCAMPER_PING_FLAG_TBT)
+    {
+      if(ping->dst->type == SCAMPER_ADDR_TYPE_IPV4)
+	goto err;
+      if(reply_pmtu == 0 || probe_size <= reply_pmtu)
+	goto err;
+    }
 
   if((flags & SCAMPER_PING_FLAG_ICMPSUM) != 0 &&
      SCAMPER_PING_METHOD_IS_ICMP(ping) == 0)

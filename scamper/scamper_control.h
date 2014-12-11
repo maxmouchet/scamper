@@ -1,7 +1,7 @@
 /*
  * scamper_control.h
  *
- * $Id: scamper_control.h,v 1.8 2011/09/16 03:15:43 mjl Exp $
+ * $Id: scamper_control.h,v 1.9 2014/12/03 01:33:21 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
@@ -25,7 +25,7 @@
 #ifndef __SCAMPER_CONTROL_H
 #define __SCAMPER_CONTROL_H
 
-int scamper_control_init_port(int port);
+int scamper_control_init_inet(const char *addr, int port);
 int scamper_control_init_unix(const char *name);
 void scamper_control_cleanup(void);
 

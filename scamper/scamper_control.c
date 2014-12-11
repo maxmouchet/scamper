@@ -1,7 +1,7 @@
 /*
  * scamper_control.c
  *
- * $Id: scamper_control.c,v 1.159 2014/09/05 03:34:39 mjl Exp $
+ * $Id: scamper_control.c,v 1.161 2014/12/03 02:31:32 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_control.c,v 1.159 2014/09/05 03:34:39 mjl Exp $";
+  "$Id: scamper_control.c,v 1.161 2014/12/03 02:31:32 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -2312,14 +2312,32 @@ int scamper_control_init_unix(const char *file)
   return -1;
 }
 
-int scamper_control_init_port(int port)
+int scamper_control_init_inet(const char *ip, int port)
 {
-  struct sockaddr_in sin;
-  struct in_addr     in;
-  int                fd = -1, opt;
+  struct sockaddr_storage sas;
+  struct sockaddr *sa = (struct sockaddr *)&sas;
+  struct in_addr in;
+  int af = AF_INET, fd = -1, opt;
 
+  if(ip != NULL)
+    {
+      if(sockaddr_compose_str(sa, ip, port) != 0)
+	{
+	  printerror(errno, strerror, __func__,
+		     "could not compose sockaddr from %s:%d", ip, port);
+	  goto err;
+	}
+      af = sa->sa_family;
+    }
+  else
+    {
+      /* bind the socket to loopback on the specified port */
+      in.s_addr = htonl(INADDR_LOOPBACK);
+      sockaddr_compose(sa, AF_INET, &in, port);
+    }
+  
   /* open the TCP socket we are going to listen on */
-  if((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1)
+  if((fd = socket(af, SOCK_STREAM, IPPROTO_TCP)) == -1)
     {
       printerror(errno, strerror, __func__, "could not create socket");
       goto err;
@@ -2339,17 +2357,19 @@ int scamper_control_init_port(int port)
       goto err;
     }
 
-  /* bind the socket to loopback on the specified port */
-  in.s_addr = htonl(INADDR_LOOPBACK);
-  sockaddr_compose((struct sockaddr *)&sin, AF_INET, &in, port);
-  if(bind(fd, (struct sockaddr *)&sin, sizeof(sin)) == -1)
+  if(bind(fd, sa, sockaddr_len(sa)) != 0)
     {
-      printerror(errno, strerror, __func__, "could not bind to port %d", port);
+      if(ip == NULL)
+	printerror(errno, strerror, __func__,
+		   "could not bind to port %d", port);
+      else
+	printerror(errno, strerror, __func__,
+		   "could not bind to %s:%d", ip, port);
       goto err;
     }
 
   /* tell the system we want to listen for new clients on this socket */
-  if(listen(fd, -1) == -1)
+  if(listen(fd, -1) != 0)
     {
       printerror(errno, strerror, __func__, "could not listen");
       goto err;

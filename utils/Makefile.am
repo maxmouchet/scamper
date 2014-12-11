@@ -5,6 +5,7 @@ SUBDIRS = \
 	sc_ipiddump \
 	sc_speedtrap \
 	sc_tracediff \
+	sc_warts2csv \
 	sc_warts2json \
 	sc_warts2pcap \
 	sc_warts2text \

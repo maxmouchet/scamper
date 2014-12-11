@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([scamper], [20141101], [mjl@luckie.org.nz])
+AC_INIT([scamper], [20141211a], [mjl@luckie.org.nz])
 
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([scamper/scamper.c])
@@ -241,6 +241,7 @@ AC_CONFIG_FILES([
 	utils/sc_ipiddump/Makefile
 	utils/sc_speedtrap/Makefile
 	utils/sc_tracediff/Makefile
+	utils/sc_warts2csv/Makefile
 	utils/sc_warts2json/Makefile
 	utils/sc_warts2pcap/Makefile
 	utils/sc_warts2text/Makefile

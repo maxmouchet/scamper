@@ -1,7 +1,7 @@
 /*
  * sc_speedtrap
  *
- * $Id: sc_speedtrap.c,v 1.22 2014/11/01 15:21:35 mjl Exp $
+ * $Id: sc_speedtrap.c,v 1.22.4.1 2015/08/08 05:27:23 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_speedtrap.c,v 1.22 2014/11/01 15:21:35 mjl Exp $";
+  "$Id: sc_speedtrap.c,v 1.22.4.1 2015/08/08 05:27:23 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -899,6 +899,7 @@ static sc_target_t *sc_target_free(sc_target_t *tg)
 
 static int sc_target_new(char *addr, void *param)
 {
+  splaytree_t *tree = param;
   sc_target_t *target = NULL;
   scamper_addr_t *a;
 
@@ -911,12 +912,20 @@ static int sc_target_new(char *addr, void *param)
       goto err;
     }
 
-  /* in 2000::/3 */
-  if(scamper_addr_isunicast(a) != 1)
+  /*
+   * make sure the address is in 2000::/3
+   * and is not already in the probelist
+   */
+  if(scamper_addr_isunicast(a) != 1 || splaytree_find(tree, a) != NULL)
     {
       scamper_addr_free(a);
       return 0;
     }
+
+  /* make a note that the address is in the list to be probed */
+  if(splaytree_insert(tree, a) == NULL)
+    goto err;
+  scamper_addr_use(a);
 
   if((target = malloc_zero(sizeof(sc_target_t))) == NULL ||
      (target->samples = slist_alloc()) == NULL)
@@ -1377,7 +1386,13 @@ static void sc_targetset_nextpair(sc_targetset_t *ts)
 
 static int do_addressfile(void)
 {
-  return file_lines(addressfile, sc_target_new, NULL);
+  splaytree_t *tree = NULL;
+  int rc = 0;
+  if((tree = splaytree_alloc((splaytree_cmp_t)scamper_addr_cmp)) == NULL ||
+     file_lines(addressfile, sc_target_new, tree) != 0)
+    rc = -1;
+  splaytree_free(tree, (splaytree_free_t)scamper_addr_free);
+  return rc;
 }
 
 static int do_skipfile(void)
@@ -1479,13 +1494,9 @@ static int test_ping1(sc_target_t *target, char *cmd, size_t len)
 {
   size_t off = 0;
   char buf[64];
-
-  string_concat(cmd, len, &off, "ping -O dl -U %d -c 2 -s 1300 -M 1280", mode);
-  if(target->attempt == 0)
-    string_concat(cmd, len, &off, " -o 1");
-  string_concat(cmd, len, &off, " %s\n",
-		scamper_addr_tostr(target->addr, buf, sizeof(buf)));
-
+  string_concat(cmd, len, &off,
+		"ping -O dl -O tbt -U %d -c 2 -o 1 -s 1300 -M 1280 %s\n",
+		mode, scamper_addr_tostr(target->addr, buf, sizeof(buf)));
   return off;
 }
 
@@ -2344,18 +2355,18 @@ static void cleanup(void)
       descend = NULL;
     }
 
-  if(targets != NULL)
-    {
-      splaytree_free(targets, NULL);
-      targets = NULL;
-    }
-
   if(incr != NULL)
     {
       while((tg = slist_head_pop(incr)) != NULL)
 	sc_target_free(tg);
       slist_free(incr);
       incr = NULL;
+    }
+
+  if(targets != NULL)
+    {
+      splaytree_free(targets, NULL);
+      targets = NULL;
     }
 
   if(candidates != NULL)
