@@ -1,7 +1,7 @@
 /*
  * scamper_source
  *
- * $Id: scamper_sources.c,v 1.53 2012/04/22 22:59:17 mjl Exp $
+ * $Id: scamper_sources.c,v 1.55 2015/04/27 03:28:55 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sources.c,v 1.53 2012/04/22 22:59:17 mjl Exp $";
+  "$Id: scamper_sources.c,v 1.55 2015/04/27 03:28:55 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -436,10 +436,9 @@ static scamper_sourcetask_t *sourcetask_alloc(scamper_source_t *source,
   return NULL;
 }
 
-static int idtree_cmp(const void *va, const void *vb)
+static int idtree_cmp(const scamper_sourcetask_t *a,
+		      const scamper_sourcetask_t *b)
 {
-  const scamper_sourcetask_t *a = va;
-  const scamper_sourcetask_t *b = vb;
   if(a->id < b->id) return -1;
   if(a->id > b->id) return  1;
   return 0;
@@ -941,10 +940,9 @@ static int source_cycle(scamper_source_t *source, uint32_t cycle_id)
   return -1;
 }
 
-static int source_cmp(const void *a, const void *b)
+static int source_cmp(const scamper_source_t *a, const scamper_source_t *b)
 {
-  return strcasecmp(((const scamper_source_t *)b)->list->name,
-		    ((const scamper_source_t *)a)->list->name);
+  return strcasecmp(b->list->name, a->list->name);
 }
 
 /*
@@ -1394,7 +1392,8 @@ int scamper_source_command2(scamper_source_t *s, const char *command,
 
   sources_assert();
 
-  if(s->idtree == NULL && (s->idtree = splaytree_alloc(idtree_cmp)) == NULL)
+  if(s->idtree == NULL &&
+     (s->idtree = splaytree_alloc((splaytree_cmp_t)idtree_cmp)) == NULL)
     {
       printerror(errno, strerror, __func__, "could not alloc idtree");
       goto err;
@@ -1818,19 +1817,19 @@ void scamper_sources_empty()
    * for each source, go through and empty the lists, close the files, and
    * leave the list of sources available to read from empty.
    */
-  while((source = dlist_tail_get(blocked)) != NULL)
+  while((source = dlist_tail_item(blocked)) != NULL)
     {
       source_flush_commands(source);
       source_detach(source);
     }
 
-  while((source = clist_tail_get(active)) != NULL)
+  while((source = clist_tail_item(active)) != NULL)
     {
       source_flush_commands(source);
       source_detach(source);
     }
 
-  while((source = dlist_head_get(finished)) != NULL)
+  while((source = dlist_head_item(finished)) != NULL)
     {
       source_detach(source);
     }
@@ -1863,7 +1862,7 @@ int scamper_sources_gettask(scamper_task_t **task)
 
   sources_assert();
 
-  while((source = dlist_head_get(finished)) != NULL)
+  while((source = dlist_head_item(finished)) != NULL)
     source_detach(source);
 
   /*
@@ -1983,7 +1982,7 @@ int scamper_sources_init(void)
   if((finished = dlist_alloc()) == NULL)
     return -1;
 
-  if((source_tree = splaytree_alloc(source_cmp)) == NULL)
+  if((source_tree = splaytree_alloc((splaytree_cmp_t)source_cmp)) == NULL)
     return -1;
 
   return 0;

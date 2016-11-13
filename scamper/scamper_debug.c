@@ -1,13 +1,13 @@
 /*
  * scamper_debug.c
  *
- * $Id: scamper_debug.c,v 1.34 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_debug.c,v 1.35 2015/09/28 07:44:26 mjl Exp $
  *
  * routines to reduce the impact of debugging cruft in scamper's code.
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
- * Copyright (C) 2012      Matthew Luckie
+ * Copyright (C) 2012,2015 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_debug.c,v 1.34 2012/04/05 18:00:54 mjl Exp $";
+  "$Id: scamper_debug.c,v 1.35 2015/09/28 07:44:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -42,6 +42,10 @@ static const char rcsid[] =
 
 #ifndef WITHOUT_DEBUGFILE
 static FILE *debugfile = NULL;
+#endif
+
+#ifdef HAVE_DAEMON
+static int isdaemon = 0;
 #endif
 
 static char *timestamp_str(char *buf, const size_t len)
@@ -118,6 +122,16 @@ void printerror(const int ecode, char *(*error_itoa)(int),
   char     fs[64];
   va_list  ap;
 
+  if(isdaemon != 0)
+    {
+#ifndef WITHOUT_DEBUGFILE
+      if(debugfile == NULL)
+	return;
+#else
+      return;
+#endif
+    }
+
   va_start(ap, format);
   vsnprintf(message, sizeof(message), format, ap);
   va_end(ap);
@@ -156,6 +170,18 @@ void scamper_debug(const char *func, const char *format, ...)
 #endif
 
   assert(format != NULL);
+
+#ifdef HAVE_DAEMON
+  if(isdaemon != 0)
+    {
+#ifndef WITHOUT_DEBUGFILE
+      if(debugfile == NULL)
+	return;
+#else
+      return;
+#endif
+    }
+#endif
 
   va_start(ap, format);
   vsnprintf(message, sizeof(message), format, ap);
@@ -244,3 +270,12 @@ void scamper_debug_close()
   return;
 }
 #endif
+
+void scamper_debug_init(void)
+{
+#ifdef HAVE_DAEMON
+  if(scamper_option_daemon())
+    isdaemon = 1;
+#endif
+  return;
+}

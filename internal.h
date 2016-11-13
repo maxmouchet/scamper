@@ -1,14 +1,15 @@
 /*
  * internal.h
  *
- * $Id: internal.h,v 1.29.4.3 2016/09/17 06:02:44 mjl Exp $
+ * $Id: internal.h,v 1.42 2016/09/17 01:38:13 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2013      The Regents of the University of California
+ * Copyright (C) 2013-2015 The Regents of the University of California
+ * Copyright (C) 2014-2016 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -119,6 +120,7 @@ typedef unsigned short sa_family_t;
 #include <sys/un.h>
 #include <sys/utsname.h>
 #include <sys/ioctl.h>
+#include <sys/socketvar.h>
 #include <net/if.h>
 #include <net/route.h>
 #include <netinet/in.h>
@@ -129,6 +131,9 @@ typedef unsigned short sa_family_t;
 #include <netinet/udp.h>
 #include <netinet/icmp6.h>
 #include <netinet/tcp.h>
+#ifdef HAVE_NETINET_TCP_VAR_H
+#include <netinet/tcp_var.h>
+#endif
 #include <netinet/if_ether.h>
 #include <arpa/inet.h>
 #include <unistd.h>

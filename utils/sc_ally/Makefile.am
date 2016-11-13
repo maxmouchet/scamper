@@ -6,6 +6,8 @@ bin_PROGRAMS = sc_ally
 
 sc_ally_SOURCES = \
 	sc_ally.c \
+	../../scamper/scamper_linepoll.c \
+	../../scamper/scamper_writebuf.c \
 	../../utils.c \
 	../../mjl_heap.c \
 	../../mjl_list.c \

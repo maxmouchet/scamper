@@ -1,7 +1,7 @@
 /*
  * scamper_firewall.c
  *
- * $Id: scamper_firewall.c,v 1.44.6.1 2016/08/26 21:36:18 mjl Exp $
+ * $Id: scamper_firewall.c,v 1.52 2016/08/08 08:43:04 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2016      Matthew Luckie
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_firewall.c,v 1.44.6.1 2016/08/26 21:36:18 mjl Exp $";
+  "$Id: scamper_firewall.c,v 1.52 2016/08/08 08:43:04 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

@@ -1,11 +1,12 @@
 /*
  * scamper_trace.h
  *
- * $Id: scamper_trace.h,v 1.133.2.3 2015/12/03 07:24:58 mjl Exp $
+ * $Id: scamper_trace.h,v 1.137 2015/10/14 04:26:08 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2008      Alistair King
+ * Copyright (C) 2015      The Regents of the University of California
  * Copyright (C) 2015      The University of Waikato
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
@@ -395,6 +396,7 @@ uint16_t scamper_trace_pathlength(const scamper_trace_t *trace);
 int scamper_trace_probe_headerlen(const scamper_trace_t *trace);
 scamper_addr_t *scamper_trace_addr(const void *va);
 int scamper_trace_iscomplete(const scamper_trace_t *trace);
+int scamper_trace_dst_cmp(const scamper_trace_t *a, const scamper_trace_t *b);
 
 const char *scamper_trace_type_tostr(const scamper_trace_t *t, char *b, size_t l);
 const char *scamper_trace_stop_tostr(const scamper_trace_t *t, char *b, size_t l);

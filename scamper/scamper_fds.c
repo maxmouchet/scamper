@@ -1,12 +1,13 @@
 /*
  * scamper_fds: manage events and file descriptors
  *
- * $Id: scamper_fds.c,v 1.88.6.2 2015/12/06 08:02:40 mjl Exp $
+ * $Id: scamper_fds.c,v 1.95 2016/07/15 09:29:14 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2014 Matthew Luckie
  * Copyright (C) 2012-2015 The Regents of the University of California
+ * Copyright (C) 2016      Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_fds.c,v 1.88.6.2 2015/12/06 08:02:40 mjl Exp $";
+  "$Id: scamper_fds.c,v 1.95 2016/07/15 09:29:14 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -979,11 +980,8 @@ static int fd_addr_cmp(int type, void *a, void *b)
  * the same.  used to maintain the splaytree of existing file descriptors
  * held by scamper.
  */
-static int fd_cmp(const void *va, const void *vb)
+static int fd_cmp(const scamper_fd_t *a, const scamper_fd_t *b)
 {
-  const scamper_fd_t *a = (const scamper_fd_t *)va;
-  const scamper_fd_t *b = (const scamper_fd_t *)vb;
-
   if(a->type < b->type) return -1;
   if(a->type > b->type) return  1;
 
@@ -1072,6 +1070,9 @@ static scamper_fd_t *fd_alloc_dm(int type, int fd, const char *file,
 	fd_array[i] = NULL;
       fd_array_s = fd+1;
     }
+
+  /* ensure the same fd is not already registered */
+  assert(fd_array[fd] == NULL);
   fd_array[fd] = fdn;
 
   return fdn;
@@ -1148,6 +1149,7 @@ static scamper_fd_t *fd_null(int type)
       goto err;
     }
 
+  scamper_debug(__func__, "fd %d type %s", fdn->fd, fd_tostr(fdn));
   return fdn;
 
  err:
@@ -1209,6 +1211,7 @@ static scamper_fd_t *fd_icmp(int type, void *addr)
       goto err;
     }
 
+  scamper_debug(__func__, "fd %d type %s", fdn->fd, fd_tostr(fdn));
   return fdn;
 
  err:
@@ -1229,14 +1232,15 @@ static scamper_fd_t *fd_tcp(int type, void *addr, uint16_t sport)
   size_t len = 0;
   int fd = -1;
 
+  assert(type == SCAMPER_FD_TYPE_TCP4 ||
+	 type == SCAMPER_FD_TYPE_TCP6);
+
   findme.type = type;
   findme.fd_tcp_addr = addr;
   findme.fd_tcp_sport = sport;
 
   if((fdn = fd_find(&findme)) != NULL)
-    {
-      return fdn;
-    }
+    return fdn;
 
   if(type == SCAMPER_FD_TYPE_TCP4)
     {
@@ -1262,6 +1266,7 @@ static scamper_fd_t *fd_tcp(int type, void *addr, uint16_t sport)
       goto err;
     }
 
+  scamper_debug(__func__, "fd %d type %s", fdn->fd, fd_tostr(fdn));
   return fdn;
 
  err:
@@ -1324,6 +1329,7 @@ static scamper_fd_t *fd_udp(int type, void *addr, uint16_t sport)
       goto err;
     }
 
+  scamper_debug(__func__, "fd %d type %s", fdn->fd, fd_tostr(fdn));
   return fdn;
 
  err:
@@ -1358,7 +1364,7 @@ int scamper_fds_poll(struct timeval *timeout)
     {
       gettimeofday_wrap(&tv);
 
-      while((fdn = (scamper_fd_t *)dlist_head_get(refcnt_0)) != NULL)
+      while((fdn = (scamper_fd_t *)dlist_head_item(refcnt_0)) != NULL)
 	{
 	  assert(fdn->refcnt == 0);
 
@@ -1671,6 +1677,7 @@ scamper_fd_t *scamper_fd_dl(int ifindex)
   fdn->write.param = NULL;
   scamper_fd_read_unpause(fdn);
 
+  scamper_debug(__func__, "fd %d type %s", fdn->fd, fd_tostr(fdn));
   return fdn;
 
  err:
@@ -1899,7 +1906,7 @@ int scamper_fds_init()
       return -1;
     }
 
-  if((fd_tree = splaytree_alloc(fd_cmp)) == NULL)
+  if((fd_tree = splaytree_alloc((splaytree_cmp_t)fd_cmp)) == NULL)
     {
       printerror(errno, strerror, __func__, "alloc fd tree failed");
       return -1;
@@ -1948,7 +1955,7 @@ void scamper_fds_cleanup()
   /* reap anything on the reap list */
   if(refcnt_0 != NULL)
     {
-      while((fdn = (scamper_fd_t *)dlist_head_get(refcnt_0)) != NULL)
+      while((fdn = (scamper_fd_t *)dlist_head_item(refcnt_0)) != NULL)
 	{
 	  fd_close(fdn);
 	  fd_free(fdn);

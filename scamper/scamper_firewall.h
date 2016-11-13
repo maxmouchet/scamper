@@ -1,7 +1,7 @@
 /*
  * scamper_firewall.h
  *
- * $Id: scamper_firewall.h,v 1.4.32.1 2016/08/26 21:33:41 mjl Exp $
+ * $Id: scamper_firewall.h,v 1.5 2016/08/07 10:27:56 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2016      Matthew Luckie

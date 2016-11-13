@@ -1,7 +1,7 @@
 /*
  * scamper_icmp6.h
  *
- * $Id: scamper_icmp6.h,v 1.19.16.1 2015/12/06 08:25:03 mjl Exp $
+ * $Id: scamper_icmp6.h,v 1.20 2015/04/23 21:57:49 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2009 The University of Waikato

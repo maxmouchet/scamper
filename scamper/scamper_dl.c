@@ -1,7 +1,7 @@
 /*
  * scamper_dl: manage BPF/PF_PACKET datalink instances for scamper
  *
- * $Id: scamper_dl.c,v 1.181.6.3 2016/08/26 21:14:03 mjl Exp $
+ * $Id: scamper_dl.c,v 1.184 2016/08/08 08:42:07 mjl Exp $
  *
  *          Matthew Luckie
  *          Ben Stasiewicz added fragmentation support.
@@ -35,7 +35,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dl.c,v 1.181.6.3 2016/08/26 21:14:03 mjl Exp $";
+  "$Id: scamper_dl.c,v 1.184 2016/08/08 08:42:07 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

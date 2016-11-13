@@ -1,4 +1,4 @@
-# $Id: Makefile.am,v 1.24.6.1 2015/10/17 05:54:04 mjl Exp $
+# $Id: Makefile.am,v 1.26 2016/08/26 10:08:32 mjl Exp $
 
 AUTOMAKE_OPTIONS = subdir-objects
 
@@ -12,6 +12,7 @@ libscamperfile_la_LDFLAGS = -version-info 0:0:0
 
 libscamperfile_la_SOURCES = \
 	../mjl_splaytree.c \
+	../mjl_patricia.c \
 	../utils.c \
 	scamper_file.c \
 	scamper_file_arts.c \
@@ -51,6 +52,7 @@ scamper_SOURCES = \
 	../mjl_list.c \
 	../mjl_heap.c \
 	../mjl_splaytree.c \
+	../mjl_patricia.c \
 	../utils.c \
 	scamper.c \
 	scamper_osinfo.c \

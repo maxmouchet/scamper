@@ -8,7 +8,7 @@
  * Copyright (c) 2013-2015 The Regents of the University of California
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_ping_json.c,v 1.11.6.1 2015/12/03 07:17:59 mjl Exp $
+ * $Id: scamper_ping_json.c,v 1.12 2015/01/15 21:38:06 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_json.c,v 1.11.6.1 2015/12/03 07:17:59 mjl Exp $";
+  "$Id: scamper_ping_json.c,v 1.12 2015/01/15 21:38:06 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

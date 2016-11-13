@@ -24,7 +24,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_heap.h,v 1.6 2012/04/27 05:20:27 mjl Exp $
+ * $Id: mjl_heap.h,v 1.7 2015/01/08 18:27:00 mjl Exp $
  *
  */
 
@@ -35,7 +35,7 @@ typedef struct heap heap_t;
 typedef struct heap_node heap_node_t;
 
 typedef int  (*heap_cmp_t)(const void *a, const void *b);
-typedef int  (*heap_free_t)(void *ptr);
+typedef void (*heap_free_t)(void *ptr);
 typedef void (*heap_foreach_t)(void *param, void *item);
 typedef void (*heap_onremove_t)(void *ptr);
 

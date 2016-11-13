@@ -1,7 +1,7 @@
 /*
  * scamper_privsep.c: code that does root-required tasks
  *
- * $Id: scamper_privsep.c,v 1.76.4.3 2016/08/26 22:12:06 mjl Exp $
+ * $Id: scamper_privsep.c,v 1.88 2016/08/26 22:09:27 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -32,7 +32,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_privsep.c,v 1.76.4.3 2016/08/26 22:12:06 mjl Exp $";
+  "$Id: scamper_privsep.c,v 1.88 2016/08/26 22:09:27 mjl Exp $";
 #endif
 
 #include "internal.h"

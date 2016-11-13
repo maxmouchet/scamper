@@ -1,7 +1,7 @@
 /*
  * scamper_probe.c
  *
- * $Id: scamper_probe.c,v 1.69 2013/07/08 17:48:31 mjl Exp $
+ * $Id: scamper_probe.c,v 1.73 2015/09/21 06:34:42 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_probe.c,v 1.69 2013/07/08 17:48:31 mjl Exp $";
+  "$Id: scamper_probe.c,v 1.73 2015/09/21 06:34:42 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -118,37 +118,14 @@ static char *tcp_flags(char *buf, size_t len, scamper_probe_t *probe)
 
       switch(flag)
 	{
-	case TH_SYN:
-	  string_concat(buf, len, &off, " syn");
-	  break;
-
-	case TH_RST:
-	  string_concat(buf, len, &off, " rst");
-	  break;
-
-	case TH_FIN:
-	  string_concat(buf, len, &off, " fin");
-	  break;
-
-	case TH_ACK:
-	  string_concat(buf, len, &off, " ack");
-	  break;
-
-	case TH_PUSH:
-	  string_concat(buf, len, &off, " psh");
-	  break;
-
-	case TH_URG:
-	  string_concat(buf, len, &off, " urg");
-	  break;
-
-	case TH_ECE:
-	  string_concat(buf, len, &off, " ece");
-	  break;
-
-	case TH_CWR:
-	  string_concat(buf, len, &off, " cwr");
-	  break;
+	case TH_SYN:  string_concat(buf, len, &off, " syn"); break;
+	case TH_RST:  string_concat(buf, len, &off, " rst"); break;
+	case TH_FIN:  string_concat(buf, len, &off, " fin"); break;
+	case TH_ACK:  string_concat(buf, len, &off, " ack"); break;
+	case TH_PUSH: string_concat(buf, len, &off, " psh"); break;
+	case TH_URG:  string_concat(buf, len, &off, " urg"); break;
+	case TH_ECE:  string_concat(buf, len, &off, " ece"); break;
+	case TH_CWR:  string_concat(buf, len, &off, " cwr"); break;
 	}
     }
 
@@ -161,6 +138,8 @@ static char *tcp_pos(char *buf, size_t len, scamper_probe_t *probe)
   string_concat(buf, len, &off, "%u", probe->pr_tcp_seq);
   if(probe->pr_tcp_flags & TH_ACK)
     string_concat(buf, len, &off, ":%u", probe->pr_tcp_ack);
+  if(probe->pr_len > 0)
+    string_concat(buf, len, &off, "(%u)", probe->pr_len);
   return buf;
 }
 
@@ -551,7 +530,8 @@ static void probe_route_cb(scamper_route_t *rt)
       goto err;
     }
 
-  if(rawtcp != 0 && pr->pr->pr_ip_proto == IPPROTO_TCP &&
+  if(rawtcp != 0 && pr->pr != NULL &&
+     pr->pr->pr_ip_proto == IPPROTO_TCP &&
      SCAMPER_ADDR_TYPE_IS_IPV4(pr->pr->pr_ip_dst))
     {
       if((fd = scamper_task_fd_ip4(pr->task)) != NULL)
@@ -594,44 +574,175 @@ static void probe_route_cb(scamper_route_t *rt)
   return;
 }
 
-int scamper_probe_task(scamper_probe_t *pr, scamper_task_t *task)
+static int probe_task_dl(scamper_probe_t *pr, scamper_task_t *task)
 {
   probe_state_t *pt = NULL;
-  scamper_fd_t *icmp = NULL;
+
+  if((pt = probe_state_alloc(pr)) == NULL)
+    {
+      pr->pr_errno = errno;
+      goto err;
+    }
+  pt->task = task;
+  pt->mode = PROBE_MODE_RT;
+  if((pt->rt = scamper_route_alloc(pr->pr_ip_dst,pt,probe_route_cb)) == NULL)
+    {
+      pr->pr_errno = errno;
+      goto err;
+    }
+
+#ifndef _WIN32
+  if((pt->rtsock = scamper_task_fd_rtsock(task)) == NULL)
+    {
+      pr->pr_errno = errno;
+      goto err;
+    }
+  if(scamper_rtsock_getroute(pt->rtsock, pt->rt) != 0)
+    {
+      pr->pr_errno = errno;
+      goto err;
+    }
+#else
+  if(scamper_rtsock_getroute(pt->rt) != 0)
+    {
+      pr->pr_errno = errno;
+      goto err;
+    }
+#endif
+
+  if(pt->mode == PROBE_MODE_ERR)
+    {
+      pr->pr_errno = pt->error;
+      goto err;
+    }
+
+  if(pt->mode != PROBE_MODE_TX)
+    {
+      if(pt->len > 0 && (pt->buf = memdup(pktbuf, pt->len + 16)) == NULL)
+	{
+	  pr->pr_errno = errno;
+	  goto err;
+	}
+      if((pt->anc = scamper_task_anc_add(task,pt,probe_state_free_cb)) == NULL)
+	{
+	  pr->pr_errno = errno;
+	  goto err;
+	}
+      gettimeofday_wrap(&pr->pr_tx);
+    }
+  else
+    {
+      timeval_cpy(&pr->pr_tx, &pt->tv);
+      probe_state_free(pt);
+    }
+  return 0;
+
+ err:
+  if(pt != NULL) probe_state_free(pt);
+  return -1;
+}
+
+static int probe_task_ipv4(scamper_probe_t *pr, scamper_task_t *task,
+			   scamper_fd_t *icmp)
+{
   scamper_fd_t *fd;
-  int spoof = 0;
-  uint16_t sp;
-  void *src = NULL;
+
+  if(pr->pr_ip_proto == IPPROTO_UDP)
+    {
+      fd = scamper_task_fd_udp4(task, pr->pr_ip_src->addr, pr->pr_udp_sport);
+      if(fd == NULL)
+	{
+	  pr->pr_errno = errno;
+	  return -1;
+	}
+      pr->pr_fd = scamper_fd_fd_get(fd);
+      if(scamper_udp4_probe(pr) != 0)
+	{
+	  pr->pr_errno = errno;
+	  return -1;
+	}
+    }
+  else if(pr->pr_ip_proto == IPPROTO_ICMP)
+    {
+      pr->pr_fd = scamper_fd_fd_get(icmp);
+      if(scamper_icmp4_probe(pr) != 0)
+	{
+	  pr->pr_errno = errno;
+	  return -1;
+	}
+    }
+  else
+    {
+      scamper_debug(__func__, "unhandled protocol %d", pr->pr_ip_proto);
+      pr->pr_errno = EINVAL; /* actually a bug in the caller */
+      return -1;
+    }
+
+  return 0;
+}
+
+static int probe_task_ipv6(scamper_probe_t *pr, scamper_task_t *task,
+			   scamper_fd_t *icmp)
+{
+  scamper_fd_t *fd;
+
+  if(pr->pr_ip_proto == IPPROTO_UDP)
+    {
+      fd = scamper_task_fd_udp6(task, pr->pr_ip_src->addr, pr->pr_udp_sport);
+      if(fd == NULL)
+	{
+	  pr->pr_errno = errno;
+	  return -1;
+	}
+      pr->pr_fd = scamper_fd_fd_get(fd);
+      if(scamper_udp6_probe(pr) != 0)
+	{
+	  pr->pr_errno = errno;
+	  return -1;
+	}
+    }
+  else if(pr->pr_ip_proto == IPPROTO_ICMPV6)
+    {
+      pr->pr_fd = scamper_fd_fd_get(icmp);
+      if(scamper_icmp6_probe(pr) != 0)
+	{
+	  pr->pr_errno = errno;
+	  return -1;
+	}
+    }
+  else
+    {
+      pr->pr_errno = EINVAL; /* actually a bug in the caller */
+      return -1;
+    }
+
+  return 0;
+}
+
+int scamper_probe_task(scamper_probe_t *pr, scamper_task_t *task)
+{
+  scamper_fd_t *icmp = NULL;
   int dl = 0;
 
   probe_print(pr);
 
-  if((pr->pr_flags & SCAMPER_PROBE_FLAG_SPOOF) != 0)
-    spoof = 1;
-
   /* get an ICMP socket to listen for responses */
   if(SCAMPER_ADDR_TYPE_IS_IPV4(pr->pr_ip_dst))
     {
-      if(spoof == 0)
+      if((pr->pr_flags & SCAMPER_PROBE_FLAG_SPOOF) == 0 &&
+	 (icmp = scamper_task_fd_icmp4(task, pr->pr_ip_src->addr)) == NULL)
 	{
-	  src = pr->pr_ip_src->addr;
-	  if((icmp = scamper_task_fd_icmp4(task, src)) == NULL)
-	    {
-	      pr->pr_errno = errno;
-	      goto err;
-	    }
+	  pr->pr_errno = errno;
+	  goto err;
 	}
     }
   else if(SCAMPER_ADDR_TYPE_IS_IPV6(pr->pr_ip_dst))
     {
-      if(spoof == 0)
+      if((pr->pr_flags & SCAMPER_PROBE_FLAG_SPOOF) == 0 &&
+	 (icmp = scamper_task_fd_icmp6(task, pr->pr_ip_src->addr)) == NULL)
 	{
-	  src = pr->pr_ip_src->addr;
-	  if((icmp = scamper_task_fd_icmp6(task, src)) == NULL)
-	    {
-	      pr->pr_errno = errno;
-	      goto err;
-	    }
+	  pr->pr_errno = errno;
+	  goto err;
 	}
     }
   else
@@ -650,138 +761,24 @@ int scamper_probe_task(scamper_probe_t *pr, scamper_task_t *task)
   if(pr->pr_ip_proto == IPPROTO_TCP ||
      (ipid_dl != 0 && SCAMPER_PROBE_IS_IPID(pr)) ||
      (pr->pr_flags & SCAMPER_PROBE_FLAG_NOFRAG) != 0 ||
-     spoof != 0 ||
+     (pr->pr_flags & SCAMPER_PROBE_FLAG_SPOOF) != 0 ||
      (pr->pr_flags & SCAMPER_PROBE_FLAG_DL) != 0)
     dl = 1;
 
   if(dl != 0)
     {
-      if((pt = probe_state_alloc(pr)) == NULL)
-	{
-	  pr->pr_errno = errno;
-	  goto err;
-	}
-      pt->task = task;
-      pt->mode = PROBE_MODE_RT;
-      pt->rt = scamper_route_alloc(pr->pr_ip_dst, pt, probe_route_cb);
-      if(pt->rt == NULL)
-	{
-	  pr->pr_errno = errno;
-	  goto err;
-	}
-
-#ifndef _WIN32
-      if((pt->rtsock = scamper_task_fd_rtsock(task)) == NULL)
-	{
-	  pr->pr_errno = errno;
-	  goto err;
-	}
-      if(scamper_rtsock_getroute(pt->rtsock, pt->rt) != 0)
-	{
-	  pr->pr_errno = errno;
-	  goto err;
-	}
-#else
-      if(scamper_rtsock_getroute(pt->rt) != 0)
-	{
-	  pr->pr_errno = errno;
-	  goto err;
-	}
-#endif
-
-      if(pt->mode == PROBE_MODE_ERR)
-	{
-	  pr->pr_errno = pt->error;
-	  goto err;
-	}
-
-      if(pt->mode != PROBE_MODE_TX)
-	{
-	  if(pt->len > 0 && (pt->buf = memdup(pktbuf, pt->len + 16)) == NULL)
-	    {
-	      pr->pr_errno = errno;
-	      goto err;
-	    }
-
-	  pt->anc = scamper_task_anc_add(task, pt, probe_state_free_cb);
-	  if(pt->anc == NULL)
-	    {
-	      pr->pr_errno = errno;
-	      goto err;
-	    }
-	  gettimeofday_wrap(&pr->pr_tx);
-	}
-      else
-	{
-	  timeval_cpy(&pr->pr_tx, &pt->tv);
-	  probe_state_free(pt);
-	}
-      return 0;
+      if(probe_task_dl(pr, task) != 0)
+	goto err;
     }
   else if(SCAMPER_ADDR_TYPE_IS_IPV4(pr->pr_ip_dst))
     {
-      if(pr->pr_ip_proto == IPPROTO_UDP)
-	{
-	  sp = pr->pr_udp_sport;
-	  if((fd = scamper_task_fd_udp4(task, src, sp)) == NULL)
-	    {
-	      pr->pr_errno = errno;
-	      goto err;
-	    }
-	  pr->pr_fd = scamper_fd_fd_get(fd);
-	  if(scamper_udp4_probe(pr) != 0)
-	    {
-	      pr->pr_errno = errno;
-	      goto err;
-	    }
-	}
-      else if(pr->pr_ip_proto == IPPROTO_ICMP)
-	{
-	  pr->pr_fd = scamper_fd_fd_get(icmp);
-	  if(scamper_icmp4_probe(pr) != 0)
-	    {
-	      pr->pr_errno = errno;
-	      goto err;
-	    }
-	}
-      else
-	{
-	  scamper_debug(__func__, "unhandled protocol %d", pr->pr_ip_proto);
-	  pr->pr_errno = EINVAL; /* actually a bug in the caller */
-	  goto err;
-	}
+      if(probe_task_ipv4(pr, task, icmp) != 0)
+	goto err;
     }
   else if(SCAMPER_ADDR_TYPE_IS_IPV6(pr->pr_ip_dst))
     {
-      if(pr->pr_ip_proto == IPPROTO_UDP)
-	{
-	  sp = pr->pr_udp_sport;
-      	  if((fd = scamper_task_fd_udp6(task, src, sp)) == NULL)
-	    {
-	      pr->pr_errno = errno;
-	      goto err;
-	    }
-	  pr->pr_fd = scamper_fd_fd_get(fd);
-	  if(scamper_udp6_probe(pr) != 0)
-	    {
-	      pr->pr_errno = errno;
-	      goto err;
-	    }
-	}
-      else if(pr->pr_ip_proto == IPPROTO_ICMPV6)
-	{
-	  pr->pr_fd = scamper_fd_fd_get(icmp);
-	  if(scamper_icmp6_probe(pr) != 0)
-	    {
-	      pr->pr_errno = errno;
-	      goto err;
-	    }
-	}
-      else
-	{
-	  pr->pr_errno = EINVAL; /* actually a bug in the caller */
-	  goto err;
-	}
+      if(probe_task_ipv6(pr, task, icmp) != 0)
+	goto err;
     }
   else
     {
@@ -793,8 +790,6 @@ int scamper_probe_task(scamper_probe_t *pr, scamper_task_t *task)
 
  err:
   printerror(pr->pr_errno, strerror, __func__, "could not probe");
-  if(pt != NULL)
-    probe_state_free(pt);
   return -1;
 }
 

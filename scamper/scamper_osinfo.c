@@ -1,7 +1,7 @@
 /*
  * scamper_osinfo.c
  *
- * $Id: scamper_osinfo.c,v 1.2.6.1 2016/08/26 21:05:26 mjl Exp $
+ * $Id: scamper_osinfo.c,v 1.4 2016/08/08 19:30:54 mjl Exp $
  *
  * Copyright (C) 2006 Matthew Luckie
  * Copyright (C) 2014 The Regents of the University of California
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_osinfo.c,v 1.2.6.1 2016/08/26 21:05:26 mjl Exp $";
+  "$Id: scamper_osinfo.c,v 1.4 2016/08/08 19:30:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

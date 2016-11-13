@@ -6,7 +6,7 @@
  *
  * Author: Matthew Luckie
  *
- * $Id: scamper_tbit_json.c,v 1.3.6.4 2016/09/17 08:41:52 mjl Exp $
+ * $Id: scamper_tbit_json.c,v 1.22.2.1 2016/11/14 05:09:00 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_json.c,v 1.3.6.4 2016/09/17 08:41:52 mjl Exp $";
+  "$Id: scamper_tbit_json.c,v 1.22.2.1 2016/11/14 05:09:00 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

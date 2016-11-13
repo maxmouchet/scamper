@@ -361,37 +361,39 @@ reply to arrive after the probe was transmitted.  Included if flag 6 is set.
 uint16_t: ICMP type, code.  The first byte is the ICMP type of the response,
 the second byte is the ICMP code.  Included if flag 7 is set.
 .It
-uint16_t: Probe size - the size of the probe sent.  Included if flag 9 is
+uint16_t: Probe size - the size of the probe sent.  Included if flag 8 is
 set.
 .It
 uint16_t: Reply size - the size of the response received.  Included if flag
-10 is set.
+9 is set.
 .It
 uint16_t: IPID - the IP identifier value set in the response packet.
-Included if flag 11 is set.
+Included if flag 10 is set, else it is zero.
 .It
 uint8_t: Type of Service - the value of the ToS byte in the IP header,
-including ECN bits.  Included if flag 12 is set.
+including ECN bits.  Included if flag 11 is set.
 .It
 uint16_t: Next-hop MTU - the value of the next-hop MTU field if the response
-is an ICMP packet too big message.  Included if flag 13 is set.
+is an ICMP packet too big message.  Included if flag 12 is set.
 .It
 uint16_t: Quoted IP length - the value of the IP length field found in the
-ICMP quotation.  Included if flag 14 is set, else it is the same as the
+ICMP quotation.  Included if flag 13 is set, else it is the same as the
 probe size.
 .It
 uint8_t: Quoted TTL - the value of the IP TTL field found in the ICMP
-quotation.  Included if flag 15 is set, else it is one.
+quotation.  Included if flag 14 is set, else it is one.
 .It
 uint8_t: TCP flags - the value of the TCP flags received in response to
-TCP probes.  Included if flag 16 is set.
+TCP probes.  Included if flag 15 is set.
 .It
 uint8_t: Quoted TOS - the value of the IP ToS byte found in the ICMP
-quotation.  Included if flag 17 is set.
+quotation.  Included if flag 16 is set.
 .It
-icmpext: ICMP extension data, included if flag 18 is set.
+icmpext: ICMP extension data, included if flag 17 is set.
 .It
-address: Hop address, included if flag 19 is set.
+address: Hop address, included if flag 18 is set.
+.It
+timeval: Hop tx, included if flag 19 is set.
 .El
 .Pp
 Optional traceroute data, such as PMTUD and doubletree control and result
@@ -467,6 +469,86 @@ flag 3 is set.
 .El
 The tree types of PMTUD notes are: ordinary PTB (1), PTB with invalid
 next-hop MTU (2), and an inferred MTU in the absence of a PTB (3).
+.Sh PING STRUCTURE
+Ping structures consist of ping parameters and responses.
+The general form of a ping recorded in warts is as follows:
+.Bl -dash -offset 2n -compact -width 1n
+.It
+8 bytes: Warts header, type 0x0007
+.It
+Variable: Flags describing ping parameters and high-level outcomes
+.It
+uint16_t: Parameter length, included if any flags are set
+.It
+Variable: ping parameters, depending on flags
+.It
+uint16_t: Ping reply count
+.It
+Variable: Ping replies, if ping reply count > 0
+.El
+.Pp
+The flags and data types that describe ping are as follows:
+.Bl -dash -offset 2n -compact -width 1n
+.It
+uint32_t: List ID assigned by warts, included if flag 1 is set
+.It
+uint32_t: Cycle ID assigned by warts, included if flag 2 is set
+.It
+uint32_t: Src IP address ID assigned by warts, included if flag 3 is set
+.It
+uint32_t: Dst IP address ID assigned by warts, included if flag 4 is set
+.It
+timeval: Time ping commenced, included if flag 5 is set
+.It
+uint8_t: Stop reason, included if flag 6 is set
+.It
+uint8_t: Stop data, included if flag 7 is set
+.It
+uint16_t: Data length, included if flag 8 is set
+.It
+Variable: data bytes, included if flag 9 is set
+.It
+uint16_t: Probe count, included if flag 10 is set
+.It
+uint16_t: Probe size, included if flag 11 is set
+.It
+uint8_t: Probe wait (seconds), included if flag 12 is set
+.It
+uint8_t: Probe TTL, included if flag 13 is set
+.It
+uint16_t: Reply count, included if flag 14 is set
+.It
+uint16_t: Pings sent, included if flag 15 is set
+.It
+uint8_t: Ping method, included if flag 16 is set
+.It
+uint16_t: Probe source port, included if flag 17 is set
+.It
+uint16_t: Probe destination port, included if flag 18 is set
+.It
+uint32_t: User ID, included if flag 19 is set
+.It
+address: Source address used, included if flag 20 is set
+.It
+address: Destination address used, included if flag 21 is set
+.It
+uint8_t: Ping flags, included if flag 22 is set
+.It
+uint8_t: Probe TOS, included if flag 23 is set
+.It
+variable: Probe Pre-specified timestamp option, included if flag 24 is set
+.It
+uint16_t: Probe ICMP checksum, included if flag 25 is set
+.It
+uint16_t: Reply psuedo Path MTU, included if flag 26 is set
+.It
+uint8_t: Probe timeout, included if flag 27 is set
+.It
+uint32_t: Probe wait (microseconds), included if flag 28 is set
+.El
+.Pp
+Ping response records are written in series.  Each record takes the following
+form:
 .Sh SEE ALSO
 .Xr scamper 1 ,
 .Xr libscamperfile 3 ,
@@ -478,4 +560,4 @@ next-hop MTU (2), and an inferred MTU in the absence of a PTB (3).
 .Re
 .Sh AUTHORS
 .Nm
-is written by Matthew Luckie <mjl@luckie.org.nz>.
+was written by Matthew Luckie <mjl@luckie.org.nz>.

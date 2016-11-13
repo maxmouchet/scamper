@@ -1,7 +1,7 @@
 /*
  * warts2traceroute
  *
- * $Id: sc_warts2text.c,v 1.24 2012/02/28 00:21:11 mjl Exp $
+ * $Id: sc_warts2text.c,v 1.25 2015/04/29 04:43:50 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_warts2text.c,v 1.24 2012/02/28 00:21:11 mjl Exp $";
+  "$Id: sc_warts2text.c,v 1.25 2015/04/29 04:43:50 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -46,7 +46,7 @@ static const char rcsid[] =
 #include "mjl_splaytree.h"
 #include "utils.h"
 
-static splaytree_t *ip2descr_tree = NULL;
+static splaytree_t *tree = NULL;
 static char       **files = NULL;
 static int          filec = 0;
 
@@ -67,10 +67,8 @@ typedef struct funcset
   df_t dst;
 } funcset_t;
 
-static int ip2descr_cmp(const void *va, const void *vb)
+static int ip2descr_cmp(const ip2descr_t *a, const ip2descr_t *b)
 {
-  const ip2descr_t *a = va;
-  const ip2descr_t *b = vb;
   return scamper_addr_cmp(a->addr, b->addr);
 }
 
@@ -133,7 +131,7 @@ static int ip2descr_line(char *line, void *param)
     }
 
   fm.addr = addr;
-  if(splaytree_find(ip2descr_tree, &fm) != NULL)
+  if(splaytree_find(tree, &fm) != NULL)
     {
       fprintf(stderr, "duplicate definition for %s on line %d\n", ip, line_no);
       goto err;
@@ -151,7 +149,7 @@ static int ip2descr_line(char *line, void *param)
     }
   ip2descr->addr = addr; addr = NULL;
 
-  if(splaytree_insert(ip2descr_tree, ip2descr) == NULL)
+  if(splaytree_insert(tree, ip2descr) == NULL)
     {
       fprintf(stderr, "could not add line %d\n", line_no);
       goto err;
@@ -175,7 +173,7 @@ static char *ip2descr_lookup(scamper_addr_t *addr)
 {
   ip2descr_t fm, *ip2descr;
   fm.addr = addr;
-  if((ip2descr = splaytree_find(ip2descr_tree, &fm)) == NULL)
+  if((ip2descr = splaytree_find(tree, &fm)) == NULL)
     return NULL;
   return ip2descr->descr;
 }
@@ -225,7 +223,7 @@ static int check_options(int argc, char *argv[])
 
   if(opt_descr != NULL)
     {
-      if((ip2descr_tree = splaytree_alloc(ip2descr_cmp)) == NULL)
+      if((tree = splaytree_alloc((splaytree_cmp_t)ip2descr_cmp)) == NULL)
 	return -1;
       if(file_lines(opt_descr, ip2descr_line, NULL) != 0)
 	return -1;
@@ -318,7 +316,7 @@ int main(int argc, char *argv[])
 	  assert(type < sizeof(funcs)/sizeof(funcset_t));
 	  assert(funcs[type].write != NULL);
 
-	  if(ip2descr_tree != NULL && funcs[type].dst != NULL &&
+	  if(tree != NULL && funcs[type].dst != NULL &&
 	     (addr = funcs[type].dst(data)) != NULL &&
 	     (descr = ip2descr_lookup(addr)) != NULL)
 	    {

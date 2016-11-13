@@ -8,7 +8,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_attach.c,v 1.14.12.1 2016/06/15 08:01:10 mjl Exp $";
+  "$Id: sc_attach.c,v 1.23 2016/06/09 09:44:04 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -17,6 +17,8 @@ static const char rcsid[] =
 #include "internal.h"
 
 #include "scamper_file.h"
+#include "scamper_writebuf.h"
+#include "scamper_linepoll.h"
 #include "mjl_list.h"
 #include "utils.h"
 
@@ -30,50 +32,47 @@ static const char rcsid[] =
 #define OPT_PRIORITY    0x0080
 #define OPT_DAEMON      0x0100
 #define OPT_COMMAND     0x0200
+#define OPT_REMOTE      0x0400
+#define OPT_OPTIONS     0x0800
+#define OPT_UNIX        0x1000
+
+#define FLAG_RANDOM     0x0001
+#define FLAG_IMPATIENT  0x0002
 
 static uint32_t               options       = 0;
-static char                  *infile        = NULL;
+static uint8_t                flags         = 0;
+static char                  *infile_name   = NULL;
 static char                  *dst_addr      = NULL;
 static int                    dst_port      = 0;
+static char                  *unix_name     = NULL;
 static uint32_t               priority      = 1;
 static int                    scamper_fd    = -1;
+static scamper_writebuf_t    *scamper_wb    = NULL;
+static scamper_linepoll_t    *scamper_lp    = NULL;
 static int                    stdin_fd      = -1;
-static char                  *readbuf       = NULL;
-static size_t                 readbuf_len   = 0;
-static char                  *stdinbuf      = NULL;
-static size_t                 stdinbuf_len  = 0;
+static scamper_linepoll_t    *stdin_lp      = NULL;
+static int                    stdout_fd     = -1;
+static scamper_writebuf_t    *stdout_wb     = NULL;
 static char                  *outfile_name  = NULL;
 static int                    outfile_fd    = -1;
 static int                    data_left     = 0;
 static int                    more          = 0;
+static int                    error         = 0;
 static slist_t               *commands      = NULL;
-static char                  *lastcommand   = NULL;
 static char                  *opt_command   = NULL;
 static int                    done          = 0;
 
 static void cleanup(void)
 {
-  char *command;
-
   if(dst_addr != NULL)
     {
       free(dst_addr);
       dst_addr = NULL;
     }
 
-  if(lastcommand != NULL)
-    {
-      free(lastcommand);
-      lastcommand = NULL;
-    }
-
   if(commands != NULL)
     {
-      while((command = slist_head_pop(commands)) != NULL)
-	{
-	  free(command);
-	}
-      slist_free(commands);
+      slist_free_cb(commands, free);
       commands = NULL;
     }
 
@@ -89,16 +88,28 @@ static void cleanup(void)
       scamper_fd = -1;
     }
 
-  if(readbuf != NULL)
+  if(scamper_wb != NULL)
     {
-      free(readbuf);
-      readbuf = NULL;
+      scamper_writebuf_free(scamper_wb);
+      scamper_wb = NULL;
     }
 
-  if(stdinbuf != NULL)
+  if(scamper_lp != NULL)
     {
-      free(stdinbuf);
-      stdinbuf = NULL;
+      scamper_linepoll_free(scamper_lp, 0);
+      scamper_lp = NULL;
+    }
+
+  if(stdin_lp != NULL)
+    {
+      scamper_linepoll_free(stdin_lp, 0);
+      stdin_lp = NULL;
+    }
+
+  if(stdout_wb != NULL)
+    {
+      scamper_writebuf_free(stdout_wb);
+      stdout_wb = NULL;
     }
 
   return;
@@ -108,7 +119,8 @@ static void usage(uint32_t opt_mask)
 {
   fprintf(stderr,
 	  "usage: sc_attach [-?dDv] [-c command] [-i infile] [-o outfile]\n"
-	  "                 [-p [ip:]port] [-P priority]\n");
+	  "                 [-O options] [-p [ip:]port] [-P priority] \n"
+	  "                 [-R unix] [-U unix]\n");
 
   if(opt_mask == 0) return;
 
@@ -135,11 +147,24 @@ static void usage(uint32_t opt_mask)
   if(opt_mask & OPT_OUTFILE)
     fprintf(stderr, "     -o output warts file\n");
 
+  if(opt_mask & OPT_OPTIONS)
+    {
+      fprintf(stderr, "     -O options\n");
+      fprintf(stderr, "        random: send commands in random order\n");
+      fprintf(stderr, "        impatient: send commands in bulk\n");
+    }
+
   if(opt_mask & OPT_PORT)
     fprintf(stderr, "     -p [ip:]port to find scamper on\n");
 
   if(opt_mask & OPT_PRIORITY)
     fprintf(stderr, "     -P priority\n");
+
+  if(opt_mask & OPT_REMOTE)
+    fprintf(stderr, "     -R unix domain socket for remote scamper\n");
+
+  if(opt_mask & OPT_UNIX)
+    fprintf(stderr, "     -U unix domain socket for local scamper\n");
 
   return;
 }
@@ -148,9 +173,8 @@ static int check_options(int argc, char *argv[])
 {
   int       ch;
   long      lo;
-  char     *opts = "c:dDi:o:p:P:v?";
-  char     *opt_port = NULL, *opt_priority = NULL;
-  uint32_t  mandatory = OPT_INFILE | OPT_OUTFILE | OPT_PORT;
+  char     *opts = "c:dDi:o:O:p:P:R:U:v?";
+  char     *opt_port = NULL, *opt_priority = NULL, *opt_unix = NULL;
 
   while((ch = getopt(argc, argv, opts)) != -1)
     {
@@ -172,7 +196,7 @@ static int check_options(int argc, char *argv[])
 	  if(strcasecmp(optarg, "-") == 0)
 	    stdin_fd = STDIN_FILENO;
 	  else if((options & OPT_INFILE) == 0)
-	    infile = optarg;
+	    infile_name = optarg;
 	  else
 	    return -1;
 	  options |= OPT_INFILE;
@@ -188,6 +212,15 @@ static int check_options(int argc, char *argv[])
 	    return -1;
 	  break;
 
+	case 'O':
+	  if(strcasecmp(optarg, "random") == 0)
+	    flags |= FLAG_RANDOM;
+	  else if(strcasecmp(optarg, "impatient") == 0)
+	    flags |= FLAG_IMPATIENT;
+	  else
+	    return -1;
+	  break;
+
 	case 'p':
 	  options |= OPT_PORT;
 	  opt_port = optarg;
@@ -198,8 +231,18 @@ static int check_options(int argc, char *argv[])
 	  opt_priority = optarg;
 	  break;
 
+	case 'R':
+	  options |= OPT_REMOTE;
+	  opt_unix = optarg;
+	  break;
+
+	case 'U':
+	  options |= OPT_UNIX;
+	  opt_unix = optarg;
+	  break;
+
 	case 'v':
-	  printf("$Id: sc_attach.c,v 1.14.12.1 2016/06/15 08:01:10 mjl Exp $\n");
+	  printf("$Id: sc_attach.c,v 1.23 2016/06/09 09:44:04 mjl Exp $\n");
 	  return -1;
 
 	case '?':
@@ -210,17 +253,28 @@ static int check_options(int argc, char *argv[])
     }
 
   /* these options are mandatory */
-  if((options & mandatory) != mandatory)
+  if((options & (OPT_INFILE|OPT_OUTFILE)) != (OPT_INFILE|OPT_OUTFILE) ||
+     (options & (OPT_PORT|OPT_REMOTE|OPT_UNIX)) == 0 ||
+     ((options & (OPT_PORT|OPT_REMOTE|OPT_UNIX)) != OPT_PORT &&
+      (options & (OPT_PORT|OPT_REMOTE|OPT_UNIX)) != OPT_REMOTE &&
+      (options & (OPT_PORT|OPT_REMOTE|OPT_UNIX)) != OPT_UNIX))
     {
       if(options == 0) usage(0);
-      else             usage(mandatory);
+      else usage(OPT_INFILE|OPT_OUTFILE|OPT_PORT|OPT_REMOTE|OPT_UNIX);
       return -1;
     }
 
-  if(string_addrport(opt_port, &dst_addr, &dst_port) != 0)
+  if(options & OPT_PORT)
     {
-      usage(OPT_PORT);
-      return -1;
+      if(string_addrport(opt_port, &dst_addr, &dst_port) != 0)
+	{
+	  usage(OPT_PORT);
+	  return -1;
+	}
+    }
+  else if(options & (OPT_REMOTE|OPT_UNIX))
+    {
+      unix_name = opt_unix;
     }
 
   if((options & OPT_PRIORITY) != 0)
@@ -240,12 +294,22 @@ static int check_options(int argc, char *argv[])
       return -1;
     }
 
+  if(options & OPT_STDOUT)
+    {
+      stdout_fd = STDOUT_FILENO;
+      if(fcntl_set(stdout_fd, O_NONBLOCK) == -1)
+	return -1;
+      if((stdout_wb = scamper_writebuf_alloc()) == NULL)
+	return -1;
+      scamper_writebuf_usewrite(stdout_wb);
+    }
+
   return 0;
 }
 
 static int command_new(char *line, void *param)
 {
-  char *tmp = NULL, buf[512];
+  char *tmp = NULL, buf[65535];
   size_t off = 0;
 
   if(line[0] == '#' || line[0] == '\0')
@@ -267,25 +331,6 @@ static int command_new(char *line, void *param)
 }
 
 /*
- * do_infile
- *
- * read the contents of the infile in one hit.
- */
-static int do_infile(void)
-{
-  if((commands = slist_alloc()) == NULL)
-    {
-      fprintf(stderr, "could not alloc commands list\n");
-      return -1;
-    }
-
-  if(infile == NULL)
-    return 0;
-
-  return file_lines(infile, command_new, NULL);
-}
-
-/*
  * do_outfile
  *
  * open a file to send the binary warts data file to.
@@ -300,49 +345,8 @@ static int do_outfile(void)
 
   if((outfile_fd = open(outfile_name, flags, mode)) == -1)
     {
-      fprintf(stderr, "could not open %s\n", outfile_name);
-      return -1;
-    }
-
-  return 0;
-}
-
-/*
- * do_scamperconnect
- *
- * allocate socket and connect to scamper process listening on the port
- * specified.
- */
-static int do_scamperconnect(void)
-{
-  struct sockaddr_storage sas;
-  struct sockaddr *sa = (struct sockaddr *)&sas;
-  struct in_addr in;
-
-  if(dst_addr != NULL)
-    {
-      if(sockaddr_compose_str(sa, dst_addr, dst_port) != 0)
-	{
-	  fprintf(stderr, "%s: could not compose sockaddr from %s:%d\n",
-		  __func__, dst_addr, dst_port);
-	  return -1;
-	}
-    }
-  else
-    {
-      in.s_addr = htonl(INADDR_LOOPBACK);
-      sockaddr_compose(sa, AF_INET, &in, dst_port);
-    }
-
-  if((scamper_fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP)) < 0)
-    {
-      fprintf(stderr, "could not allocate new socket\n");
-      return -1;
-    }
-
-  if(connect(scamper_fd, sa, sockaddr_len(sa)) != 0)
-    {
-      fprintf(stderr, "could not connect to scamper process\n");
+      fprintf(stderr, "%s: could not open %s: %s\n",
+	      __func__, outfile_name, strerror(errno));
       return -1;
     }
 
@@ -355,63 +359,76 @@ static int do_method(void)
   char *command;
 
   if(slist_count(commands) == 0)
-    return 0;
+    {
+      if(stdin_fd == -1 && done == 0)
+	{
+	  scamper_writebuf_send(scamper_wb, "done\n", 5);
+	  done = 1;
+	  more = 0;
+	}
+      return 0;
+    }
 
   gettimeofday_wrap(&tv);
   command = slist_head_pop(commands);
-  write_wrap(scamper_fd, command, NULL, strlen(command));
-  more--;
-
+  scamper_writebuf_send(scamper_wb, command, strlen(command));
   if((options & OPT_DEBUG) != 0)
     fprintf(stderr, "%ld: %s", (long int)tv.tv_sec, command);
+  if((flags & FLAG_IMPATIENT) == 0)
+    more = 0;
+  free(command);
 
-  if(lastcommand != NULL)
-    free(lastcommand);
-  lastcommand = command;
+  return 0;
+}
 
-  if(slist_count(commands) == 0 && stdin_fd == -1 && done == 0)
+static int do_stdinread_line(void *param, uint8_t *buf, size_t linelen)
+{
+  char *cmd;
+
+  if(buf[0] == '#')
+    return 0;
+
+  /* make a copy of the command string */
+  if((cmd = memdup(buf, linelen+2)) == NULL)
     {
-      write_wrap(scamper_fd, "done\n", NULL, 5);
-      done = 1;
+      fprintf(stderr, "%s: could not memdup command: %s\n",
+	      __func__, strerror(errno));
+      return -1;
+    }
+  cmd[linelen] = '\n';
+  cmd[linelen+1] = '\0';
+
+  /* put the command string on the list of things to do */
+  if(slist_tail_push(commands, cmd) == NULL)
+    {
+      fprintf(stderr, "%s: could not push command onto list: %s\n",
+	      __func__, strerror(errno));
+      free(cmd);
+      return -1;
     }
 
   return 0;
 }
 
+/*
+ * do_scamperread
+ *
+ * the fd for the scamper process is marked as readable, so do a read
+ * on it.
+ */
 static int do_stdinread(void)
 {
   ssize_t rc;
-  char   *ptr, *head, *command;
-  char    buf[512];
-  void   *tmp;
-  size_t  i, linelen;
+  uint8_t buf[4096];
 
   if((rc = read(stdin_fd, buf, sizeof(buf))) > 0)
     {
-      if(stdinbuf_len == 0)
-	{
-	  if((stdinbuf = memdup(buf, rc)) == NULL)
-	    {
-	      return -1;
-	    }
-	  stdinbuf_len = rc;
-	}
-      else
-	{
-	  if((tmp = realloc(stdinbuf, stdinbuf_len + rc)) != NULL)
-	    {
-	      stdinbuf = tmp;
-	      memcpy(stdinbuf+stdinbuf_len, buf, rc);
-	      stdinbuf_len += rc;
-	    }
-	  else return -1;
-	}
+      scamper_linepoll_handle(stdin_lp, buf, rc);
+      return 0;
     }
   else if(rc == 0)
     {
-      if(done == 0)
-	write_wrap(scamper_fd, "done\n", NULL, 5);
-      done = 1;
+      scamper_linepoll_flush(stdin_lp);
       stdin_fd = -1;
       return 0;
     }
@@ -419,72 +436,81 @@ static int do_stdinread(void)
     {
       return 0;
     }
-  else
+
+  fprintf(stderr, "%s: could not read: %s\n", __func__, strerror(errno));
+  return -1;
+}
+
+static int do_scamperread_line(void *param, uint8_t *buf, size_t linelen)
+{
+  char *head = (char *)buf;
+  uint8_t uu[64];
+  size_t uus;
+  long l;
+
+  /* skip empty lines */
+  if(head[0] == '\0')
+    return 0;
+
+  /* if currently decoding data, then pass it to uudecode */
+  if(data_left > 0)
     {
-      fprintf(stderr, "could not read: errno %d\n", errno);
+      uus = sizeof(uu);
+      if(uudecode_line(head, linelen, uu, &uus) != 0)
+	{
+	  fprintf(stderr, "could not uudecode_line\n");
+	  error = 1;
+	  return -1;
+	}
+
+      if(uus != 0)
+	{
+	  if(outfile_fd != -1)
+	    write_wrap(outfile_fd, uu, NULL, uus);
+	  if(stdout_fd != -1)
+	    scamper_writebuf_send(stdout_wb, uu, uus);
+	}
+
+      data_left -= (linelen + 1);
+      return 0;
+    }
+
+  /* feedback letting us know that the command was accepted */
+  if(linelen >= 2 && strncasecmp(head, "OK", 2) == 0)
+    return 0;
+  
+  /* if the scamper process is asking for more tasks, give it more */
+  if(linelen == 4 && strncasecmp(head, "MORE", linelen) == 0)
+    {
+      more = 1;
+      if(do_method() != 0)
+	return -1;
+      return 0;
+    }
+
+  /* new piece of data */
+  if(linelen > 5 && strncasecmp(head, "DATA ", 5) == 0)
+    {
+      if(string_isnumber(head+5) == 0 || string_tolong(head+5, &l) != 0)
+	{
+	  fprintf(stderr, "could not parse %s\n", head);
+	  error = 1;
+	  return -1;
+	}
+      data_left = l;
+      return 0;
+    }
+
+  /* feedback letting us know that the command was not accepted */
+  if(linelen >= 3 && strncasecmp(head, "ERR", 3) == 0)
+    {
+      fprintf(stderr, "%s: command no accepted\n", __func__);
+      error = 1;
       return -1;
     }
 
-  /* process whatever is in the stdinbuf */
-  if(stdinbuf_len == 0)
-    {
-      goto done;
-    }
-
-  head = stdinbuf;
-  for(i=0; i<stdinbuf_len; i++)
-    {
-      if(stdinbuf[i] != '\n')
-	continue;
-
-      /* calculate the length of the line, including newline */
-      linelen = &stdinbuf[i] - head + 1;
-
-      /* skip empty lines */
-      if(linelen == 1 || head[0] == '#')
-	{
-	  head = &stdinbuf[i+1];
-	  continue;
-	}
-
-      /* make a copy of the command string */
-      if((command = malloc(linelen+1)) == NULL)
-	{
-	  fprintf(stderr, "could not malloc command\n");
-	  goto err;
-	}
-      memcpy(command, head, linelen);
-      command[linelen] = '\0';
-
-      /* put the command string on the list of things to do */
-      if(slist_tail_push(commands, command) == NULL)
-	{
-	  fprintf(stderr, "could not push command onto list\n");
-	  free(command);
-	  goto err;
-	}
-
-      head = &stdinbuf[i+1];
-    }
-
-  if(head != &stdinbuf[stdinbuf_len])
-    {
-      stdinbuf_len = &stdinbuf[stdinbuf_len] - head;
-      ptr = memdup(head, stdinbuf_len);
-      free(stdinbuf);
-      stdinbuf = ptr;
-    }
-  else
-    {
-      stdinbuf_len = 0;
-      free(stdinbuf);
-      stdinbuf = NULL;
-    }
-
- done:
-  return 0;
-
- err:
+  fprintf(stderr, "unknown response '%s'\n", head);
+  error = 1;
   return -1;
 }
 
@@ -497,180 +523,197 @@ static int do_stdinread(void)
 static int do_scamperread(void)
 {
   ssize_t rc;
-  uint8_t uu[64];
-  char   *ptr, *head;
-  char    buf[512];
-  void   *tmp;
-  long    l;
-  size_t  i, uus, linelen;
+  uint8_t buf[4096];
 
   if((rc = read(scamper_fd, buf, sizeof(buf))) > 0)
     {
-      if(readbuf_len == 0)
-	{
-	  if((readbuf = memdup(buf, rc)) == NULL)
-	    {
-	      return -1;
-	    }
-	  readbuf_len = rc;
-	}
-      else
-	{
-	  if((tmp = realloc(readbuf, readbuf_len + rc)) != NULL)
-	    {
-	      readbuf = tmp;
-	      memcpy(readbuf+readbuf_len, buf, rc);
-	      readbuf_len += rc;
-	    }
-	  else return -1;
-	}
+      scamper_linepoll_handle(scamper_lp, buf, rc);
+      return 0;
     }
   else if(rc == 0)
     {
       close(scamper_fd);
       scamper_fd = -1;
+      return 0;
     }
   else if(errno == EINTR || errno == EAGAIN)
     {
       return 0;
     }
-  else
+
+  fprintf(stderr, "%s: could not read: %s\n", __func__, strerror(errno));
+  return -1;
+}
+
+/*
+ * do_scamperwrite
+ *
+ * the fd for the scamper process is marked as writable, so write to it.
+ */
+static int do_scamperwrite(void)
+{
+  if(scamper_writebuf_write(scamper_fd, scamper_wb) != 0)
     {
-      fprintf(stderr, "could not read: errno %d\n", errno);
+      fprintf(stderr, "%s: could not write: %s\n", __func__, strerror(errno));
       return -1;
     }
+  return 0;
+}
 
-  /* process whatever is in the readbuf */
-  if(readbuf_len == 0)
+/*
+ * do_scamperconnect
+ *
+ * allocate socket and connect to scamper process listening on the port
+ * specified.
+ */
+static int do_scamperconnect(void)
+{
+  struct sockaddr_un sun;
+  struct sockaddr_storage sas;
+  struct sockaddr *sa = (struct sockaddr *)&sas;
+  struct in_addr in;
+  char buf[256];
+  size_t off = 0;
+
+  if(options & OPT_PORT)
     {
-      goto done;
-    }
-
-  head = readbuf;
-  for(i=0; i<readbuf_len; i++)
-    {
-      if(readbuf[i] != '\n')
-	continue;
-
-      /* skip empty lines */
-      if(head == &readbuf[i])
+      if(dst_addr != NULL)
 	{
-	  head = &readbuf[i+1];
-	  continue;
-	}
-
-      /* calculate the length of the line, excluding newline */
-      linelen = &readbuf[i] - head;
-
-      /* if currently decoding data, then pass it to uudecode */
-      if(data_left > 0)
-	{
-	  uus = sizeof(uu);
-	  if(uudecode_line(head, linelen, uu, &uus) != 0)
+	  if(sockaddr_compose_str(sa, dst_addr, dst_port) != 0)
 	    {
-	      fprintf(stderr, "could not uudecode_line\n");
-	      goto err;
-	    }
-
-	  if(uus != 0)
-	    {
-	      if(outfile_fd != -1)
-		write_wrap(outfile_fd, uu, NULL, uus);
-	      if(options & OPT_STDOUT)
-		write_wrap(STDOUT_FILENO, uu, NULL, uus);
-	    }
-
-	  data_left -= (linelen + 1);
-	}
-      /* if the scamper process is asking for more tasks, give it more */
-      else if(linelen == 4 && strncasecmp(head, "MORE", linelen) == 0)
-	{
-	  more++;
-	}
-      /* new piece of data */
-      else if(linelen > 5 && strncasecmp(head, "DATA ", 5) == 0)
-	{
-	  l = strtol(head+5, &ptr, 10);
-	  if(*ptr != '\n' || l < 1)
-	    {
-	      head[linelen] = '\0';
-	      fprintf(stderr, "could not parse %s\n", head);
-	      goto err;
-	    }
-
-	  data_left = l;
-	}
-      /* feedback letting us know that the command was accepted */
-      else if(linelen >= 2 && strncasecmp(head, "OK", 2) == 0)
-	{
-	  /* err, nothing to do */
-	}
-      /* feedback letting us know that the command was not accepted */
-      else if(linelen >= 3 && strncasecmp(head, "ERR", 3) == 0)
-	{
-	  if(lastcommand != NULL)
-	    {
-	      fprintf(stderr, "command not accepted: %s", lastcommand);
-	      more++;
-	    }
-	  else
-	    {
-	      goto err;
+	      fprintf(stderr, "%s: could not compose sockaddr from %s:%d\n",
+		      __func__, dst_addr, dst_port);
+	      return -1;
 	    }
 	}
       else
 	{
-	  head[linelen] = '\0';
-	  fprintf(stderr, "unknown response '%s'\n", head);
-	  goto err;
+	  in.s_addr = htonl(INADDR_LOOPBACK);
+	  sockaddr_compose(sa, AF_INET, &in, dst_port);
 	}
 
-      head = &readbuf[i+1];
-    }
-
-  if(head != &readbuf[readbuf_len])
-    {
-      readbuf_len = &readbuf[readbuf_len] - head;
-      ptr = memdup(head, readbuf_len);
-      free(readbuf);
-      readbuf = ptr;
+      if((scamper_fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP)) < 0)
+	{
+	  fprintf(stderr, "%s: could not allocate new socket: %s\n",
+		  __func__, strerror(errno));
+	  return -1;
+	}
+      if(connect(scamper_fd, sa, sockaddr_len(sa)) != 0)
+	{
+	  fprintf(stderr, "%s: could not connect to scamper process: %s\n",
+		  __func__, strerror(errno));
+	  return -1;
+	}
     }
   else
     {
-      readbuf_len = 0;
-      free(readbuf);
-      readbuf = NULL;
+      if(sockaddr_compose_un((struct sockaddr *)&sun, unix_name) != 0)
+	{
+	  fprintf(stderr, "%s: could not build sockaddr_un: %s\n",
+		  __func__, strerror(errno));
+	  return -1;
+	}
+      if((scamper_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
+	{
+	  fprintf(stderr, "%s: could not allocate unix domain socket: %s\n",
+		  __func__, strerror(errno));
+	  return -1;
+	}
+      if(connect(scamper_fd, (const struct sockaddr *)&sun, sizeof(sun)) != 0)
+	{
+	  fprintf(stderr, "%s: could not connect to scamper process: %s\n",
+		  __func__, strerror(errno));
+	  return -1;
+	}
     }
 
- done:
-  return 0;
-
- err:
-  return -1;
-}
-
-static int do_attach(void)
-{
-  char buf[256];
-  size_t off = 0;
-
-  string_concat(buf, sizeof(buf), &off, "attach");
-  if((options & OPT_PRIORITY) != 0)
-    string_concat(buf, sizeof(buf), &off, " priority %d", priority);
-  string_concat(buf, sizeof(buf), &off, "\n");
-
-  if(write_wrap(scamper_fd, buf, NULL, off) != 0)
+  if(fcntl_set(scamper_fd, O_NONBLOCK) == -1)
     {
-      fprintf(stderr, "could not attach to scamper process\n");
+      fprintf(stderr, "%s: could not set nonblock: %s\n",
+	      __func__, strerror(errno));
       return -1;
     }
 
+  if((scamper_lp = scamper_linepoll_alloc(do_scamperread_line,NULL)) == NULL ||
+     (scamper_wb = scamper_writebuf_alloc()) == NULL)
+    {
+      fprintf(stderr, "%s: could not alloc wb/lp: %s\n",
+	      __func__, strerror(errno));
+      return -1;
+    }
+
+  if(options & (OPT_PORT|OPT_UNIX))
+    {
+      string_concat(buf, sizeof(buf), &off, "attach");
+      if((options & OPT_PRIORITY) != 0)
+	string_concat(buf, sizeof(buf), &off, " priority %d", priority);
+      string_concat(buf, sizeof(buf), &off, "\n");
+      if(scamper_writebuf_send(scamper_wb, buf, off) != 0)
+	{
+	  fprintf(stderr, "%s: could not attach to scamper process: %s\n",
+		  __func__, strerror(errno));
+	  return -1;
+	}
+    }
+
+  return 0;
+}
+
+/*
+ * do_stdoutwrite
+ *
+ * the fd for stdout is marked as writable, so write to it.
+ */
+static int do_stdoutwrite(void)
+{
+  if(scamper_writebuf_write(stdout_fd, stdout_wb) != 0)
+    {
+      fprintf(stderr, "%s: could not write to stdout: %s\n",
+	      __func__, strerror(errno));
+      return -1;
+    }
+  if(scamper_writebuf_len(stdout_wb) == 0 && scamper_fd == -1)
+    stdout_fd = -1;
+  return 0;
+}
+
+/*
+ * do_infile
+ *
+ * read the contents of the infile in one hit.
+ */
+static int do_infile(void)
+{
+  if(infile_name != NULL)
+    {
+      if(file_lines(infile_name, command_new, NULL) != 0)
+	{
+	  fprintf(stderr, "%s: could not read input file %s: %s\n",
+		  __func__, infile_name, strerror(errno));
+	  return -1;
+	}
+      if((flags & FLAG_RANDOM) && slist_shuffle(commands) != 0)
+	{
+	  fprintf(stderr, "%s: could not shuffle commands: %s\n",
+		  __func__, strerror(errno));
+	  return -1;
+	}
+    }
+  else if(stdin_fd != -1)
+    {
+      if((stdin_lp = scamper_linepoll_alloc(do_stdinread_line, NULL)) == NULL)
+	{
+	  fprintf(stderr, "%s: could not alloc linepoll: %s\n",
+		  __func__, strerror(errno));
+	  return -1;
+	}
+    }
   return 0;
 }
 
 int main(int argc, char *argv[])
 {
-  fd_set rfds;
+  fd_set rfds, wfds, *rfdsp, *wfdsp;
   int nfds;
 
 #if defined(DMALLOC)
@@ -678,6 +721,8 @@ int main(int argc, char *argv[])
 #endif
 
   atexit(cleanup);
+
+  random_seed();
 
   if(check_options(argc, argv) != 0)
     return -1;
@@ -687,70 +732,84 @@ int main(int argc, char *argv[])
     return -1;
 #endif
 
-  /*
-   * read the list of addresses in the address list file.
-   */
-  if(do_infile() != 0)
+  /* connect to the scamper process */
+  if(do_scamperconnect() != 0)
     return -1;
 
-  /*
-   * connect to the scamper process
-   */
-  if(do_scamperconnect() != 0)
+  if((commands = slist_alloc()) == NULL)
+    {
+      fprintf(stderr, "could not alloc commands list\n");
+      return -1;
+    }
+
+  if(do_infile() != 0)
     return -1;
 
   if(do_outfile() != 0)
     return -1;
 
-  /* attach */
-  if(do_attach() != 0)
-    return -1;
-
-  for(;;)
+  while(error == 0)
     {
-      if(scamper_fd == -1)
+      nfds = 0; FD_ZERO(&rfds); rfdsp = NULL; FD_ZERO(&wfds); wfdsp = NULL;
+
+      if(more != 0)
+	do_method();
+
+      /* interactions with the scamper process */
+      if(scamper_fd != -1)
 	{
-	  break;
+	  FD_SET(scamper_fd, &rfds); rfdsp = &rfds;
+	  if(nfds < scamper_fd)
+	    nfds = scamper_fd;
+	  if(scamper_writebuf_len(scamper_wb) > 0)
+	    {
+	      FD_SET(scamper_fd, &wfds);
+	      wfdsp = &wfds;
+	    }
 	}
-
-      nfds = 0;
-      FD_ZERO(&rfds);
-
-      /* will always read the scamper process */
-      FD_SET(scamper_fd, &rfds);
-      if(nfds < scamper_fd)
-	nfds = scamper_fd;
 
       /* might read commands from stdin */
       if(stdin_fd != -1)
 	{
-	  FD_SET(stdin_fd, &rfds);
+	  FD_SET(stdin_fd, &rfds); rfdsp = &rfds;
 	  if(nfds < stdin_fd)
 	    nfds = stdin_fd;
 	}
 
-      if(more > 0)
+      /* might send output to stdout */
+      if(stdout_fd != -1 && scamper_writebuf_len(stdout_wb) > 0)
 	{
-	  do_method();
+	  FD_SET(stdout_fd, &wfds); wfdsp = &wfds;
+	  if(nfds < stdout_fd)
+	    nfds = stdout_fd;
 	}
 
-      if(select(nfds+1, &rfds, NULL, NULL, NULL) < 0)
+      if(nfds == 0)
+	break;
+
+      if(select(nfds+1, rfdsp, wfdsp, NULL, NULL) < 0)
 	{
 	  if(errno == EINTR) continue;
+	  fprintf(stderr, "%s: could not select: %s\n",
+		  __func__, strerror(errno));
 	  break;
 	}
 
-      if(stdin_fd != -1 && FD_ISSET(stdin_fd, &rfds))
-	{
-	  if(do_stdinread() != 0)
-	    return -1;
-	}
+      if(stdin_fd != -1 && rfdsp != NULL && FD_ISSET(stdin_fd, rfdsp) &&
+	 do_stdinread() != 0)
+	return -1;
 
-      if(FD_ISSET(scamper_fd, &rfds))
-	{
-	  if(do_scamperread() != 0)
-	    return -1;
-	}
+      if(scamper_fd != -1 && rfdsp != NULL && FD_ISSET(scamper_fd, rfdsp) &&
+	 do_scamperread() != 0)
+	return -1;
+
+      if(scamper_fd != -1 && wfdsp != NULL && FD_ISSET(scamper_fd, wfdsp) &&
+	 do_scamperwrite() != 0)
+	return -1;
+
+      if(stdout_fd != -1 && wfdsp != NULL && FD_ISSET(stdout_fd, wfdsp) &&
+	 do_stdoutwrite() != 0)
+	return -1;
     }
 
   return 0;

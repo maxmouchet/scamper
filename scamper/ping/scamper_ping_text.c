@@ -6,7 +6,7 @@
  * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping_text.c,v 1.12.6.1 2015/12/03 07:21:09 mjl Exp $
+ * $Id: scamper_ping_text.c,v 1.14 2015/05/08 00:08:25 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_text.c,v 1.12.6.1 2015/12/03 07:21:09 mjl Exp $";
+  "$Id: scamper_ping_text.c,v 1.14 2015/05/08 00:08:25 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

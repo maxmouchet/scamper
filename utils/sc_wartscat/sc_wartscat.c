@@ -3,7 +3,7 @@
  *
  * This is a utility program to concatenate warts data files together.
  *
- * $Id: sc_wartscat.c,v 1.21 2013/08/31 00:12:49 mjl Exp $
+ * $Id: sc_wartscat.c,v 1.22 2015/04/29 04:23:39 mjl Exp $
  *
  * Copyright (C) 2007-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartscat.c,v 1.21 2013/08/31 00:12:49 mjl Exp $";
+  "$Id: sc_wartscat.c,v 1.22 2015/04/29 04:23:39 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -128,11 +128,8 @@ static int check_options(int argc, char *argv[])
       usage(argv[0], 0);
       return -1;
     }
-  if((infiles = malloc(sizeof(scamper_file_t *) * infile_cnt)) == NULL)
-    {
-      return -1;
-    }
-  memset(infiles, 0, sizeof(scamper_file_t *) * infile_cnt);
+  if((infiles = malloc_zero(sizeof(scamper_file_t *) * infile_cnt)) == NULL)
+    return -1;
 
   /* open each input file */
   for(i=0; i<infile_cnt; i++)
@@ -267,18 +264,13 @@ static int simple_cat(void)
 	  /* EOF */
 	  if(data == NULL)
 	    break;
-
 	  if(write_obj(type, data) != 0)
-	    {
-	      return -1;
-	    }
+	    return -1;
 	}
 
       /* error when reading the input file */
       if(rc != 0)
-	{
-	  return -1;
-	}
+	return -1;
 
       scamper_file_close(infiles[i]);
       infiles[i] = NULL;
@@ -292,16 +284,12 @@ static int simple_cat(void)
  *
  * prioritise sort_struct objects for output to file.
  */
-static int sort_struct_cmp(const void *va, const void *vb)
+static int sort_struct_cmp(const sort_struct_t *a, const sort_struct_t *b)
 {
-  const sort_struct_t *a = (const sort_struct_t *)va;
-  const sort_struct_t *b = (const sort_struct_t *)vb;
   int i;
 
   if((i = timeval_cmp(&b->tv, &a->tv)) != 0)
-    {
-      return i;
-    }
+    return i;
 
   /* if timestamps are identical, cycle start objects have first priority */
   if(a->type == SCAMPER_FILE_OBJ_CYCLE_START)
@@ -378,9 +366,7 @@ static int sort_cat_fill(heap_t *heap, sort_struct_t *s)
 	}
 
       if(heap_insert(heap, s) == NULL)
-	{
-	  return -1;
-	}
+	return -1;
     }
   else return -1;
 
@@ -394,16 +380,11 @@ static int sort_cat(void)
   sort_struct_t *s;
   int i;
 
-  if((heap = heap_alloc(sort_struct_cmp)) == NULL)
-    {
-      goto err;
-    }
+  if((heap = heap_alloc((heap_cmp_t)sort_struct_cmp)) == NULL)
+    goto err;
 
-  if((ss = malloc(sizeof(sort_struct_t) * infile_cnt)) == NULL)
-    {
-      goto err;
-    }
-  memset(ss, 0, sizeof(sort_struct_t) * infile_cnt);
+  if((ss = malloc_zero(sizeof(sort_struct_t) * infile_cnt)) == NULL)
+    goto err;
 
   /*
    * start by filling all file slots with the first data object from
@@ -413,9 +394,7 @@ static int sort_cat(void)
     {
       ss[i].file = i;
       if(sort_cat_fill(heap, &ss[i]) != 0)
-	{
-	  goto err;
-	}
+	goto err;
     }
 
   /*
@@ -426,14 +405,9 @@ static int sort_cat(void)
   while((s = (sort_struct_t *)heap_remove(heap)) != NULL)
     {
       if(write_obj(s->type, s->data) != 0)
-	{
-	  goto err;
-	}
-
+	goto err;
       if(sort_cat_fill(heap, s) != 0)
-	{
-	  goto err;
-	}
+	goto err;
     }
 
   heap_free(heap, NULL);
@@ -470,9 +444,7 @@ int main(int argc, char *argv[])
   atexit(cleanup);
 
   if(check_options(argc, argv) == -1)
-    {
-      return -1;
-    }
+    return -1;
 
   if((filter = scamper_file_filter_alloc(filter_types, filter_cnt)) == NULL)
     {
@@ -481,13 +453,9 @@ int main(int argc, char *argv[])
     }
 
   if(options & OPT_SORT)
-    {
-      rc = sort_cat();
-    }
+    rc = sort_cat();
   else
-    {
-      rc = simple_cat();
-    }
+    rc = simple_cat();
 
   return rc;
 }

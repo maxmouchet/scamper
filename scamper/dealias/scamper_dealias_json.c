@@ -5,7 +5,7 @@
  * Copyright (c) 2013-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_json.c,v 1.9.4.3 2016/09/17 07:07:38 mjl Exp $
+ * $Id: scamper_dealias_json.c,v 1.12 2016/09/17 07:06:40 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_json.c,v 1.9.4.3 2016/09/17 07:07:38 mjl Exp $";
+  "$Id: scamper_dealias_json.c,v 1.12 2016/09/17 07:06:40 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

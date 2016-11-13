@@ -3,9 +3,10 @@
  *
  * Copyright (C) 2010-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
+ * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_sting_warts.c,v 1.7.6.1 2016/12/02 19:00:36 mjl Exp $
+ * $Id: scamper_sting_warts.c,v 1.8 2016/07/03 10:27:31 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sting_warts.c,v 1.7.6.1 2016/12/02 19:00:36 mjl Exp $";
+  "$Id: scamper_sting_warts.c,v 1.8 2016/07/03 10:27:31 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -285,12 +286,8 @@ static int warts_sting_params_read(scamper_sting_t *sting,
     {&sting->result,       (wpr_t)extract_byte,         NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
-  int rc;
-  if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
-    return rc;
-  if(sting->src == NULL || sting->dst == NULL)
-    return -1;
-  return 0;
+
+  return warts_params_read(buf, off, len, handlers, handler_cnt);
 }
 
 static int warts_sting_params_write(const scamper_sting_t *sting,
@@ -344,13 +341,11 @@ int scamper_file_warts_sting_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 				 scamper_sting_t **sting_out)
 {
   scamper_sting_t *sting = NULL;
-  warts_addrtable_t table;
+  warts_addrtable_t *table = NULL;
   warts_state_t *state = scamper_file_getstate(sf);
   uint8_t *buf = NULL;
   uint32_t off = 0;
   uint32_t i;
-
-  memset(&table, 0, sizeof(table));
 
   /* Read in the header */
   if(warts_read(sf, &buf, hdr->len) != 0)
@@ -370,8 +365,11 @@ int scamper_file_warts_sting_read(scamper_file_t *sf, const warts_hdr_t *hdr,
       goto err;
     }
 
+  if((table = warts_addrtable_alloc_byid()) == NULL)
+    goto err;
+
   /* Read in the sting data from the warts file */
-  if(warts_sting_params_read(sting, &table, state, buf, &off, hdr->len) != 0)
+  if(warts_sting_params_read(sting, table, state, buf, &off, hdr->len) != 0)
     {
       goto err;
     }
@@ -400,13 +398,13 @@ int scamper_file_warts_sting_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     }
 
   assert(off == hdr->len);
-  warts_addrtable_clean(&table);
+  warts_addrtable_free(table);
   *sting_out = sting;
   free(buf);
   return 0;
 
  err:
-  warts_addrtable_clean(&table);
+  if(table != NULL) warts_addrtable_free(table);
   if(buf != NULL) free(buf);
   if(sting != NULL) scamper_sting_free(sting);
   return -1;
@@ -416,7 +414,7 @@ int scamper_file_warts_sting_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 int scamper_file_warts_sting_write(const scamper_file_t *sf,
 				   const scamper_sting_t *sting)
 {
-  warts_addrtable_t table;
+  warts_addrtable_t *table = NULL;
   warts_sting_pkt_t *pkts = NULL;
   uint8_t *buf = NULL;
   uint8_t  flags[sting_vars_mfb];
@@ -424,10 +422,11 @@ int scamper_file_warts_sting_write(const scamper_file_t *sf,
   uint32_t len, i, off = 0;
   size_t size;
 
-  memset(&table, 0, sizeof(table));
+  if((table = warts_addrtable_alloc_byaddr()) == NULL)
+    goto err;
 
   /* Set the sting data (not including the packets) */
-  warts_sting_params(sting, &table, flags, &flags_len, &params_len);
+  warts_sting_params(sting, table, flags, &flags_len, &params_len);
   len = 8 + flags_len + params_len + 2;
 
   if(sting->pktc > 0)
@@ -447,7 +446,7 @@ int scamper_file_warts_sting_write(const scamper_file_t *sf,
   insert_wartshdr(buf, &off, len, SCAMPER_FILE_OBJ_STING);
 
   /* Write the sting data (excluding packets) to the buffer */
-  if(warts_sting_params_write(sting, sf, &table, buf, &off, len,
+  if(warts_sting_params_write(sting, sf, table, buf, &off, len,
 			      flags, flags_len, params_len) != 0)
     {
       goto err;
@@ -466,12 +465,12 @@ int scamper_file_warts_sting_write(const scamper_file_t *sf,
   if(warts_write(sf, buf, len) == -1)
     goto err;
 
-  warts_addrtable_clean(&table);
+  warts_addrtable_free(table);
   free(buf);
   return 0;
 
 err:
-  warts_addrtable_clean(&table);
+  if(table != NULL) warts_addrtable_free(table);
   if(pkts != NULL) free(pkts);
   if(buf != NULL) free(buf);
   return -1;

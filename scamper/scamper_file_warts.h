@@ -3,11 +3,12 @@
  *
  * the warts file format
  *
- * $Id: scamper_file_warts.h,v 1.21.2.1 2015/10/17 07:07:01 mjl Exp $
+ * $Id: scamper_file_warts.h,v 1.25 2016/07/03 10:27:31 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2012-2015 The Regents of the University of California
+ * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -85,11 +86,7 @@ typedef struct warts_addr
   uint32_t        id;
   uint8_t         ondisk;
 } warts_addr_t;
-typedef struct warts_addrtable
-{
-  warts_addr_t **addrs;
-  int            addrc;
-} warts_addrtable_t;
+typedef struct warts_addrtable warts_addrtable_t;
 
 /*
  * warts_hdr
@@ -173,8 +170,11 @@ int flag_isset(const uint8_t *flags, const int id);
 uint16_t fold_flags(uint8_t *flags, const int max_id);
 
 int warts_str_size(const char *str);
+
+warts_addrtable_t *warts_addrtable_alloc_byaddr(void);
+warts_addrtable_t *warts_addrtable_alloc_byid(void);
 uint32_t warts_addr_size(warts_addrtable_t *t, scamper_addr_t *addr);
-void warts_addrtable_clean(warts_addrtable_t *table);
+void warts_addrtable_free(warts_addrtable_t *t);
 
 void insert_addr(uint8_t *buf, uint32_t *off, const uint32_t len,
 			const scamper_addr_t *addr, void *param);
@@ -252,7 +252,6 @@ int warts_write(const scamper_file_t *sf, const void *buf, size_t len);
 int warts_hdr_read(scamper_file_t *sf, warts_hdr_t *hdr);
 int warts_addr_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 			   scamper_addr_t **addr_out);
-int warts_list_cmp(const void *va, const void *vb);
 warts_list_t *warts_list_alloc(scamper_list_t *list, uint32_t id);
 void warts_list_free(warts_list_t *wl);
 void warts_list_params(const scamper_list_t *list, uint8_t *flags,
@@ -271,7 +270,6 @@ int warts_list_write(const scamper_file_t *sf, scamper_list_t *list,
 			    uint32_t *id);
 int warts_list_getid(const scamper_file_t *sf, scamper_list_t *list,
 			    uint32_t *id);
-int warts_cycle_cmp(const void *va, const void *vb);
 warts_cycle_t *warts_cycle_alloc(scamper_cycle_t *cycle, uint32_t id);
 void warts_cycle_free(warts_cycle_t *cycle);
 void warts_cycle_params(const scamper_cycle_t *cycle, uint8_t *flags,

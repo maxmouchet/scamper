@@ -1,7 +1,7 @@
 /*
  * sc_tracediff
  *
- * $Id: sc_tracediff.c,v 1.10.14.1 2015/08/08 04:05:06 mjl Exp $
+ * $Id: sc_tracediff.c,v 1.12 2015/07/15 04:50:50 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_tracediff.c,v 1.10.14.1 2015/08/08 04:05:06 mjl Exp $";
+  "$Id: sc_tracediff.c,v 1.12 2015/07/15 04:50:50 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -263,15 +263,13 @@ static int match_dstuserid(const scamper_trace_t *a, const scamper_trace_t *b)
   return match_userid(a, b);
 }
 
-static int tracepair_cmp(const void *va, const void *vb)
+static int tracepair_cmp(const tracepair_t *tpa, const tracepair_t *tpb)
 {
   static int (*const mf[])(const scamper_trace_t *,const scamper_trace_t *) = {
     match_dst,
     match_userid,
     match_dstuserid,
   };
-  const tracepair_t *tpa = va;
-  const tracepair_t *tpb = vb;
   const scamper_trace_t *a = NULL, *b = NULL;
   int i;
 
@@ -453,7 +451,7 @@ int main(int argc, char *argv[])
     }
   filec_open = filec;
 
-  if((pairs = splaytree_alloc(tracepair_cmp)) == NULL)
+  if((pairs = splaytree_alloc((splaytree_cmp_t)tracepair_cmp)) == NULL)
     {
       fprintf(stderr, "could not alloc tracepair tree\n");
       goto err;

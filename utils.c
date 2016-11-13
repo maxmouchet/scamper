@@ -1,12 +1,13 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.173.2.7 2016/09/17 05:38:39 mjl Exp $
+ * $Id: utils.c,v 1.184 2016/09/17 05:30:49 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2011      Matthew Luckie
  * Copyright (C) 2012-2015 The Regents of the University of California
+ * Copyright (C) 2015-2016 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.173.2.7 2016/09/17 05:38:39 mjl Exp $";
+  "$Id: utils.c,v 1.184 2016/09/17 05:30:49 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -320,10 +321,19 @@ int addr4_cmp(const void *va, const void *vb)
 {
   const struct in_addr *a = (const struct in_addr *)va;
   const struct in_addr *b = (const struct in_addr *)vb;
-
   if(a->s_addr < b->s_addr) return -1;
   if(a->s_addr > b->s_addr) return  1;
+  return 0;
+}
 
+int addr4_human_cmp(const void *va, const void *vb)
+{
+  const struct in_addr *a = (const struct in_addr *)va;
+  const struct in_addr *b = (const struct in_addr *)vb;
+  uint32_t ua = ntohl(a->s_addr);
+  uint32_t ub = ntohl(b->s_addr);
+  if(ua < ub) return -1;
+  if(ua > ub) return  1;
   return 0;
 }
 
@@ -344,6 +354,35 @@ int addr6_cmp(const void *va, const void *vb)
     {
       if(a->u.Word[i] < b->u.Word[i]) return -1;
       if(a->u.Word[i] > b->u.Word[i]) return  1;
+    }
+#endif
+
+  return 0;
+}
+
+int addr6_human_cmp(const void *va, const void *vb)
+{
+  const struct in6_addr *a = (const struct in6_addr *)va;
+  const struct in6_addr *b = (const struct in6_addr *)vb;
+  int i;
+
+#ifndef _WIN32
+  uint32_t ua, ub;
+  for(i=0; i<4; i++)
+    {
+      ua = ntohl(a->s6_addr32[i]);
+      ub = ntohl(b->s6_addr32[i]);
+      if(ua < ub) return -1;
+      if(ua > ub) return  1;
+    }
+#else
+  uint16_t ua, ub;
+  for(i=0; i<8; i++)
+    {
+      ua = ntohs(a->u.Word[i]);
+      ub = ntohs(b->u.Word[i]);
+      if(ua < ub) return -1;
+      if(ua > ub) return  1;
     }
 #endif
 

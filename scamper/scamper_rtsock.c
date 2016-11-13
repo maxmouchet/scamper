@@ -1,7 +1,7 @@
 /*
  * scamper_rtsock: code to deal with a route socket or equivalent
  *
- * $Id: scamper_rtsock.c,v 1.80.6.1 2016/08/26 21:14:38 mjl Exp $
+ * $Id: scamper_rtsock.c,v 1.81 2016/08/08 08:42:08 mjl Exp $
  *
  *          Matthew Luckie
  *
@@ -42,7 +42,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_rtsock.c,v 1.80.6.1 2016/08/26 21:14:38 mjl Exp $";
+  "$Id: scamper_rtsock.c,v 1.81 2016/08/08 08:42:08 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

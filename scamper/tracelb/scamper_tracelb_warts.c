@@ -2,9 +2,10 @@
  * scamper_tracelb_warts.c
  *
  * Copyright (C) 2008-2011 The University of Waikato
+ * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_tracelb_warts.c,v 1.4.6.1 2016/12/02 18:52:24 mjl Exp $
+ * $Id: scamper_tracelb_warts.c,v 1.5 2016/07/03 10:27:31 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb_warts.c,v 1.4.6.1 2016/12/02 18:52:24 mjl Exp $";
+  "$Id: scamper_tracelb_warts.c,v 1.5 2016/07/03 10:27:31 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -300,13 +301,7 @@ static int warts_tracelb_params_read(scamper_tracelb_t *trace,
     {&trace->userid,       (wpr_t)extract_uint32,    NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
-  int rc;
-
-  if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
-    return rc;
-  if(trace->src == NULL || trace->dst == NULL)
-    return -1;
-  return 0;
+  return warts_params_read(buf, off, len, handlers, handler_cnt);
 }
 
 static int warts_tracelb_params_write(const scamper_tracelb_t *trace,
@@ -1020,9 +1015,7 @@ int scamper_file_warts_tracelb_read(scamper_file_t *sf, const warts_hdr_t *hdr,
   uint32_t                i, off = 0;
   uint16_t               *nlc = NULL, j;
   scamper_tracelb_node_t *node;
-  warts_addrtable_t       table;
-
-  memset(&table, 0, sizeof(table));
+  warts_addrtable_t      *table = NULL;
 
   if(warts_read(sf, &buf, hdr->len) != 0)
     {
@@ -1039,8 +1032,11 @@ int scamper_file_warts_tracelb_read(scamper_file_t *sf, const warts_hdr_t *hdr,
       goto err;
     }
 
+  if((table = warts_addrtable_alloc_byid()) == NULL)
+    goto err;
+
   /* read the trace's parameters */
-  if(warts_tracelb_params_read(trace, state, &table, buf, &off, hdr->len) != 0)
+  if(warts_tracelb_params_read(trace, state, table, buf, &off, hdr->len) != 0)
     {
       goto err;
     }
@@ -1057,7 +1053,7 @@ int scamper_file_warts_tracelb_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 	  if((trace->nodes[i] = scamper_tracelb_node_alloc(NULL)) == NULL)
 	    goto err;
 
-	  if(warts_tracelb_node_read(trace->nodes[i], state, &table,
+	  if(warts_tracelb_node_read(trace->nodes[i], state, table,
 				     buf, &off, hdr->len) != 0)
 	    goto err;
 	}
@@ -1075,7 +1071,7 @@ int scamper_file_warts_tracelb_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 	  if((trace->links[i] = scamper_tracelb_link_alloc()) == NULL)
 	    goto err;
 
-	  if(warts_tracelb_link_read(trace, trace->links[i], state, &table,
+	  if(warts_tracelb_link_read(trace, trace->links[i], state, table,
 				     buf, &off, hdr->len) != 0)
 	    goto err;
 	}
@@ -1125,12 +1121,12 @@ int scamper_file_warts_tracelb_read(scamper_file_t *sf, const warts_hdr_t *hdr,
       free(nlc); nlc = NULL;
     }
 
-  warts_addrtable_clean(&table);
+  warts_addrtable_free(table);
   *trace_out = trace;
   return 0;
 
  err:
-  warts_addrtable_clean(&table);
+  if(table != NULL) warts_addrtable_free(table);
   if(buf != NULL) free(buf);
   if(nlc != NULL) free(nlc);
   if(trace != NULL) scamper_tracelb_free(trace);
@@ -1150,13 +1146,14 @@ int scamper_file_warts_tracelb_write(const scamper_file_t *sf,
   warts_tracelb_link_t         *link_state = NULL;
   size_t                        size;
   int                           i;
-  warts_addrtable_t             table;
+  warts_addrtable_t            *table = NULL;
 
   /* make sure the table is nulled out */
-  memset(&table, 0, sizeof(table));
+  if((table = warts_addrtable_alloc_byaddr()) == NULL)
+    goto err;
 
   /* figure out which tracelb data items we'll store in this record */
-  warts_tracelb_params(trace, &table, trace_flags, &trace_flags_len,
+  warts_tracelb_params(trace, table, trace_flags, &trace_flags_len,
 		       &trace_params_len);
 
   /* this represents the length of the trace's flags and parameters */
@@ -1176,7 +1173,7 @@ int scamper_file_warts_tracelb_write(const scamper_file_t *sf,
 	{
 	  len2 = len;
 	  node = trace->nodes[i];
-	  if(warts_tracelb_node_state(sf, node, &table, &node_state[i],
+	  if(warts_tracelb_node_state(sf, node, table, &node_state[i],
 				      &len2) != 0)
 	    {
 	      goto err;
@@ -1203,7 +1200,7 @@ int scamper_file_warts_tracelb_write(const scamper_file_t *sf,
 	  len2 = len;
 	  link = trace->links[i];
 	  if(warts_tracelb_link_state(sf, trace, link, &link_state[i],
-				      &table, &len2) != 0)
+				      table, &len2) != 0)
 	    {
 	      goto err;
 	    }
@@ -1223,7 +1220,7 @@ int scamper_file_warts_tracelb_write(const scamper_file_t *sf,
   insert_wartshdr(buf, &off, len, SCAMPER_FILE_OBJ_TRACELB);
 
   /* write trace params */
-  if(warts_tracelb_params_write(trace, sf, &table, buf, &off, len, trace_flags,
+  if(warts_tracelb_params_write(trace, sf, table, buf, &off, len, trace_flags,
 				trace_flags_len, trace_params_len) != 0)
     {
       goto err;
@@ -1232,7 +1229,7 @@ int scamper_file_warts_tracelb_write(const scamper_file_t *sf,
   /* write trace nodes */
   for(i=0; i<trace->nodec; i++)
     {
-      warts_tracelb_node_write(trace->nodes[i], &node_state[i], &table,
+      warts_tracelb_node_write(trace->nodes[i], &node_state[i], table,
 			       buf, &off, len);
     }
   if(node_state != NULL)
@@ -1245,7 +1242,7 @@ int scamper_file_warts_tracelb_write(const scamper_file_t *sf,
   for(i=0; i<trace->linkc; i++)
     {
       link = trace->links[i];
-      warts_tracelb_link_write(link, &link_state[i], &table, buf, &off, len);
+      warts_tracelb_link_write(link, &link_state[i], table, buf, &off, len);
       warts_tracelb_link_free(&link_state[i]);
     }
   if(link_state != NULL)
@@ -1261,12 +1258,12 @@ int scamper_file_warts_tracelb_write(const scamper_file_t *sf,
       goto err;
     }
 
-  warts_addrtable_clean(&table);
+  warts_addrtable_free(table);
   free(buf);
   return 0;
 
  err:
-  warts_addrtable_clean(&table);
+  if(table != NULL) warts_addrtable_free(table);
   if(node_state != NULL) free(node_state);
   if(link_state != NULL) free(link_state);
   if(buf != NULL) free(buf);

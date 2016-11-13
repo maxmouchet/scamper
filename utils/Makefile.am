@@ -2,11 +2,15 @@ SUBDIRS = \
 	sc_ally \
 	sc_analysis_dump \
 	sc_attach \
+	sc_bdrmap \
 	sc_filterpolicy \
 	sc_ipiddump \
+	sc_prefixscan \
+	sc_radargun \
+	sc_remoted \
 	sc_speedtrap \
-	sc_tracediff \
 	sc_tbitblind \
+	sc_tracediff \
 	sc_warts2csv \
 	sc_warts2json \
 	sc_warts2pcap \

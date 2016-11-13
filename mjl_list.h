@@ -25,7 +25,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_list.h,v 1.36.14.1 2015/10/17 07:38:45 mjl Exp $
+ * $Id: mjl_list.h,v 1.39 2015/05/19 23:05:48 mjl Exp $
  *
  */
 
@@ -84,8 +84,8 @@ void slist_init(slist_t *list);
 void slist_onremove(slist_t *list, slist_onremove_t onremove);
 void slist_concat(slist_t *first, slist_t *second);
 void *slist_head_pop(slist_t *list);
-void *slist_head_get(const slist_t *list);
-void *slist_tail_get(const slist_t *list);
+void *slist_head_item(const slist_t *list);
+void *slist_tail_item(const slist_t *list);
 void *slist_node_item(const slist_node_t *node);
 slist_node_t *slist_head_node(const slist_t *list);
 slist_node_t *slist_tail_node(const slist_t *list);
@@ -126,8 +126,8 @@ void dlist_onremove(dlist_t *list, dlist_onremove_t onremove);
 void dlist_concat(dlist_t *first, dlist_t *second);
 void *dlist_head_pop(dlist_t *list);
 void *dlist_tail_pop(dlist_t *list);
-void *dlist_head_get(const dlist_t *list);
-void *dlist_tail_get(const dlist_t *list);
+void *dlist_head_item(const dlist_t *list);
+void *dlist_tail_item(const dlist_t *list);
 void *dlist_node_pop(dlist_t *list, dlist_node_t *node);
 void *dlist_node_item(const dlist_node_t *node);
 dlist_node_t *dlist_head_node(const dlist_t *list);
@@ -165,8 +165,8 @@ clist_node_t *clist_head_node(const clist_t *list);
 clist_node_t *clist_head_push(clist_t *list, void *item);
 void *clist_head_pop(clist_t *list);
 void *clist_tail_pop(clist_t *list);
-void *clist_head_get(const clist_t *list);
-void *clist_tail_get(const clist_t *list);
+void *clist_head_item(const clist_t *list);
+void *clist_tail_item(const clist_t *list);
 void *clist_node_pop(clist_t *list, clist_node_t *node);
 void *clist_node_item(const clist_node_t *node);
 clist_node_t *clist_node_next(const clist_node_t *node);

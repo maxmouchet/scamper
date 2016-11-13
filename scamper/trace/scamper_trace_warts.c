@@ -5,9 +5,10 @@
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2014      The Regents of the University of California
  * Copyright (C) 2015      The University of Waikato
+ * Copyright (C) 2015-2016 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_warts.c,v 1.16.6.3 2016/12/02 18:51:56 mjl Exp $
+ * $Id: scamper_trace_warts.c,v 1.21 2016/07/03 10:27:31 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_warts.c,v 1.16.6.3 2016/12/02 18:51:56 mjl Exp $";
+  "$Id: scamper_trace_warts.c,v 1.21 2016/07/03 10:27:31 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -347,14 +348,8 @@ static int warts_trace_params_read(scamper_trace_t *trace,warts_state_t *state,
     {&trace->offset,      (wpr_t)extract_uint16,   NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
-  int rc;
 
-  if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
-    return rc;
-  if(trace->dst == NULL)
-    return -1;
-
-  return 0;
+  return warts_params_read(buf, off, len, handlers, handler_cnt);
 }
 
 static int warts_trace_params_write(const scamper_trace_t *trace,
@@ -619,11 +614,6 @@ static int warts_trace_hop_read(scamper_trace_hop_t *hop, warts_state_t *state,
 
   if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
     return rc;
-
-  if(hop->hop_addr == NULL)
-    return -1;
-  if(hop->hop_probe_ttl == 0)
-    return -1;
 
   if(SCAMPER_TRACE_HOP_IS_ICMP_Q(hop))
     {
@@ -1050,40 +1040,49 @@ static int warts_trace_dtree_params(const scamper_file_t *sf,
 				    warts_trace_dtree_t *state)
 {
   scamper_trace_dtree_t *dtree = trace->dtree;
-  int max_id = 0;
+  const warts_var_t *var;
+  int i, max_id = 0;
 
   /* unset all the flags possible */
   memset(state->flags, 0, trace_dtree_vars_mfb);
   state->params_len = 0;
 
-  /* include the firsthop specified */
-  flag_set(state->flags, WARTS_TRACE_DTREE_FIRSTHOP, &max_id);
-  state->params_len += 1;
-
-  /* include the address which caused backwards probing to halt */
-  if(dtree->lss_stop != NULL)
+  for(i=0; i<sizeof(trace_dtree_vars)/sizeof(warts_var_t); i++)
     {
-      flag_set(state->flags, WARTS_TRACE_DTREE_LSS_STOP, &max_id);
-      state->params_len += warts_addr_size(table, dtree->lss_stop);
-    }
+      var = &trace_dtree_vars[i];
 
-  if(dtree->lss != NULL)
-    {
-      flag_set(state->flags, WARTS_TRACE_DTREE_LSS_NAME, &max_id);
-      state->params_len += warts_str_size(dtree->lss);
-    }
+      /* not used any more */
+      if(var->id == WARTS_TRACE_DTREE_LSS_STOP_GID ||
+	 var->id == WARTS_TRACE_DTREE_GSS_STOP_GID)
+	continue;
 
-  /* include the address which caused forwards probing to halt */
-  if(dtree->gss_stop != NULL)
-    {
-      flag_set(state->flags, WARTS_TRACE_DTREE_GSS_STOP, &max_id);
-      state->params_len += warts_addr_size(table, dtree->gss_stop);
-    }
+      if((var->id == WARTS_TRACE_DTREE_LSS_STOP && dtree->lss_stop == NULL) ||
+	 (var->id == WARTS_TRACE_DTREE_LSS_NAME && dtree->lss == NULL) ||
+	 (var->id == WARTS_TRACE_DTREE_GSS_STOP && dtree->gss_stop == NULL) ||
+	 (var->id == WARTS_TRACE_DTREE_FLAGS    && dtree->flags == 0))
+	continue;
 
-  if(dtree->flags != 0)
-    {
-      flag_set(state->flags, WARTS_TRACE_DTREE_FLAGS, &max_id);
-      state->params_len += 1;
+      flag_set(state->flags, var->id, &max_id);
+
+      /* variables that don't have a fixed size */
+      if(var->id == WARTS_TRACE_DTREE_LSS_STOP)
+	{
+	  state->params_len += warts_addr_size(table, dtree->lss_stop);
+	  continue;
+	}
+      else if(var->id == WARTS_TRACE_DTREE_LSS_NAME)
+	{
+	  state->params_len += warts_str_size(dtree->lss);
+	  continue;
+	}
+      else if(var->id == WARTS_TRACE_DTREE_GSS_STOP)
+	{
+	  state->params_len += warts_addr_size(table, dtree->gss_stop);
+	  continue;
+	}
+
+      assert(var->size != -1);
+      state->params_len += var->size;
     }
 
   state->flags_len = fold_flags(state->flags, max_id);
@@ -1171,9 +1170,7 @@ int scamper_file_warts_trace_read(scamper_file_t *sf, const warts_hdr_t *hdr,
   uint8_t              type;
   uint16_t             len;
   uint16_t             u16;
-  warts_addrtable_t    table;
-
-  memset(&table, 0, sizeof(table));
+  warts_addrtable_t   *table = NULL;
 
   if(warts_read(sf, &buf, hdr->len) != 0)
     {
@@ -1190,8 +1187,11 @@ int scamper_file_warts_trace_read(scamper_file_t *sf, const warts_hdr_t *hdr,
       goto err;
     }
 
+  if((table = warts_addrtable_alloc_byid()) == NULL)
+    goto err;
+
   /* read the trace's parameters */
-  if(warts_trace_params_read(trace, state, &table, buf, &off, hdr->len) != 0)
+  if(warts_trace_params_read(trace, state, table, buf, &off, hdr->len) != 0)
     {
       goto err;
     }
@@ -1206,7 +1206,7 @@ int scamper_file_warts_trace_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     }
 
   /* read all the hop records */
-  if(warts_trace_hops_read(&hops,state,&table,buf,&off,hdr->len,count) != 0)
+  if(warts_trace_hops_read(&hops,state,table,buf,&off,hdr->len,count) != 0)
     goto err;
 
   /* work out the maximum ttl probed with that got a response */
@@ -1225,8 +1225,6 @@ int scamper_file_warts_trace_read(scamper_file_t *sf, const warts_hdr_t *hdr,
   if(trace->hop_count != 0)
     {
       if(trace->hop_count < max_ttl)
-	goto err;
-      if(trace->hop_count > 255)
 	goto err;
     }
   else
@@ -1277,34 +1275,36 @@ int scamper_file_warts_trace_read(scamper_file_t *sf, const warts_hdr_t *hdr,
       if(type == WARTS_TRACE_ATTR_PMTUD)
 	{
 	  i = off;
-	  if(warts_trace_pmtud_read(trace,state,&table,buf,&i,hdr->len) != 0)
+	  if(warts_trace_pmtud_read(trace,state,table,buf,&i,hdr->len) != 0)
 	    goto err;
 	}
       else if(type == WARTS_TRACE_ATTR_LASTDITCH)
 	{
 	  i = off;
-	  if(warts_trace_lastditch_read(trace, state, &table,
+	  if(warts_trace_lastditch_read(trace, state, table,
  					buf, &i, hdr->len) != 0)
 	    goto err;
 	}
       else if(type == WARTS_TRACE_ATTR_DTREE)
 	{
 	  i = off;
-	  if(warts_trace_dtree_read(trace,state,&table,buf,&i,hdr->len) != 0)
+	  if(warts_trace_dtree_read(trace,state,table,buf,&i,hdr->len) != 0)
 	    goto err;
 	}
 
       off += len;
     }
 
+  assert(off == hdr->len);
+
  done:
-  warts_addrtable_clean(&table);
+  warts_addrtable_free(table);
   free(buf);
   *trace_out = trace;
   return 0;
 
  err:
-  warts_addrtable_clean(&table);
+  if(table != NULL) warts_addrtable_free(table);
   if(hops != NULL) free(hops);
   if(buf != NULL) free(buf);
   if(trace != NULL) scamper_trace_free(trace);
@@ -1330,14 +1330,15 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
   uint32_t             off = 0, len, len2;
   size_t               size;
   int                  i, j;
-  warts_addrtable_t    table;
+  warts_addrtable_t   *table = NULL;
 
-  /* make sure the table is nulled out */
-  memset(&table, 0, sizeof(table));
   memset(&dtree_state, 0, sizeof(dtree_state));
 
+  if((table = warts_addrtable_alloc_byaddr()) == NULL)
+    goto err;
+
   /* figure out which trace data items we'll store in this record */
-  warts_trace_params(trace, &table,
+  warts_trace_params(trace, table,
 		     trace_flags, &trace_flags_len, &trace_params_len);
 
   /*
@@ -1362,7 +1363,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
 	    {
 	      /* record basic hop state */
 	      len2 = len;
-	      warts_trace_hop_state(trace,hop,&hop_state[j++],&table,&len2);
+	      warts_trace_hop_state(trace,hop,&hop_state[j++],table,&len2);
 	      if(len2 < len)
 		goto err;
 	      len = len2;
@@ -1376,7 +1377,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
       if((pmtud = malloc_zero(sizeof(warts_trace_pmtud_t))) == NULL)
 	goto err;
 
-      if(warts_trace_pmtud_state(trace, pmtud, &table) != 0)
+      if(warts_trace_pmtud_state(trace, pmtud, table) != 0)
 	goto err;
 
       len += (2 + pmtud->len); /* 2 = size of attribute header */
@@ -1397,7 +1398,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
 
       /* record hop state for each lastditch reply */
       for(hop = trace->lastditch, j=0; hop != NULL; hop = hop->hop_next)
-	warts_trace_hop_state(trace, hop, &ld_state[j++], &table, &ld_len);
+	warts_trace_hop_state(trace, hop, &ld_state[j++], table, &ld_len);
 
       len += (2 + ld_len); /* 2 = size of attribute header */
     }
@@ -1405,7 +1406,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
   if(trace->dtree != NULL)
     {
       /* figure out what the structure of the dtree header looks like */
-      if(warts_trace_dtree_params(sf, trace, &table, &dtree_state) != 0)
+      if(warts_trace_dtree_params(sf, trace, table, &dtree_state) != 0)
 	goto err;
 
       /* 2 = size of attribute header */
@@ -1422,7 +1423,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
   insert_wartshdr(buf, &off, len, SCAMPER_FILE_OBJ_TRACE);
 
   /* write trace parameters */
-  if(warts_trace_params_write(trace, sf, &table, buf, &off, len, trace_flags,
+  if(warts_trace_params_write(trace, sf, table, buf, &off, len, trace_flags,
 			      trace_flags_len, trace_params_len) == -1)
     {
       goto err;
@@ -1433,7 +1434,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
 
   /* write each traceroute hop record */
   for(i=0; i<hop_recs; i++)
-    warts_trace_hop_write(&hop_state[i], &table, buf, &off, len);
+    warts_trace_hop_write(&hop_state[i], table, buf, &off, len);
   if(hop_state != NULL)
     free(hop_state);
   hop_state = NULL;
@@ -1446,7 +1447,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
       insert_uint16(buf, &off, len, &u16, NULL);
 
       /* write details of the pmtud measurement */
-      warts_trace_pmtud_write(trace, buf, &off, len, pmtud, &table);
+      warts_trace_pmtud_write(trace, buf, &off, len, pmtud, table);
 
       warts_trace_pmtud_free(pmtud);
       pmtud = NULL;
@@ -1467,7 +1468,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
       insert_uint16(buf, &off, len, &ld_recs, NULL);
 
       for(i=0; i<ld_recs; i++)
-	warts_trace_hop_write(&ld_state[i], &table, buf, &off, len);
+	warts_trace_hop_write(&ld_state[i], table, buf, &off, len);
 
       free(ld_state);
       ld_state = NULL;
@@ -1480,7 +1481,7 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
       insert_uint16(buf, &off, len, &u16, NULL);
 
       /* write details of the pmtud measurement */
-      warts_trace_dtree_write(trace, &table, buf, &off, len, &dtree_state);
+      warts_trace_dtree_write(trace, table, buf, &off, len, &dtree_state);
     }
 
   /* write the end of trace attributes header */
@@ -1494,12 +1495,12 @@ int scamper_file_warts_trace_write(const scamper_file_t *sf,
       goto err;
     }
 
-  warts_addrtable_clean(&table);
+  warts_addrtable_free(table);
   free(buf);
   return 0;
 
  err:
-  warts_addrtable_clean(&table);
+  if(table != NULL) warts_addrtable_free(table);
   if(buf != NULL) free(buf);
   if(hop_state != NULL) free(hop_state);
   if(pmtud != NULL) warts_trace_pmtud_free(pmtud);

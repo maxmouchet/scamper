@@ -1,7 +1,7 @@
 /*
  * scamper_outfiles: hold a collection of output targets together
  *
- * $Id: scamper_outfiles.c,v 1.43 2014/06/13 03:34:39 mjl Exp $
+ * $Id: scamper_outfiles.c,v 1.45 2015/07/19 06:50:58 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_outfiles.c,v 1.43 2014/06/13 03:34:39 mjl Exp $";
+  "$Id: scamper_outfiles.c,v 1.45 2015/07/19 06:50:58 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -50,10 +50,9 @@ struct scamper_outfile
 static splaytree_t       *outfiles = NULL;
 static scamper_outfile_t *outfile_def = NULL;
 
-static int outfile_cmp(const void *a, const void *b)
+static int outfile_cmp(const scamper_outfile_t *a, const scamper_outfile_t *b)
 {
-  return strcasecmp(((const scamper_outfile_t *)b)->name,
-		    ((const scamper_outfile_t *)a)->name);
+  return strcasecmp(b->name, a->name);
 }
 
 static scamper_outfile_t *outfile_alloc(char *name, scamper_file_t *sf)
@@ -339,7 +338,10 @@ scamper_outfile_t *scamper_outfile_opennull(char *name)
   scamper_file_t *sf;
 
   if((sf = scamper_file_opennull('w')) == NULL)
-    return NULL;
+    {
+      printerror(errno, strerror, __func__, "could not opennull");
+      return NULL;
+    }
 
   if((sof = outfile_alloc(name, sf)) == NULL)
     {
@@ -359,15 +361,14 @@ void scamper_outfiles_foreach(void *p,
 
 int scamper_outfiles_init(char *def_filename, char *def_type)
 {
-  if((outfiles = splaytree_alloc(outfile_cmp)) == NULL)
+  if((outfiles = splaytree_alloc((splaytree_cmp_t)outfile_cmp)) == NULL)
     {
+      printerror(errno, strerror, __func__, "could not alloc outfiles tree");
       return -1;
     }
 
   if(outfile_opendef(def_filename, def_type) != 0)
-    {
-      return -1;
-    }
+    return -1;
 
   return 0;
 }

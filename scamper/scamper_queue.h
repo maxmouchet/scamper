@@ -1,10 +1,11 @@
 /*
  * scamper_queue.h
  *
- * $Id: scamper_queue.h,v 1.14 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_queue.h,v 1.16 2016/07/15 09:16:27 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
+ * Copyright (C) 2015-2016 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,6 +27,8 @@
 #define __SCAMPER_QUEUE_H
 
 typedef struct scamper_queue scamper_queue_t;
+
+typedef int (*scamper_queue_event_cb_t)(void *param);
 
 /*
  * a scamper task can be in one of the following queues at any one time
@@ -73,6 +76,16 @@ int scamper_queue_windowcount(void);
 
 /* flush the queues of all non-completed tasks */
 void scamper_queue_empty(void);
+
+/* put things on the event queue, which are not probe related */
+int scamper_queue_event_waittime(struct timeval *tv);
+int scamper_queue_event_proc(const struct timeval *tv);
+scamper_queue_t *scamper_queue_event(const struct timeval *tv,
+				     scamper_queue_event_cb_t cb, void *ptr);
+int scamper_queue_event_update_time(scamper_queue_t *sq,
+				    const struct timeval *tv);
+void scamper_queue_event_update_cb(scamper_queue_t *sq,
+				   scamper_queue_event_cb_t cb, void *ptr);
 
 int scamper_queue_init(void);
 void scamper_queue_cleanup(void);

@@ -1,7 +1,7 @@
 /*
  * sc_wartsdump
  *
- * $Id: sc_wartsdump.c,v 1.186.6.4 2016/09/17 08:45:50 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.213.2.1 2016/11/14 05:09:47 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartsdump.c,v 1.186.6.4 2016/09/17 08:45:50 mjl Exp $";
+  "$Id: sc_wartsdump.c,v 1.213.2.1 2016/11/14 05:09:47 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -356,6 +356,8 @@ static void dump_trace(scamper_trace_t *trace)
 	printf(" doubletree");
       if(trace->flags & SCAMPER_TRACE_FLAG_ICMPCSUMDP)
 	printf(" icmp-csum-dport");
+      if(trace->flags & SCAMPER_TRACE_FLAG_CONSTPAYLOAD)
+	printf(" const-payload");
       printf(" )");
     }
   printf("\n");
@@ -812,6 +814,7 @@ static void dump_ping(scamper_ping_t *ping)
 
     case SCAMPER_PING_METHOD_UDP:
     case SCAMPER_PING_METHOD_TCP_ACK:
+    case SCAMPER_PING_METHOD_TCP_SYN:
       printf(", sport: %d, dport: %d", ping->probe_sport, ping->probe_dport);
       break;
 
@@ -1238,7 +1241,7 @@ static void dump_tbit(scamper_tbit_t *tbit)
   uint32_t i;
   uint16_t len, u16, datalen;
   uint8_t proto, flags, iphlen, tcphlen, mf, ecn, u8, *tmp, txsyn, rxsyn;
-  uint32_t seq, ack, server_isn, client_isn, off, id, u32;
+  uint32_t seq, ack, server_isn, client_isn, off, u32;
   char src[64], dst[64], buf[128], ipid[12], fstr[32], tfstr[32], sack[64];
   uint8_t cookie[16];
   char *str;
@@ -1359,14 +1362,14 @@ static void dump_tbit(scamper_tbit_t *tbit)
 
   client_isn = 0;
   server_isn = 0;
-  ipid[0]    = '\0';
   txsyn      = 0;
   rxsyn      = 0;
 
   for(i=0; i<tbit->pktc; i++)
     {
       pkt = tbit->pkts[i];
-      frag = 0; mf = 0; id = 0; off = 0;
+      frag = 0; mf = 0; off = 0;
+      ipid[0] = '\0';
 
       if((pkt->data[0] >> 4) == 4)
         {
@@ -1376,11 +1379,10 @@ static void dump_tbit(scamper_tbit_t *tbit)
 	  ecn = pkt->data[1] & 0x3;
 	  if(pkt->data[6] & 0x20)
 	    mf = 1;
-	  id  = bytes_ntohs(pkt->data+4);
 	  off = (bytes_ntohs(pkt->data+6) & 0x1fff) * 8;
 	  if(mf != 0 || off != 0)
 	    frag = 1;
-	  snprintf(ipid, sizeof(ipid), " %04x", bytes_ntohs(pkt->data+4));
+	  snprintf(ipid, sizeof(ipid), "%04x", bytes_ntohs(pkt->data+4));
         }
       else if((pkt->data[0] >> 4) == 6)
         {
@@ -1404,7 +1406,8 @@ static void dump_tbit(scamper_tbit_t *tbit)
 		  if(pkt->data[iphlen+3] & 0x1)
 		    mf = 1;
 		  off = (bytes_ntohs(pkt->data+iphlen+2) & 0xfff8);
-		  id  = bytes_ntohl(pkt->data+iphlen+4);
+		  snprintf(ipid, sizeof(ipid), "%x",
+			   bytes_ntohl(pkt->data+iphlen+4));
 		  proto = pkt->data[iphlen+0];
 		  iphlen += 8;
 		  frag = 1;
@@ -1423,13 +1426,13 @@ static void dump_tbit(scamper_tbit_t *tbit)
 	     pkt->dir == SCAMPER_TBIT_PKT_DIR_TX ? "TX" : "RX");
 
       if(frag != 0)
-	snprintf(fstr,sizeof(fstr),"%u:%u%s", id, off, mf != 0 ? " MF" : "");
+	snprintf(fstr,sizeof(fstr),":%u%s", off, mf != 0 ? " MF" : "");
       else
 	fstr[0] = '\0';
 
       if(off != 0)
 	{
-	  printf("%13s %4dF%23s%s %s", "", len, "", ipid, fstr);
+	  printf("%13s %4dF%17s%s%s", "", len, "", ipid, fstr);
 	}
       else if(proto == IPPROTO_TCP)
         {
@@ -1533,7 +1536,7 @@ static void dump_tbit(scamper_tbit_t *tbit)
 	  if(datalen != 0)
 	    string_concat(buf, sizeof(buf), &soff, "(%d)", datalen);
 	  printf("%-17s%s", buf, ipid);
-	  if(frag != 0) printf(" %s", fstr);
+	  if(frag != 0) printf("%s", fstr);
 	  if(datalen > 0 && (pkt->data[0] >> 4) == 4 && pkt->data[6] & 0x40)
 	    printf(" DF");
 	  if(ecn == 3)      printf(" CE");

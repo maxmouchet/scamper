@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_list.c,v 1.68.4.4 2016/06/22 08:13:56 mjl Exp $";
+  "$Id: mjl_list.c,v 1.74 2016/01/18 04:46:07 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -525,14 +525,14 @@ void *slist_head_pop(slist_t *list)
   return item;
 }
 
-void *slist_head_get(const slist_t *list)
+void *slist_head_item(const slist_t *list)
 {
   assert(list != NULL);
   if(list->head == NULL) return NULL;
   return list->head->item;
 }
 
-void *slist_tail_get(const slist_t *list)
+void *slist_tail_item(const slist_t *list)
 {
   assert(list != NULL);
   if(list->tail == NULL) return NULL;
@@ -1237,7 +1237,7 @@ void dlist_node_eject(dlist_t *list, dlist_node_t *node)
   return;
 }
 
-void *dlist_head_get(const dlist_t *list)
+void *dlist_head_item(const dlist_t *list)
 {
   assert(list != NULL);
   if(list->head == NULL) return NULL;
@@ -1250,7 +1250,7 @@ dlist_node_t *dlist_head_node(const dlist_t *list)
   return list->head;
 }
 
-void *dlist_tail_get(const dlist_t *list)
+void *dlist_tail_item(const dlist_t *list)
 {
   assert(list != NULL);
   if(list->tail == NULL) return NULL;
@@ -1609,7 +1609,7 @@ clist_node_t *clist_head_push(clist_t *list, void *item)
   return node;
 }
 
-void *clist_head_get(const clist_t *list)
+void *clist_head_item(const clist_t *list)
 {
   assert(list != NULL);
   if(list->head == NULL) return NULL;
@@ -1622,7 +1622,7 @@ clist_node_t *clist_head_node(const clist_t *list)
   return list->head;
 }
 
-void *clist_tail_get(const clist_t *list)
+void *clist_tail_item(const clist_t *list)
 {
   assert(list != NULL);
   if(list->head == NULL) return NULL;

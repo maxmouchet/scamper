@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_filterpolicy.c,v 1.9.2.2 2015/12/07 07:18:43 mjl Exp $";
+  "$Id: sc_filterpolicy.c,v 1.9 2015/12/07 07:06:28 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -574,12 +574,6 @@ static int ping_r(const sc_policytest_t *method, const scamper_ping_t *ping)
   return 0;
 }
 
-static int sc_wait_free(void *ptr)
-{
-  free(ptr);
-  return 0;
-}
-
 static int sc_wait_cmp(const void *a, const void *b)
 {
   return timeval_cmp(&((sc_wait_t *)b)->tv, &((sc_wait_t *)a)->tv);
@@ -935,7 +929,7 @@ static int do_method(void)
     }
   else return 0;
 
-  addr = slist_head_get(n2i->addrs);
+  addr = slist_head_item(n2i->addrs);
   scamper_addr_tostr(addr, buf, sizeof(buf));
 
   if(sc_ip2n2i_get(addr, n2i) == NULL)
@@ -1278,7 +1272,7 @@ static int do_n2i_next(void)
 
   assert(n2i_last != NULL);
 
-  addr = slist_head_get(n2i_last->addrs);
+  addr = slist_head_item(n2i_last->addrs);
   scamper_addr_tostr(addr, buf, sizeof(buf));
 
   if((ip2n2i = sc_ip2n2i_find(addr)) == NULL)
@@ -1729,7 +1723,7 @@ static void cleanup(void)
 {
   if(n2i_tree != NULL) splaytree_free(n2i_tree, NULL);
   if(n2i_list != NULL) slist_free(n2i_list);
-  if(waiting != NULL) heap_free(waiting, sc_wait_free);
+  if(waiting != NULL) heap_free(waiting, free);
   if(scamper_wb != NULL) scamper_writebuf_free(scamper_wb);
   if(scamper_lp != NULL) scamper_linepoll_free(scamper_lp, 0);
   if(decode_wb != NULL) scamper_writebuf_free(decode_wb);

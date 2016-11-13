@@ -1,10 +1,11 @@
 /*
  * scamper_queue.c
  *
- * $Id: scamper_queue.c,v 1.39 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_queue.c,v 1.42 2016/07/15 09:16:27 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2015-2016 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_queue.c,v 1.39 2011/09/16 03:15:44 mjl Exp $";
+  "$Id: scamper_queue.c,v 1.42 2016/07/15 09:16:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -42,33 +43,30 @@ static const char rcsid[] =
 
 struct scamper_queue
 {
-  /* the task that is queued */
-  struct scamper_task *task;
-
   /* when the scamper task should timeout from whatever queue it is on */
-  struct timeval       timeout;
+  struct timeval            timeout;
 
-  /* the current queue the task is in */
-  void                *queue;
+  /* the current queue (and associated node) the task is in */
+  void                     *queue;
+  void                     *node;
 
-  /* the node for the queue */
-  void                *node;
+  union
+  {
+    struct scamper_task    *task;
+    void                   *ptr;
+  } un;
+
+  scamper_queue_event_cb_t  cb;
 };
 
 static dlist_t *probe_queue = NULL;
 static heap_t  *wait_queue = NULL;
 static heap_t  *done_queue = NULL;
+static heap_t  *event_queue = NULL;
 static int      count = 0;
 
-/*
- * queue_cmp
- *
- *
- */
-static int queue_cmp(const void *va, const void *vb)
+static int queue_cmp(const scamper_queue_t *a, const scamper_queue_t *b)
 {
-  const scamper_queue_t *a = (const scamper_queue_t *)va;
-  const scamper_queue_t *b = (const scamper_queue_t *)vb;
   return timeval_cmp(&b->timeout, &a->timeout);
 }
 
@@ -88,17 +86,13 @@ static void queue_onremove(void *item)
 static void queue_unlink(scamper_queue_t *sq)
 {
   if(sq->queue == NULL)
-    {
-      return;
-    }
-  else if(sq->queue == probe_queue)
-    {
-      dlist_node_pop(sq->queue, sq->node);
-    }
-  else if(sq->queue == wait_queue || sq->queue == done_queue)
-    {
-      heap_delete(sq->queue, sq->node);
-    }
+    return;
+
+  if(sq->queue == probe_queue)
+    dlist_node_pop(sq->queue, sq->node);
+  else if(sq->queue == wait_queue || sq->queue == done_queue ||
+	  sq->queue == event_queue)
+    heap_delete(sq->queue, sq->node);
 
   count--;
   return;
@@ -138,6 +132,110 @@ static int queue_link(scamper_queue_t *sq, void *queue)
     }
 
   return -1;
+}
+
+/*
+ * scamper_queue_event_waittime
+ *
+ * report the earliest event time on the event queue.
+ */
+int scamper_queue_event_waittime(struct timeval *tv)
+{
+  scamper_queue_t *sq;
+
+  if((sq = (scamper_queue_t *)heap_head_item(event_queue)) != NULL)
+    {
+      timeval_cpy(tv, &sq->timeout);
+      return 1;
+    }
+
+  return 0;
+}
+
+/*
+ * scamper_queue_event_proc
+ *
+ * process all events on the queue whose time has come.
+ */
+int scamper_queue_event_proc(const struct timeval *tv)
+{
+  scamper_queue_t *sq = heap_head_item(event_queue);
+
+  while(sq != NULL && timeval_cmp(tv, &sq->timeout) >= 0)
+    {
+      heap_remove(event_queue);
+      if(sq->cb(sq->un.ptr) != 0)
+	return -1;
+      sq = heap_head_item(event_queue);
+    }
+
+  return 0;
+}
+
+/*
+ * scamper_queue_event_update
+ *
+ * update the event time on the queued event
+ */
+int scamper_queue_event_update_time(scamper_queue_t *sq,
+				    const struct timeval *tv)
+{
+  assert(sq->queue == NULL || sq->queue == event_queue);
+  timeval_cpy(&sq->timeout, tv);
+
+  if(sq->queue == NULL)
+    {
+      if((sq->node = heap_insert(event_queue, sq)) == NULL)
+	{
+	  printerror(errno, strerror, __func__, "could not add to heap");
+	  return -1;
+	}
+      sq->queue = event_queue;
+    }
+  else
+    {
+      heap_remake(event_queue);
+    }
+  return 0;
+}
+
+void scamper_queue_event_update_cb(scamper_queue_t *sq,
+				   scamper_queue_event_cb_t cb, void *ptr)
+{
+  sq->cb = cb;
+  sq->un.ptr = ptr;
+  return;
+}
+
+/*
+ * scamper_queue_event
+ *
+ * add an event to the event queue.
+ */
+scamper_queue_t *scamper_queue_event(const struct timeval *tv,
+				     scamper_queue_event_cb_t cb, void *ptr)
+{
+  scamper_queue_t *sq = NULL;
+
+  if((sq = malloc_zero(sizeof(scamper_queue_t))) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not alloc sq");
+      goto err;
+    }
+  timeval_cpy(&sq->timeout, tv);
+  sq->queue = event_queue;
+  sq->un.ptr = ptr;
+  sq->cb = cb;
+  if((sq->node = heap_insert(event_queue, sq)) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could add to heap");
+      goto err;
+    }
+
+  return sq;
+
+ err:
+  return NULL;
 }
 
 /*
@@ -232,7 +330,7 @@ struct scamper_task *scamper_queue_select()
   if((sq = dlist_head_pop(probe_queue)) != NULL)
     {
       count--;
-      return sq->task;
+      return sq->un.task;
     }
 
   return NULL;
@@ -252,7 +350,7 @@ struct scamper_task *scamper_queue_getdone(const struct timeval *tv)
   if(timeval_cmp(tv, &sq->timeout) >= 0)
     {
       queue_unlink(sq);
-      return sq->task;
+      return sq->un.task;
     }
 
   return NULL;
@@ -320,7 +418,7 @@ int scamper_queue_readycount()
 
 	  queue_unlink(sq);
 
-	  scamper_task_handletimeout(sq->task);
+	  scamper_task_handletimeout(sq->un.task);
 
 	  if(sq->queue == NULL)
 	    queue_link(sq, probe_queue);
@@ -346,14 +444,10 @@ void scamper_queue_empty()
   scamper_queue_t *sq;
 
   while((sq = (scamper_queue_t *)heap_remove(wait_queue)) != NULL)
-    {
-      count--;
-    }
+    count--;
 
   while((sq = (scamper_queue_t *)dlist_head_pop(probe_queue)) != NULL)
-    {
-      count--;
-    }
+    count--;
 
   return;
 }
@@ -367,7 +461,7 @@ scamper_queue_t *scamper_queue_alloc(scamper_task_t *task)
 {
   scamper_queue_t *sq;
   if((sq = malloc_zero(sizeof(scamper_queue_t))) != NULL)
-    sq->task = task;
+    sq->un.task = task;
   return sq;
 }
 
@@ -385,27 +479,43 @@ int scamper_queue_init()
 {
   if((probe_queue = dlist_alloc()) == NULL)
     {
+      printerror(errno, strerror, __func__, "could not alloc probe_queue");
       return -1;
     }
   dlist_onremove(probe_queue, queue_onremove);
 
-  if((wait_queue = heap_alloc(queue_cmp)) == NULL)
+  if((wait_queue = heap_alloc((heap_cmp_t)queue_cmp)) == NULL)
     {
+      printerror(errno, strerror, __func__, "could not alloc wait_queue");
       return -1;
     }
   heap_onremove(wait_queue, queue_onremove);
 
-  if((done_queue = heap_alloc(queue_cmp)) == NULL)
+  if((done_queue = heap_alloc((heap_cmp_t)queue_cmp)) == NULL)
     {
+      printerror(errno, strerror, __func__, "could not alloc done_queue");
       return -1;
     }
   heap_onremove(done_queue, queue_onremove);
+
+  if((event_queue = heap_alloc((heap_cmp_t)queue_cmp)) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not alloc event_queue");
+      return -1;
+    }
+  heap_onremove(event_queue, queue_onremove);
 
   return 0;
 }
 
 void scamper_queue_cleanup()
 {
+  if(event_queue != NULL)
+    {
+      heap_free(event_queue, NULL);
+      event_queue = NULL;
+    }
+
   if(done_queue != NULL)
     {
       heap_free(done_queue, NULL);

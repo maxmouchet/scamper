@@ -1,7 +1,7 @@
 /*
  * sc_warts2pcap
  *
- * $Id: sc_warts2pcap.c,v 1.2 2011/03/07 19:46:09 mjl Exp $
+ * $Id: sc_warts2pcap.c,v 1.3 2015/04/29 04:40:01 mjl Exp $
  *
  * Copyright (C) 2010 Stephen Eichler
  * Copyright (C) 2011 University of Waikato
@@ -162,10 +162,8 @@ static void pkt_free(pkt_t *pkt)
   return;
 }
 
-static int pkt_cmp(const void *va, const void *vb)
+static int pkt_cmp(const pkt_t *a, const pkt_t *b)
 {
-  const pkt_t *a = va;
-  const pkt_t *b = vb;
   return timeval_cmp(&a->tv, &b->tv);
 }
 
@@ -269,7 +267,7 @@ static int sort_1(uint16_t type, void *data)
 static int finish_1(void)
 {
   pkt_t *pkt;
-  if(slist_qsort(list, pkt_cmp) != 0)
+  if(slist_qsort(list, (slist_cmp_t)pkt_cmp) != 0)
     return -1;
   while((pkt = slist_head_pop(list)) != NULL)
     {

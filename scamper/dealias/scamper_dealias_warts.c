@@ -4,9 +4,10 @@
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2012-2014 The Regents of the University of California
+ * Copyright (C) 2015-2016 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_warts.c,v 1.11.4.1 2016/12/02 18:37:03 mjl Exp $
+ * $Id: scamper_dealias_warts.c,v 1.14 2016/07/03 10:27:31 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_warts.c,v 1.11.4.1 2016/12/02 18:37:03 mjl Exp $";
+  "$Id: scamper_dealias_warts.c,v 1.14 2016/07/03 10:27:31 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -266,22 +267,23 @@ static void warts_dealias_params(const scamper_dealias_t *dealias,
 				 uint8_t *flags, uint16_t *flags_len,
 				 uint16_t *params_len)
 {
-  int max_id = 0;
+  const warts_var_t *var;
+  int i, max_id = 0;
 
   memset(flags, 0, dealias_vars_mfb);
   *params_len = 0;
 
-  flag_set(flags, WARTS_DEALIAS_LIST_ID,  &max_id); *params_len += 4;
-  flag_set(flags, WARTS_DEALIAS_CYCLE_ID, &max_id); *params_len += 4;
-  flag_set(flags, WARTS_DEALIAS_START,    &max_id); *params_len += 8;
-  flag_set(flags, WARTS_DEALIAS_METHOD,   &max_id); *params_len += 1;
-  flag_set(flags, WARTS_DEALIAS_RESULT,   &max_id); *params_len += 1;
-  flag_set(flags, WARTS_DEALIAS_PROBEC,   &max_id); *params_len += 4;
-
-  if(dealias->userid != 0)
+  for(i=0; i<sizeof(dealias_vars)/sizeof(warts_var_t); i++)
     {
-      flag_set(flags, WARTS_DEALIAS_USERID, &max_id);
-      *params_len += 4;
+      var = &dealias_vars[i];
+      if((var->id == WARTS_DEALIAS_USERID && dealias->userid == 0) ||
+	 (var->id == WARTS_DEALIAS_RESULT && dealias->result == 0) ||
+	 (var->id == WARTS_DEALIAS_PROBEC && dealias->probec == 0))
+	continue;
+
+      flag_set(flags, var->id, &max_id);
+      assert(var->size != -1);
+      *params_len += var->size;
     }
 
   *flags_len = fold_flags(flags, max_id);
@@ -339,60 +341,52 @@ static int warts_dealias_probedef_params(const scamper_file_t *sf,
 					 warts_addrtable_t *table,
 					 uint32_t *len)
 {
-  int max_id = 0;
+  const warts_var_t *var;
+  int i, max_id = 0;
 
   memset(state->flags, 0, dealias_probedef_vars_mfb);
   state->params_len = 0;
 
-  flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_DST, &max_id);
-  state->params_len += warts_addr_size(table, p->dst);
-  flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_SRC, &max_id);
-  state->params_len += warts_addr_size(table, p->src);
-  flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_ID, &max_id);
-  state->params_len += 4;
-  flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_METHOD, &max_id);
-  state->params_len += 1;
-  flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_TTL, &max_id);
-  state->params_len += 1;
-  flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_TOS, &max_id);
-  state->params_len += 1;
+  for(i=0; i<sizeof(dealias_probedef_vars)/sizeof(warts_var_t); i++)
+    {
+      var = &dealias_probedef_vars[i];
+      if(var->id == WARTS_DEALIAS_PROBEDEF_DST_GID ||
+	 var->id == WARTS_DEALIAS_PROBEDEF_SRC_GID)
+	continue;
 
-  if(p->size != 0)
-    {
-      flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_SIZE, &max_id);
-      state->params_len += 2;
-    }
-  if(p->mtu != 0)
-    {
-      flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_MTU, &max_id);
-      state->params_len += 2;
-    }
+      if((var->id == WARTS_DEALIAS_PROBEDEF_SIZE && p->size == 0) ||
+	 (var->id == WARTS_DEALIAS_PROBEDEF_MTU && p->mtu == 0)   ||
+	 (var->id == WARTS_DEALIAS_PROBEDEF_TOS && p->tos == 0)   ||
+	 (var->id == WARTS_DEALIAS_PROBEDEF_ID  && p->id == 0)    ||
+	 (var->id == WARTS_DEALIAS_PROBEDEF_4BYTES &&
+	  SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP(p) == 0 &&
+	  SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP(p) == 0)          ||
+	 (var->id == WARTS_DEALIAS_PROBEDEF_ICMP_ID &&
+	  SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(p) == 0)         ||
+	 (var->id == WARTS_DEALIAS_PROBEDEF_ICMP_CSUM &&
+	  (SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(p) == 0 ||
+	   p->un.icmp.csum == 0))                                 ||
+	 (var->id == WARTS_DEALIAS_PROBEDEF_TCP_FLAGS &&
+	  SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP(p) == 0))
+	continue;
 
-  /* always include the first 4 bytes of the IP payload */
-  if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP(p) ||
-     SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP(p))
-    {
-      flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_4BYTES, &max_id);
-      state->params_len += 4;
-    }
+      flag_set(state->flags, var->id, &max_id);
 
-  /* sometimes include icmp id/csum */
-  if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(p))
-    {
-      flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_ICMP_ID, &max_id);
-      state->params_len += 2;
-      if(p->un.icmp.csum != 0)
+      if(var->id == WARTS_DEALIAS_PROBEDEF_DST)
 	{
-	  flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_ICMP_CSUM, &max_id);
-	  state->params_len += 2;
+	  flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_DST, &max_id);
+	  state->params_len += warts_addr_size(table, p->dst);
 	}
-    }
-
-  /* sometimes include tcp flags */
-  if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP(p))
-    {
-      flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_TCP_FLAGS, &max_id);
-      state->params_len += 1;
+      else if(var->id == WARTS_DEALIAS_PROBEDEF_SRC)
+	{
+	  flag_set(state->flags, WARTS_DEALIAS_PROBEDEF_SRC, &max_id);
+	  state->params_len += warts_addr_size(table, p->src);
+	}
+      else
+	{
+	  assert(var->size != -1);
+	  state->params_len += var->size;
+	}
     }
 
   state->flags_len = fold_flags(state->flags, max_id);
@@ -1006,7 +1000,8 @@ static int warts_dealias_ally_state(const scamper_file_t *sf, const void *data,
 				    warts_addrtable_t *table, uint32_t *len)
 {
   const scamper_dealias_ally_t *ally = data;
-  int max_id = 0;
+  const warts_var_t *var;
+  int i, max_id = 0;
   size_t size = sizeof(warts_dealias_probedef_t) * 2;
 
   if((state->probedefs = malloc_zero(size)) == NULL)
@@ -1015,21 +1010,16 @@ static int warts_dealias_ally_state(const scamper_file_t *sf, const void *data,
   memset(state->flags, 0, dealias_ally_vars_mfb);
   state->params_len = 0;
 
-  flag_set(state->flags, WARTS_DEALIAS_ALLY_WAIT_PROBE, &max_id);
-  state->params_len += 2;
-  flag_set(state->flags, WARTS_DEALIAS_ALLY_WAIT_TIMEOUT, &max_id);
-  state->params_len += 1;
-  flag_set(state->flags, WARTS_DEALIAS_ALLY_ATTEMPTS, &max_id);
-  state->params_len += 1;
-  flag_set(state->flags, WARTS_DEALIAS_ALLY_FUDGE, &max_id);
-  state->params_len += 2;
-
-  if(ally->flags != 0)
+  for(i=0; i<sizeof(dealias_ally_vars)/sizeof(warts_var_t); i++)
     {
-      flag_set(state->flags, WARTS_DEALIAS_ALLY_FLAGS, &max_id);
-      state->params_len += 1;
+      var = &dealias_ally_vars[i];
+      if((var->id == WARTS_DEALIAS_ALLY_FUDGE && ally->fudge == 0) ||
+	 (var->id == WARTS_DEALIAS_ALLY_FLAGS && ally->flags == 0))
+	continue;
+      flag_set(state->flags, var->id, &max_id);
+      assert(var->size != -1);
+      state->params_len += var->size;
     }
-
   state->flags_len = fold_flags(state->flags, max_id);
 
   if(warts_dealias_probedef_params(sf, &ally->probedefs[0],
@@ -1125,7 +1115,8 @@ static int warts_dealias_mercator_state(const scamper_file_t *sf,
 					warts_addrtable_t *table,uint32_t *len)
 {
   const scamper_dealias_mercator_t *m = data;
-  int max_id = 0;
+  const warts_var_t *var;
+  int i, max_id = 0;
   size_t size = sizeof(warts_dealias_probedef_t);
 
   if((state->probedefs = malloc_zero(size)) == NULL)
@@ -1136,11 +1127,13 @@ static int warts_dealias_mercator_state(const scamper_file_t *sf,
   memset(state->flags, 0, dealias_mercator_vars_mfb);
   state->params_len = 0;
 
-  flag_set(state->flags, WARTS_DEALIAS_MERCATOR_ATTEMPTS, &max_id);
-  state->params_len += 1;
-  flag_set(state->flags, WARTS_DEALIAS_MERCATOR_WAIT_TIMEOUT, &max_id);
-  state->params_len += 1;
-
+  for(i=0; i<sizeof(dealias_mercator_vars)/sizeof(warts_var_t); i++)
+    {
+      var = &dealias_mercator_vars[i];
+      flag_set(state->flags, var->id, &max_id);
+      assert(var->size != -1);
+      state->params_len += var->size;
+    }
   state->flags_len = fold_flags(state->flags, max_id);
 
   if(warts_dealias_probedef_params(sf, &m->probedef, &state->probedefs[0],
@@ -1418,28 +1411,29 @@ static int warts_dealias_probe_state(const scamper_file_t *sf,
 				     warts_dealias_probe_t *state,
 				     warts_addrtable_t *table, uint32_t *len)
 {
-  int i = 0;
+  const warts_var_t *var;
+  int i, max_id = 0;
   size_t size;
 
   memset(state->flags, 0, dealias_probe_vars_mfb);
   state->params_len = 0;
 
-  flag_set(state->flags, WARTS_DEALIAS_PROBE_DEF, &i);
-  state->params_len += 4;
-  flag_set(state->flags, WARTS_DEALIAS_PROBE_TX, &i);
-  state->params_len += 8;
-  flag_set(state->flags, WARTS_DEALIAS_PROBE_REPLYC, &i);
-  state->params_len += 2;
-  flag_set(state->flags, WARTS_DEALIAS_PROBE_SEQ, &i);
-  state->params_len += 4;
-
-  if(SCAMPER_ADDR_TYPE_IS_IPV4(probe->def->dst))
+  for(i=0; i<sizeof(dealias_probe_vars)/sizeof(warts_var_t); i++)
     {
-      flag_set(state->flags, WARTS_DEALIAS_PROBE_IPID, &i);
-      state->params_len += 2;
+      var = &dealias_probe_vars[i];
+      if((var->id == WARTS_DEALIAS_PROBE_DEF && probe->def->id == 0) ||
+	 (var->id == WARTS_DEALIAS_PROBE_REPLYC && probe->replyc == 0) ||
+	 (var->id == WARTS_DEALIAS_PROBE_SEQ && probe->seq == 0) ||
+	 (var->id == WARTS_DEALIAS_PROBE_IPID &&
+	  SCAMPER_ADDR_TYPE_IS_IPV4(probe->def->dst) == 0))
+	continue;
+
+      flag_set(state->flags, var->id, &max_id);
+      assert(var->size != -1);
+      state->params_len += var->size;
     }
 
-  state->flags_len = fold_flags(state->flags, i);
+  state->flags_len = fold_flags(state->flags, max_id);
   state->replies = NULL;
 
   if(probe->replyc > 0)
@@ -1473,8 +1467,7 @@ static int warts_dealias_probe_read(scamper_dealias_probe_t *probe,
 				    warts_addrtable_t *table,
 				    uint8_t *buf, uint32_t *off, uint32_t len)
 {
-  int i;
-  uint32_t probedef_id;
+  uint32_t probedef_id = 0;
   warts_param_reader_t handlers[] = {
     {&probedef_id,   (wpr_t)extract_uint32,  NULL},
     {&probe->tx,     (wpr_t)extract_timeval, NULL},
@@ -1484,6 +1477,7 @@ static int warts_dealias_probe_read(scamper_dealias_probe_t *probe,
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
   scamper_dealias_reply_t *reply;
+  int i;
 
   if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0)
     {
@@ -1561,13 +1555,11 @@ int scamper_file_warts_dealias_read(scamper_file_t *sf, const warts_hdr_t *hdr,
   scamper_dealias_t *dealias = NULL;
   scamper_dealias_probedef_t *defs;
   scamper_dealias_probe_t *probe;
-  warts_addrtable_t table;
+  warts_addrtable_t *table = NULL;
   warts_state_t *state = scamper_file_getstate(sf);
   uint8_t *buf = NULL;
   uint32_t off = 0;
   uint32_t i;
-
-  memset(&table, 0, sizeof(table));
 
   if(warts_read(sf, &buf, hdr->len) != 0)
     {
@@ -1585,19 +1577,14 @@ int scamper_file_warts_dealias_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     }
 
   if(warts_dealias_params_read(dealias, state, buf, &off, hdr->len) != 0)
-    goto err;
-  if(dealias->method == 0)
-    goto err;
-
-  /* bounds check the type, can only read types we know about */
-  if(dealias->method > 5)
     {
-      scamper_dealias_free(dealias);
-      *dealias_out = NULL;
-      return 0;
+      goto err;
     }
 
-  if(read[dealias->method-1](dealias,state,&table,&defs,buf,&off,hdr->len)!=0)
+  if((table = warts_addrtable_alloc_byid()) == NULL)
+    goto err;
+
+  if(read[dealias->method-1](dealias,state,table,&defs,buf,&off,hdr->len)!=0)
     goto err;
 
   if(dealias->probec == 0)
@@ -1616,7 +1603,7 @@ int scamper_file_warts_dealias_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 	}
       dealias->probes[i] = probe;
 
-      if(warts_dealias_probe_read(probe, state, defs, &table,
+      if(warts_dealias_probe_read(probe, state, defs, table,
 				  buf, &off, hdr->len) != 0)
 	{
 	  goto err;
@@ -1625,13 +1612,13 @@ int scamper_file_warts_dealias_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 
  done:
   assert(off == hdr->len);
-  warts_addrtable_clean(&table);
+  warts_addrtable_free(table);
   *dealias_out = dealias;
   free(buf);
   return 0;
 
  err:
-  warts_addrtable_clean(&table);
+  if(table != NULL) warts_addrtable_free(table);
   if(buf != NULL) free(buf);
   if(dealias != NULL) scamper_dealias_free(dealias);
   return -1;
@@ -1683,17 +1670,19 @@ int scamper_file_warts_dealias_write(const scamper_file_t *sf,
   uint32_t                 len, len2, off = 0;
   size_t                   size;
   uint32_t                 i;
-  warts_addrtable_t        table;
+  warts_addrtable_t       *table = NULL;
 
   memset(&data, 0, sizeof(data));
-  memset(&table, 0, sizeof(table));
 
   /* figure out which dealias data items we'll store in this record */
   warts_dealias_params(dealias, flags, &flags_len, &params_len);
   len = 8 + flags_len + params_len + 2;
 
+  if((table = warts_addrtable_alloc_byaddr()) == NULL)
+    goto err;
+
   /* figure out the state that we have to allocate */
-  if(state[dealias->method-1](sf, dealias->data, &data, &table, &len) != 0)
+  if(state[dealias->method-1](sf, dealias->data, &data, table, &len) != 0)
      {
        goto err;
      }
@@ -1714,7 +1703,7 @@ int scamper_file_warts_dealias_write(const scamper_file_t *sf,
 	{
 	  probe = dealias->probes[i];
 	  len2 = len;
-	  if(warts_dealias_probe_state(sf,probe,&probes[i],&table,&len2) != 0)
+	  if(warts_dealias_probe_state(sf,probe,&probes[i],table,&len2) != 0)
 	    goto err;
 	  if(len2 < len)
 	    goto err;
@@ -1732,7 +1721,7 @@ int scamper_file_warts_dealias_write(const scamper_file_t *sf,
       goto err;
     }
 
-  write[dealias->method-1](dealias->data, sf, &table, buf, &off, len, &data);
+  write[dealias->method-1](dealias->data, sf, table, buf, &off, len, &data);
 
   if(data.probedefs != NULL)
     free(data.probedefs);
@@ -1743,7 +1732,7 @@ int scamper_file_warts_dealias_write(const scamper_file_t *sf,
       for(i=0; i<dealias->probec; i++)
 	{
 	  probe = dealias->probes[i];
-	  warts_dealias_probe_write(probe,sf,&table,buf,&off, len, &probes[i]);
+	  warts_dealias_probe_write(probe,sf,table,buf,&off, len, &probes[i]);
 	}
     }
 
@@ -1757,12 +1746,12 @@ int scamper_file_warts_dealias_write(const scamper_file_t *sf,
       goto err;
     }
 
-  warts_addrtable_clean(&table);
+  warts_addrtable_free(table);
   free(buf);
   return 0;
 
  err:
-  warts_addrtable_clean(&table);
+  if(table != NULL) warts_addrtable_free(table);
   if(probes != NULL) warts_dealias_probes_free(probes, dealias->probec);
   if(data.probedefs != NULL) free(data.probedefs);
   if(buf != NULL) free(buf);

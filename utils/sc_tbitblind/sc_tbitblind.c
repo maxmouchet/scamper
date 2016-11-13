@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_tbitblind.c,v 1.2.2.4 2016/06/22 08:20:39 mjl Exp $";
+  "$Id: sc_tbitblind.c,v 1.4 2016/02/15 21:04:54 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

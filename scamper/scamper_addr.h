@@ -1,11 +1,12 @@
 /*
  * scamper_addr.h
  *
- * $Id: scamper_addr.h,v 1.26 2013/07/25 18:02:51 mjl Exp $
+ * $Id: scamper_addr.h,v 1.28 2016/08/21 09:38:38 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2013      The Regents of the University of California
+ * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -112,6 +113,8 @@ int scamper_addr_inprefix(const scamper_addr_t *sa, const void *p, int len);
 int scamper_addr_prefix(const scamper_addr_t *a, const scamper_addr_t *b);
 int scamper_addr_prefixhosts(const scamper_addr_t *a, const scamper_addr_t *b);
 int scamper_addr_netaddr(const scamper_addr_t *a, void *net, int netlen);
+int scamper_addr_bit(const scamper_addr_t *a, int bit);
+int scamper_addr_fbd(const scamper_addr_t *a, const scamper_addr_t *b);
 
 /*
  * scamper_addr_alloc_[ipv4|ipv6|ethernet|firewire]

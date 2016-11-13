@@ -1,7 +1,7 @@
 /*
  * scamper_dl.h
  *
- * $Id: scamper_dl.h,v 1.57.14.4 2015/12/03 07:15:35 mjl Exp $
+ * $Id: scamper_dl.h,v 1.62 2015/09/15 04:49:06 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -202,6 +202,11 @@
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP && \
  (dl)->dl_af == AF_INET6 && (dl)->dl_ip_proto == 58 && \
  (dl)->dl_icmp_type == 136)
+
+#define SCAMPER_DL_IS_ICMP6_ND_NSOL(dl) ( \
+ (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_IP && \
+ (dl)->dl_af == AF_INET6 && (dl)->dl_ip_proto == 58 && \
+ (dl)->dl_icmp_type == 135)
 
 #define SCAMPER_DL_IS_ARP(dl) ( \
  (dl)->dl_net_type == SCAMPER_DL_REC_NET_TYPE_ARP)

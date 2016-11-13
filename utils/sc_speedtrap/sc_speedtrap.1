@@ -6,7 +6,7 @@
 .\" Copyright (c) 2013 The Regents of the University of California
 .\"                    All rights reserved
 .\"
-.\" $Id: sc_speedtrap.1,v 1.2 2013/08/24 15:18:13 mjl Exp $
+.\" $Id: sc_speedtrap.1,v 1.4 2016/10/28 05:15:15 mjl Exp $
 .\"
 .Dd August 18, 2013
 .Dt SC_SPEEDTRAP 1
@@ -39,8 +39,8 @@ The
 .Nm
 utility provides the ability to connect to a running
 .Xr scamper 1
-instance and have resolve a set of IPv6 addresses for aliases using the "speedtrap"
-technique.
+instance and use it to collect data for alias resolution of a set of
+IPv6 addresses using the "speedtrap" technique.
 .Nm
 induces each address to send fragmented ICMP echo replies, with the goal of obtaining
 an incrementing Identifier (ID) field in the fragmentation header.
@@ -142,4 +142,4 @@ the stage takes:
 .Xr sc_warts2json 1 ,
 .Sh AUTHORS
 .Nm
-is written by Matthew Luckie <mjl@luckie.org.nz>.
+was written by Matthew Luckie <mjl@luckie.org.nz>.

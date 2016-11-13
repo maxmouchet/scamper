@@ -1,12 +1,12 @@
 /*
  * scamper_control.c
  *
- * $Id: scamper_control.c,v 1.161.2.2 2016/08/26 20:52:42 mjl Exp $
+ * $Id: scamper_control.c,v 1.192 2016/10/28 06:45:04 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
- * Copyright (C) 2014      Matthew Luckie
+ * Copyright (C) 2014-2016 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_control.c,v 1.161.2.2 2016/08/26 20:52:42 mjl Exp $";
+  "$Id: scamper_control.c,v 1.192 2016/10/28 06:45:04 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -78,6 +78,55 @@ typedef struct client_txt
 } client_txt_t;
 
 /*
+ * remote_t: struct to define a remote control instance.
+ *
+ * server_name: name/ip address of the remote control server
+ * server_port: port to connect to on the remote control server
+ * fd:          file descriptor for an established session
+ * wb:          writebuf for the established session
+ * magic:       randomly generated magic for the instance
+ * buf:         read buf to assemble incoming messages with
+ * bufoff:      where in the read buf we are up to
+ * alias:       alias assigned by the remote control server to this instance
+ * num:         last ID assigned by this instance to identify callbacks
+ */
+typedef struct control_remote
+{
+  char               *server_name;
+  int                 server_port;
+  scamper_fd_t       *fd;
+  scamper_writebuf_t *wb;
+  uint8_t             magic[8];
+  uint8_t             buf[6+65536];
+  size_t              bufoff;
+  char               *alias;
+  uint32_t            num;
+  dlist_t            *list;
+  struct timeval      tx_ka;
+  struct timeval      rx_abort;
+  scamper_queue_t    *sq;
+
+#ifdef HAVE_OPENSSL
+  int                 mode;
+  SSL                *ssl;
+  BIO                *rbio;
+  BIO                *wbio;
+#endif
+} control_remote_t;
+
+typedef struct control_unix
+{
+  char               *name;
+  uint32_t            num;
+  scamper_fd_t       *fd;
+} control_unix_t;
+
+typedef struct control_inet
+{
+  scamper_fd_t       *fd;
+} control_inet_t;
+
+/*
  * client_t
  *
  * this structure records state required to manage a client connected to
@@ -85,28 +134,39 @@ typedef struct client_txt
  */
 typedef struct client
 {
-  /* address of client connected */
-  struct sockaddr    *sa;
+  /* the mode the client is in: interactive, attached, flush*/
+  uint8_t             mode;
+
+  /* the type the client is: socket or channel */
+  uint8_t             type;
 
   /* node for this client in the list of connected clients */
   dlist_node_t       *node;
 
-  /*
-   * fdn: file descriptor managed by scamper for the client fd.
-   * lp:  interface to read a line at a time from the client.
-   * wb:  interface to handle non-blocking writes to the scamper_fd.
-   * txt: text strings to pass over socket when able to.
-   */
-  scamper_fd_t       *fdn;
-  scamper_linepoll_t *lp;
-  scamper_writebuf_t *wb;
-  slist_t            *txt;
-
   /* pointer returned by the source observe code */
   void               *observe;
 
-  /* the mode the client is in */
-  int                 mode;
+  /* linepoll to process incoming lines of text */
+  scamper_linepoll_t *lp;
+
+  /* text strings to pass over socket when able to */
+  slist_t            *txt;
+
+  union
+  {
+    struct client_sock
+    {
+      struct sockaddr    *sa;
+      scamper_fd_t       *fdn;
+      scamper_writebuf_t *wb;
+    } sock;
+    struct client_chan
+    {
+      uint32_t            id;
+      control_remote_t   *rem;
+      dlist_node_t       *node;
+    } chan;
+  } un;
 
   /*
    * the next set of variables are used when the client's connection is used
@@ -129,6 +189,9 @@ typedef struct client
 #define CLIENT_MODE_ATTACHED    1
 #define CLIENT_MODE_FLUSH       2
 
+#define CLIENT_TYPE_SOCKET      0
+#define CLIENT_TYPE_CHANNEL     1
+
 typedef struct command
 {
   char *word;
@@ -143,14 +206,36 @@ typedef struct param
 
 /*
  * client_list: a doubly linked list of connected clients
- * fd: a scamper_fd struct that contains callback details
+ * ctrl_rem:    a remote control instance
+ * ctrl_unix:   a local unix domain socket to control scamper
+ * ctrl_inet:   an IP socket available to control scamper
  */
-static dlist_t      *client_list  = NULL;
-static scamper_fd_t *fdn          = NULL;
+static dlist_t *client_list = NULL;
+static control_remote_t *ctrl_rem = NULL;
+static control_unix_t *ctrl_unix = NULL;
+static control_inet_t *ctrl_inet = NULL;
 
-#if defined(AF_UNIX) && !defined(_WIN32)
-static char         *ctrl_unix_name = NULL;
-static int           ctrl_unix_num  = 0;
+#define CONTROL_MASTER_NEW   0 /* scamper --> remoted */
+#define CONTROL_MASTER_ID    1 /* scamper <-- remoted */
+#define CONTROL_CHANNEL_NEW  2 /* scamper <-- remoted */
+#define CONTROL_CHANNEL_FIN  3 /* scamper <-> remoted */
+#define CONTROL_KEEPALIVE    4 /* scamper <-> remoted */
+
+/* forward declare remote_reconnect so that it may be used throughout */
+static int remote_reconnect(void *param);
+static int remote_tx_ka(void *param);
+static int remote_rx_abort(void *param);
+
+/*
+ * global variables for remote control socket where TLS is used
+ *
+ * tls_ctx: TLS context used with the remote controller
+ * 
+ */
+#ifdef HAVE_OPENSSL
+#define SSL_MODE_HANDSHAKE   0x00
+#define SSL_MODE_ESTABLISHED 0x01
+static SSL_CTX *tls_ctx = NULL;
 #endif
 
 static int command_handler(command_t *handler, int cnt, client_t *client,
@@ -234,14 +319,9 @@ static int params_get(char *line, char **words, int *count)
 static char *switch_tostr(char *buf, size_t len, int val)
 {
   if(val == 0)
-    {
-      strncpy(buf, "off", len);
-    }
+    strncpy(buf, "off", len);
   else
-    {
-      strncpy(buf, "on", len);
-    }
-
+    strncpy(buf, "on", len);
   return buf;
 }
 
@@ -267,16 +347,18 @@ static void client_txt_free(client_txt_t *txt)
 
 static char *client_sockaddr_tostr(client_t *client, char *buf, size_t len)
 {
+  assert(client->type == CLIENT_TYPE_SOCKET);
+
   /*
    * if the socket is a unix domain socket, make something up that
    * is sensible.
    */
 #if defined(AF_UNIX) && !defined(_WIN32)
-  if(client->sa->sa_family == AF_UNIX)
+  if(client->un.sock.sa->sa_family == AF_UNIX)
     {
-      if(ctrl_unix_name == NULL)
+      if(ctrl_unix->name == NULL)
 	return NULL;
-      snprintf(buf, len, "%s:%d", ctrl_unix_name, ctrl_unix_num++);
+      snprintf(buf, len, "%s:%d", ctrl_unix->name, ctrl_unix->num++);
       return buf;
     }
 #endif
@@ -285,7 +367,7 @@ static char *client_sockaddr_tostr(client_t *client, char *buf, size_t len)
    * get the name of the connected socket, which is used to name the
    * source and the outfile
    */
-  if(sockaddr_tostr(client->sa, buf, len) == NULL)
+  if(sockaddr_tostr(client->un.sock.sa, buf, len) == NULL)
     {
       printerror(0, NULL, __func__, "could not decipher client sockaddr");
       return NULL;
@@ -301,42 +383,63 @@ static char *client_sockaddr_tostr(client_t *client, char *buf, size_t len)
  */
 static void client_free(client_t *client)
 {
-  client_obj_t *obj;
-  client_txt_t *txt;
   int fd;
 
-  if(client == NULL) return;
+  if(client == NULL)
+    return;
 
-  /* if there's an open socket here, close it now */
-  if(client->fdn != NULL)
+  /* free up the structures for doing socket work with */
+  if(client->type == CLIENT_TYPE_SOCKET)
     {
-      fd = scamper_fd_fd_get(client->fdn);
-      scamper_fd_free(client->fdn);
-      client->fdn = NULL;
+      if(client->un.sock.fdn != NULL)
+	{
+	  fd = scamper_fd_fd_get(client->un.sock.fdn);
+	  scamper_fd_free(client->un.sock.fdn);
+	  client->un.sock.fdn = NULL;
+	  shutdown(fd, SHUT_RDWR);
+	  close(fd);
+	}
 
-      shutdown(fd, SHUT_RDWR);
-      close(fd);
+      if(client->un.sock.wb != NULL)
+	{
+	  scamper_writebuf_free(client->un.sock.wb);
+	  client->un.sock.wb = NULL;
+	}
+
+      if(client->un.sock.sa != NULL)
+	{
+	  free(client->un.sock.sa);
+	  client->un.sock.sa = NULL;
+	}
+    }
+  else if(client->type == CLIENT_TYPE_CHANNEL)
+    {
+      if(client->un.chan.node != NULL)
+	{
+	  dlist_node_pop(client->un.chan.rem->list, client->un.chan.node);
+	  client->un.chan.node = NULL;
+	}
     }
 
-  /* remove the linepoll structure */
-  if(client->lp != NULL) scamper_linepoll_free(client->lp, 0);
-  client->lp = NULL;
-
-  /* remove the writebuf structure */
-  if(client->wb != NULL) scamper_writebuf_free(client->wb);
-  client->wb = NULL;
+  if(client->lp != NULL)
+    {
+      scamper_linepoll_free(client->lp, 0);
+      client->lp = NULL;
+    }
 
   /* remove the client from the list of clients */
-  if(client->node != NULL) dlist_node_pop(client_list, client->node);
-  client->node = NULL;
-
-  /* if we made a copy of the client's sockaddr, free it now */
-  if(client->sa != NULL) free(client->sa);
-  client->sa = NULL;
+  if(client->node != NULL)
+    {
+      dlist_node_pop(client_list, client->node);
+      client->node = NULL;
+    }
 
   /* if we are monitoring source events, unobserve */
-  if(client->observe != NULL) scamper_sources_unobserve(client->observe);
-  client->observe = NULL;
+  if(client->observe != NULL)
+    {
+      scamper_sources_unobserve(client->observe);
+      client->observe = NULL;
+    }
 
   /* make sure the source is empty before freeing */
   if(client->source != NULL)
@@ -347,22 +450,21 @@ static void client_free(client_t *client)
     }
 
   /* cleanup the output file */
-  if(client->sof != NULL) scamper_outfile_free(client->sof);
-  client->sof = NULL;
+  if(client->sof != NULL)
+    {
+      scamper_outfile_free(client->sof);
+      client->sof = NULL;
+    }
 
   if(client->sof_objs != NULL)
     {
-      while((obj = slist_head_pop(client->sof_objs)) != NULL)
-	client_obj_free(obj);
-      slist_free(client->sof_objs);
+      slist_free_cb(client->sof_objs, (slist_free_t)client_obj_free);
       client->sof_objs = NULL;
     }
 
   if(client->txt != NULL)
     {
-      while((txt = slist_head_pop(client->txt)) != NULL)
-	client_txt_free(txt);
-      slist_free(client->txt);
+      slist_free_cb(client->txt, (slist_free_t)client_txt_free);
       client->txt = NULL;
     }
 
@@ -405,7 +507,11 @@ static int client_send(client_t *client, char *fs, ...)
     goto err;
   t->str = str;
   t->len = len;
-  scamper_fd_write_unpause(client->fdn);
+
+  if(client->type == CLIENT_TYPE_SOCKET)
+    scamper_fd_write_unpause(client->un.sock.fdn);
+  else
+    scamper_fd_write_unpause(ctrl_rem->fd);
 
   return ret;
 
@@ -523,6 +629,7 @@ static int get_switch(client_t *client, char *name, char *buf, long *l)
 static char *source_tostr(char *str, const size_t len,
 			  const scamper_source_t *source)
 {
+  const char *ptr;
   char descr[256], outfile[256], type[512], sw1[4];
   int i;
 
@@ -557,20 +664,16 @@ static char *source_tostr(char *str, const size_t len,
     }
 
   /* if there is a description for the source, then format it in */
-  if(scamper_source_getdescr(source) != NULL)
-    {
-      snprintf(descr, sizeof(descr),
-	       " descr '%s'", scamper_source_getdescr(source));
-    }
-  else descr[0] = '\0';
+  if((ptr = scamper_source_getdescr(source)) != NULL)
+    snprintf(descr, sizeof(descr), " descr '%s'", ptr);
+  else
+    descr[0] = '\0';
 
   /* outfile */
-  if(scamper_source_getoutfile(source) != NULL)
-    {
-      snprintf(outfile, sizeof(outfile), " outfile '%s'",
-	       scamper_source_getoutfile(source));
-    }
-  else outfile[0] = '\0';
+  if((ptr = scamper_source_getoutfile(source)) != NULL)
+    snprintf(outfile, sizeof(outfile), " outfile '%s'", ptr);
+  else
+    outfile[0] = '\0';
 
   snprintf(str, len,
 	   "name '%s'%s list_id %u cycle_id %u priority %u%s %s",
@@ -595,11 +698,10 @@ static int client_data_send(void *param, const void *vdata, size_t len)
   client_t *client = param;
   client_obj_t *obj = NULL;
   const uint8_t *data = vdata;
+  scamper_fd_t *fdn;
 
   assert(len >= 8);
-
-  if(client->wb == NULL || client->sof_objs == NULL)
-    return 0;
+  assert(client->sof_objs != NULL);
 
   if(data[0] != 0x12 || data[1] != 0x05)
     {
@@ -634,7 +736,13 @@ static int client_data_send(void *param, const void *vdata, size_t len)
     }
   obj = NULL;
 
-  scamper_fd_write_unpause(client->fdn);
+  if(client->type == CLIENT_TYPE_SOCKET)
+    fdn = client->un.sock.fdn;
+  else
+    fdn = ctrl_rem->fd;
+  if(fdn != NULL)
+    scamper_fd_write_unpause(fdn);
+
   return 0;
 
  err:
@@ -654,9 +762,14 @@ static char *client_tostr(void *param, char *buf, size_t len)
   client_t *client = param;
   size_t off = 0;
 
+  assert(client->type == CLIENT_TYPE_SOCKET ||
+	 client->type == CLIENT_TYPE_CHANNEL);
+
   buf[0] = '\0';
-  if(client->fdn != NULL)
-    string_concat(buf, len, &off, "fd %d", scamper_fd_fd_get(client->fdn));
+  if(client->type == CLIENT_TYPE_SOCKET)
+    string_concat(buf,len,&off,"fd %d", scamper_fd_fd_get(client->un.sock.fdn));
+  else
+    string_concat(buf,len,&off,"chan %u", client->un.chan.id);
 
   return buf;
 }
@@ -705,7 +818,8 @@ static int command_attach(client_t *client, char *buf)
       return 0;
     }
 
-  client_sockaddr_tostr(client, sab, sizeof(sab));
+  if(client_sockaddr_tostr(client, sab, sizeof(sab)) == NULL)
+    goto err;
 
   if((client->sof_objs = slist_alloc()) == NULL)
     {
@@ -1125,6 +1239,8 @@ static int command_outfile_socket(client_t *client, char *buf)
   };
   int handler_cnt = sizeof(handlers) / sizeof(param_t);
 
+  assert(client->type == CLIENT_TYPE_SOCKET);
+
   if(params_get(buf, params, &cnt) == -1)
     {
       client_send(client, "ERR source add params_get failed");
@@ -1155,7 +1271,7 @@ static int command_outfile_socket(client_t *client, char *buf)
       return 0;
     }
 
-  fd = scamper_fd_fd_get(client->fdn);
+  fd = scamper_fd_fd_get(client->un.sock.fdn);
   if(scamper_outfile_openfd(name, fd, type) == NULL)
     {
       client_send(client, "ERR could not turn socket into outfile");
@@ -1832,9 +1948,8 @@ static int client_isdone(client_t *client)
   size_t len;
   int c;
 
-  assert(client->wb != NULL);
-
-  if((len = scamper_writebuf_len(client->wb)) != 0)
+  if(client->type == CLIENT_TYPE_SOCKET &&
+     (len = scamper_writebuf_len(client->un.sock.wb)) != 0)
     {
       scamper_debug(__func__, "client writebuf len %d", len);
       return 0;
@@ -1970,51 +2085,69 @@ static int client_read_line(void *param, uint8_t *buf, size_t len)
   return 0;
 }
 
+static client_t *client_alloc(uint8_t type)
+{
+  client_t *client = NULL;
+  if((client = malloc_zero(sizeof(client_t))) == NULL)
+    goto err;
+  client->type = type;
+  if((client->node = dlist_tail_push(client_list, client)) == NULL ||
+     (client->lp = scamper_linepoll_alloc(client_read_line, client)) == NULL ||
+     (client->txt = slist_alloc()) == NULL)
+    goto err;
+  return client;
+
+ err:
+  if(client != NULL) client_free(client);
+  return NULL;
+}
+
 static void client_read(const int fd, client_t *client)
 {
-  uint8_t buf[256];
-  ssize_t rc;
+  ssize_t rrc;
+  uint8_t buf[4096];
 
-  assert(scamper_fd_fd_get(client->fdn) == fd);
+  assert(client->type == CLIENT_TYPE_SOCKET);
+  assert(scamper_fd_fd_get(client->un.sock.fdn) == fd);
 
-  /* try and read more from the client */
-  if((rc = read(fd, buf, sizeof(buf))) < 0)
+  /* handle error conditions */
+  if((rrc = read(fd, buf, sizeof(buf))) < 0)
     {
       if(errno == EAGAIN || errno == EINTR)
 	return;
-
-      printerror(errno, strerror, __func__, "read failed");
+      printerror(errno, strerror, __func__, "could not read from %d", fd);
       client_free(client);
       return;
     }
-
-  /* if there is incoming data, deal with it */
-  if(rc > 0)
+  
+  /* handle disconnection */
+  if(rrc == 0)
     {
-      scamper_linepoll_handle(client->lp, buf, (size_t)rc);
+      scamper_fd_read_pause(client->un.sock.fdn);
+      if(client->source != NULL)
+	{
+	  scamper_source_control_finish(client->source);
+	  scamper_source_abandon(client->source);
+	}
+      if(client_isdone(client) != 0)
+	client_free(client);
+      else
+	client->mode = CLIENT_MODE_FLUSH;
       return;
     }
 
-  /* nothing left to do read with this fd */
-  scamper_fd_read_pause(client->fdn);
-
-  if(client->source != NULL)
-    {
-      scamper_source_control_finish(client->source);
-      scamper_source_abandon(client->source);
-    }
-
-  if(client_isdone(client) != 0)
-    {
-      client_free(client);
-      return;
-    }
-  client->mode = CLIENT_MODE_FLUSH;
-
+  scamper_linepoll_handle(client->lp, buf, (size_t)rrc);
   return;
 }
 
-static void client_write(const int fd, client_t *client)
+static int client_writebuf_send(client_t *client, void *buf, size_t len)
+{
+  assert(client->type == CLIENT_TYPE_SOCKET);
+  return scamper_writebuf_send(client->un.sock.wb, buf, len);
+}
+
+static int client_write_do(client_t *client,
+			   int (*sendfunc)(client_t *, void *, size_t))
 {
   client_txt_t *t = NULL;
   client_obj_t *o = NULL;
@@ -2023,77 +2156,86 @@ static void client_write(const int fd, client_t *client)
   size_t len;
   int rc;
 
-  assert(scamper_fd_fd_get(client->fdn) == fd);
-
-  if(scamper_writebuf_len(client->wb) == 0)
+  if(client->sof_off == 0)
     {
-      if(client->sof_off == 0)
+      while((t = slist_head_pop(client->txt)) != NULL)
 	{
-	  while((t = slist_head_pop(client->txt)) != NULL)
-	    {
-	      rc = scamper_writebuf_send(client->wb, t->str, t->len);
-	      client_txt_free(t); t = NULL;
-	      if(rc < 0)
-		goto err;
-	    }
-
-	  /* check if we should start sending through a completed task */
-	  if(client->sof_objs != NULL &&
-	     (o = slist_head_pop(client->sof_objs)) != NULL)
-	    {
-	      client->sof_obj = o;
-	      len = snprintf(str, sizeof(str), "DATA %d\n",
-			     (int)uuencode_len(o->len, NULL, NULL));
-	      if(scamper_writebuf_send(client->wb, str, len) < 0)
-		{
-		  printerror(errno, strerror, __func__,
-			     "could not send DATA header");
-		  goto err;
-		}
-	    }
-	}
-      else
-	{
-	  o = client->sof_obj;
+	  rc = sendfunc(client, t->str, t->len);
+	  client_txt_free(t); t = NULL;
+	  if(rc != 0)
+	    return -1;
 	}
 
-      if(o != NULL)
+      /* check if we should start sending through a completed task */
+      if(client->sof_objs != NULL &&
+	 (o = slist_head_pop(client->sof_objs)) != NULL)
 	{
-	  len = uuencode_bytes(o->data, o->len, &client->sof_off,
-			       data, sizeof(data));
-	  if(client->sof_off == o->len)
+	  client->sof_obj = o;
+	  len = snprintf(str, sizeof(str), "DATA %d\n",
+			 (int)uuencode_len(o->len, NULL, NULL));
+	  if(sendfunc(client, str, len) < 0)
 	    {
-	      client_obj_free(o);
-	      client->sof_obj = NULL;
-	      client->sof_off = 0;
-	    }
-
-	  if(scamper_writebuf_send(client->wb, data, len) != 0)
-	    {
-	      printerror(errno, strerror, __func__,
-			 "could not send %d bytes", len);
-	      goto err;
+	      printerror(errno,strerror,__func__, "could not send DATA header");
+	      return -1;
 	    }
 	}
     }
+  else
+    {
+      o = client->sof_obj;
+    }
 
+  if(o != NULL)
+    {
+      len = uuencode_bytes(o->data,o->len, &client->sof_off, data,sizeof(data));
+      if(client->sof_off == o->len)
+	{
+	  client_obj_free(o);
+	  client->sof_obj = NULL;
+	  client->sof_off = 0;
+	}
 
-  if(scamper_writebuf_write(fd, client->wb) != 0)
+      if(sendfunc(client, data, len) != 0)
+	{
+	  printerror(errno, strerror, __func__, "could not send %d bytes", len);
+	  return -1;
+	}
+    }
+
+  return 0;
+}
+
+static void client_write(const int fd, client_t *client)
+{
+  assert(client->type == CLIENT_TYPE_SOCKET);
+  assert(scamper_fd_fd_get(client->un.sock.fdn) == fd);
+
+  /*
+   * if there is nothing buffered in the writebuf, then put some more
+   * in there.
+   */
+  if(scamper_writebuf_len(client->un.sock.wb) == 0 &&
+     client_write_do(client, client_writebuf_send) != 0)
+    goto err;
+
+  if(scamper_writebuf_write(fd, client->un.sock.wb) != 0)
     {
       printerror(errno, strerror, __func__, "fd %d", fd);
       goto err;
     }
 
-  if(scamper_writebuf_len(client->wb) == 0 &&
+  /*
+   * do we have anything more to write for this client at this time?
+   * if not, pause the polling for write events, and check if we're
+   * going to have anything more at all.
+   */
+  if(scamper_writebuf_len(client->un.sock.wb) == 0 &&
      slist_count(client->txt) == 0 && client->sof_off == 0 &&
      (client->sof_objs == NULL || slist_count(client->sof_objs) == 0))
     {
-      scamper_fd_write_pause(client->fdn);
-      if(client->mode != CLIENT_MODE_FLUSH)
-	return;
-      if(client_isdone(client) == 0)
-	return;
-      client_free(client);
+      scamper_fd_write_pause(client->un.sock.fdn);
+      if(client->mode == CLIENT_MODE_FLUSH && client_isdone(client) != 0)
+	client_free(client);
     }
 
   return;
@@ -2104,102 +2246,1047 @@ static void client_write(const int fd, client_t *client)
 }
 
 /*
- * client_alloc
+ * remote_list_onremove
  *
- * given a new inbound client, allocate a new node for it.
  */
-static client_t *client_alloc(struct sockaddr *sa, socklen_t slen, int fd)
+static void remote_list_onremove(client_t *client)
 {
-  client_t *client = NULL;
+  assert(client->type == CLIENT_TYPE_CHANNEL);
+  client->un.chan.node = NULL;
+  return;
+}
 
-  /* make the socket non-blocking, so a read or write will not hang scamper */
-#ifndef _WIN32
-  if(fcntl_set(fd, O_NONBLOCK) == -1)
+/*
+ * remote_free
+ *
+ * if all is zero, only state for a given socket is free'd, not all
+ * of the structure.
+ */
+static void remote_free(control_remote_t *rm, int all)
+{
+  client_t *client;
+  int fd;
+  
+  /* go through the client list, freeing any remaining client structures */
+  while((client = dlist_head_pop(rm->list)) != NULL)
+    client_free(client);
+
+#ifdef HAVE_OPENSSL
+  if(rm->ssl != NULL)
     {
-      return NULL;
+      SSL_free(rm->ssl);
+    }
+  else
+    {
+      if(rm->wbio != NULL)
+	BIO_free(rm->wbio);
+      if(rm->rbio != NULL)
+	BIO_free(rm->rbio);
+    }
+#endif
+  
+  if(rm->fd != NULL)
+    {
+      fd = scamper_fd_fd_get(rm->fd);
+      scamper_fd_free(rm->fd); rm->fd = NULL;
+      shutdown(fd, SHUT_RDWR);
+      close(fd);
+    }
+
+  if(rm->wb != NULL)
+    {
+      scamper_writebuf_free(rm->wb);
+      rm->wb = NULL;
+    }
+
+  if(rm->alias != NULL)
+    {
+      free(rm->alias);
+      rm->alias = NULL;
+    }
+
+  if(all == 0)
+    return;
+
+  if(rm->sq != NULL)
+    {
+      scamper_queue_free(rm->sq);
+      rm->sq = NULL;
+    }
+
+  if(rm->server_name != NULL)
+    {
+      free(rm->server_name);
+      rm->server_name = NULL;
+    }
+
+  if(rm->alias != NULL)
+    {
+      free(rm->alias);
+      rm->alias = NULL;
+    }
+
+  if(rm->list != NULL)
+    {
+      dlist_free(rm->list);
+      rm->list = NULL;
+    }
+
+  free(rm);
+  return;
+}
+
+/*
+ * remote_retry:
+ *
+ * the master control socket went away, schedule a reconnect.
+ */
+static int remote_retry(int now)
+{
+  struct timeval tv;
+  uint8_t u8;
+
+  /* free just the state for a given socket, not all of the structure */
+  remote_free(ctrl_rem, 0);
+
+  gettimeofday_wrap(&tv);
+  if(now == 0)
+    {
+      random_u8(&u8); tv.tv_sec += 60 + u8;
+      scamper_debug(__func__, "waiting for %u seconds", 60 + u8);
+    }
+
+  scamper_queue_event_update_time(ctrl_rem->sq, &tv);
+  scamper_queue_event_update_cb(ctrl_rem->sq, remote_reconnect, NULL);
+  return 0;
+}
+
+#ifdef HAVE_OPENSSL
+/*
+ * remote_sock_ssl_want_read
+ *
+ * the OpenSSL routines told us to do a read from the socket.
+ */
+static int remote_sock_ssl_want_read(control_remote_t *rm)
+{
+  uint8_t buf[1024];
+  int pending, rc, size, off = 0;
+
+  if((pending = BIO_pending(rm->wbio)) < 0)
+    {
+      scamper_debug(__func__, "BIO_pending returns %d", pending);
+      return -1;
+    }
+
+  while(off < pending)
+    {
+      if(pending - off > sizeof(buf))
+	size = sizeof(buf);
+      else
+	size = pending - off;
+
+      if((rc = BIO_read(rm->wbio, buf, size)) <= 0)
+	{
+	  if(BIO_should_retry(rm->wbio) == 0)
+	    scamper_debug(__func__, "BIO_read should not retry");
+	  else
+	    scamper_debug(__func__, "BIO_read returned %d", rc);
+	  return -1;
+	}
+      off += rc;
+
+      scamper_writebuf_send(rm->wb, buf, rc);
+    }
+
+  if(pending != 0)
+    scamper_fd_write_unpause(rm->fd);
+
+  return pending;
+}
+
+/*
+ * remote_sock_ssl_init
+ *
+ * initialise the remote socket's SSL state.
+ */
+static int remote_sock_ssl_init(control_remote_t *rm)
+{
+  int rc;
+
+  if((rm->wbio = BIO_new(BIO_s_mem())) == NULL ||
+     (rm->rbio = BIO_new(BIO_s_mem())) == NULL ||
+     (rm->ssl  = SSL_new(tls_ctx)) == NULL)
+    {
+      scamper_debug(__func__, "could not create bios / ssl");
+      return -1;
+    }
+  SSL_set_bio(rm->ssl, rm->rbio, rm->wbio);
+  SSL_set_connect_state(rm->ssl);
+  rc = SSL_do_handshake(rm->ssl);
+  assert(rc <= 0);
+  if((rc = SSL_get_error(rm->ssl, rc)) == SSL_ERROR_WANT_READ &&
+     remote_sock_ssl_want_read(rm) < 0)
+    return -1;
+
+  return 0;
+}
+
+/*
+ * remote_sock_is_valid_cert:
+ *
+ * this code ensures that the peer presented a valid certificate --
+ * first that the peer verified and passed a signed certificate, and
+ * then that the name provided in the cert corresponds to the name of
+ * our peer.
+ *
+ * it is based on post_connection_check in "Network Security with
+ * OpenSSL" by John Viega, Matt Messier, and Pravir Chandra.
+ */
+static int remote_sock_is_valid_cert(control_remote_t *rm)
+{
+  X509 *cert = NULL;
+  X509_EXTENSION *ext;
+  X509_NAME *name;
+  const X509V3_EXT_METHOD *meth;
+  STACK_OF(CONF_VALUE) *val;
+  CONF_VALUE *nval;
+  const char *str;
+  char buf[256];
+  int rc = 0;
+  int i, j;
+
+  if(SSL_get_verify_result(rm->ssl) != X509_V_OK)
+    {
+      scamper_debug(__func__, "invalid certificate");
+      return 0;
+    }
+
+  if((cert = SSL_get_peer_certificate(rm->ssl)) == NULL)
+    {
+      scamper_debug(__func__, "no peer certificate");
+      return 0;
+    }
+
+  for(i=0; i<X509_get_ext_count(cert); i++)
+    {
+      ext = (X509_EXTENSION *)X509_get_ext(cert, i);
+      str = OBJ_nid2sn(OBJ_obj2nid(X509_EXTENSION_get_object(ext)));
+      if(strcmp(str, "subjectAltName") != 0)
+	continue;
+
+      if((meth = X509V3_EXT_get(ext)) == NULL)
+	break;
+      if(meth->i2v == NULL || meth->d2i == NULL)
+	continue;
+      val = meth->i2v(meth, 
+		      meth->d2i(NULL,
+				(const unsigned char **)&ext->value->data,
+				ext->value->length),
+		      NULL);
+      for(j=0; j<sk_CONF_VALUE_num(val); j++)
+	{
+	  nval = sk_CONF_VALUE_value(val, j);
+	  if(strcmp(nval->name, "DNS") == 0 &&
+	     strcasecmp(nval->value, rm->server_name) == 0)
+	    {
+	      rc = 1;
+	      goto done;
+	    }
+	}
+    }
+
+  if((name = X509_get_subject_name(cert)) != NULL &&
+     X509_NAME_get_text_by_NID(name, NID_commonName, buf, sizeof(buf)) > 0)
+    {
+      buf[sizeof(buf)-1] = 0;
+      if(strcasecmp(buf, rm->server_name) == 0)
+	{
+	  rc = 1;
+	}
+    }
+
+ done:
+  if(cert != NULL) X509_free(cert);
+  return rc;
+}
+#endif
+
+/*
+ * remote_sock_send
+ *
+ */
+static int remote_sock_send(control_remote_t *rm, void *ptr, size_t len)
+{
+#ifdef HAVE_OPENSSL
+  if(rm->ssl != NULL)
+    {
+      SSL_write(rm->ssl, ptr, len);
+      remote_sock_ssl_want_read(rm);
+      return 0;
+    }
+#endif
+  return scamper_writebuf_send(rm->wb, ptr, len);
+}
+
+/*
+ * remote_rx_abort
+ *
+ * we have not received anything in some time from the remote controller.
+ * assume the TCP socket got broken.  schedule a reconnect.
+ */
+static int remote_rx_abort(void *param)
+{
+  return remote_retry(1);
+}
+
+/*
+ * remote_tx_ka
+ *
+ * we have not sent anything in some time to the remote controller.
+ * send a keepalive to keep the socket going.
+ */
+static int remote_tx_ka(void *param)
+{
+  uint8_t buf[4+2+1];
+  bytes_htonl(buf+0, 0);
+  bytes_htons(buf+4, 1);
+  buf[6] = CONTROL_KEEPALIVE;
+  remote_sock_send(ctrl_rem, buf, sizeof(buf));
+  scamper_fd_write_unpause(ctrl_rem->fd);
+  return 0;
+}
+
+/*
+ * remote_event_queue
+ *
+ * set the appropriate event handler
+ */
+static int remote_event_queue(control_remote_t *rm)
+{
+#ifdef HAVE_OPENSSL
+  if(rm->ssl != NULL && rm->mode != SSL_MODE_ESTABLISHED)
+    {
+      scamper_queue_event_update_cb(rm->sq, remote_rx_abort, NULL);
+      scamper_queue_event_update_time(rm->sq, &rm->rx_abort);
+      return 0;
     }
 #endif
 
-  /*
-   * allocate the structure that holds the socket/client together
-   * put the node into the list of sockets that are connected
-   * make a copy of the sockaddr that connected to scamper
-   * add the file descriptor to the event manager
-   * put a wrapper around the socket to read from it one line at a time
-   */
-  if((client = malloc_zero(sizeof(struct client))) == NULL ||
-     (client->node = dlist_tail_push(client_list, client)) == NULL ||
-     (client->sa = memdup(sa, slen)) == NULL ||
-     (client->fdn = scamper_fd_private(fd, client,
-				       (scamper_fd_cb_t)client_read,
-				       (scamper_fd_cb_t)client_write))==NULL ||
-     (client->lp = scamper_linepoll_alloc(client_read_line, client)) == NULL ||
-     (client->wb = scamper_writebuf_alloc()) == NULL ||
-     (client->txt = slist_alloc()) == NULL)
+  if(timeval_cmp(&rm->tx_ka, &rm->rx_abort) <= 0)
     {
-      goto cleanup;
+      scamper_queue_event_update_cb(rm->sq, remote_tx_ka, NULL);
+      scamper_queue_event_update_time(rm->sq, &rm->tx_ka);
     }
-  scamper_fd_write_pause(client->fdn);
-
-  client->mode = CLIENT_MODE_INTERACTIVE;
-
-  return client;
-
- cleanup:
-  if(client != NULL)
+  else
     {
-      if(client->wb != NULL) scamper_writebuf_free(client->wb);
-      if(client->lp != NULL) scamper_linepoll_free(client->lp, 0);
-      if(client->node != NULL) dlist_node_pop(client_list, client->node);
-      if(client->sa != NULL) free(client->sa);
-      free(client);
+      scamper_queue_event_update_cb(rm->sq, remote_rx_abort, NULL);
+      scamper_queue_event_update_time(rm->sq, &rm->rx_abort);
     }
+  return 0;
+}
+
+static client_t *remote_channel_find(control_remote_t *rem, uint32_t id)
+{
+  dlist_node_t *dn;
+  client_t *client;
+
+  for(dn=dlist_head_node(rem->list); dn != NULL; dn=dlist_node_next(dn))
+    {
+      client = dlist_node_item(dn);
+      assert(client->type == CLIENT_TYPE_CHANNEL);
+      if(client->un.chan.id == id)
+	return client;
+    }
+
   return NULL;
+}
+
+static int remote_read_control_id(const uint8_t *buf, size_t len)
+{
+  uint8_t id_len;
+  uint8_t off;
+
+  if(ctrl_rem->alias != NULL)
+    {
+      free(ctrl_rem->alias);
+      ctrl_rem->alias = NULL;
+    }
+
+  if(len < 1)
+    return -1;
+
+  if((id_len = buf[0]) == 0)
+    return -1;
+  buf++; len--;
+
+  /* ensure the message could contain the specified number of bytes */
+  if(len < id_len)
+    return -1;
+
+  off = 0;
+  while(off < id_len-1 && off < len)
+    if(isprint(buf[off++]) == 0)
+      return -1;
+  if(buf[id_len-1] != '\0')
+    return -1;
+
+  if((ctrl_rem->alias = memdup(buf, id_len)) == NULL)
+    return -1;
+  scamper_debug(__func__, "remote alias: %s", ctrl_rem->alias);
+  return 0;
+}
+
+static int remote_read_control_channel_new(const uint8_t *buf, size_t len)
+{
+  scamper_source_params_t ssp;
+  scamper_file_t *sf;
+  client_t *client = NULL;
+  char listname[512];
+  uint32_t channel;
+
+  if(len != 4)
+    return -1;
+  channel = bytes_ntohl(buf);
+
+  snprintf(listname,sizeof(listname), "%s_%u", ctrl_rem->alias,ctrl_rem->num++);
+  
+  if((client = client_alloc(CLIENT_TYPE_CHANNEL)) == NULL ||
+     (client->sof_objs = slist_alloc()) == NULL ||
+     (client->sof = scamper_outfile_opennull(listname)) == NULL)
+    goto err;
+  client->un.chan.id = channel;
+  client->un.chan.rem = ctrl_rem;
+  client->mode = CLIENT_MODE_ATTACHED;
+
+  sf = scamper_outfile_getfile(client->sof);
+  scamper_file_setwritefunc(sf, client, client_data_send);
+
+  memset(&ssp, 0, sizeof(ssp));
+  ssp.list_id    = 0;
+  ssp.cycle_id   = 1;
+  ssp.priority   = 1;
+  ssp.name       = (char *)listname;
+  ssp.sof        = client->sof;
+  if((client->source = scamper_source_control_alloc(&ssp, client_signalmore,
+						    client_tostr,
+						    client)) == NULL)
+    {
+      printerror(errno, strerror, __func__,
+		 "could not allocate source '%s'", listname);
+      goto err;
+    }
+
+  /* put the source into rotation */
+  if(scamper_sources_add(client->source) != 0)
+    {
+      printerror(errno, strerror, __func__,
+		 "could not add source '%s' to rotation", listname);
+      goto err;
+    }
+
+  if((client->un.chan.node = dlist_tail_push(ctrl_rem->list, client)) == NULL)
+    {
+      printerror(errno, strerror, __func__,
+		 "could not add client to remote list");
+      goto err;
+    }
+  client->un.chan.rem = ctrl_rem;
+
+  return 0;
+
+ err:
+  if(client != NULL) client_free(client);
+  return -1;
+}
+
+/*
+ * remote_read_control_channel_fin
+ *
+ *
+ */
+static int remote_read_control_channel_fin(const uint8_t *buf, size_t len)
+{
+  client_t *client;
+  uint32_t channel;
+
+  if(len != 4)
+    {
+      scamper_debug(__func__, "malformed fin: %u", (unsigned int)len);
+      return -1;
+    }
+
+  channel = bytes_ntohl(buf);
+  scamper_debug(__func__, "channel %u", channel);
+  if((client = remote_channel_find(ctrl_rem, channel)) == NULL)
+    {
+      scamper_debug(__func__, "could not find channel %u", channel);
+      return -1;
+    }
+  scamper_source_control_finish(client->source);
+
+  return 0;
+}
+
+static int remote_read_control_keepalive(const uint8_t *buf, size_t len)
+{
+  if(len != 0)
+    return -1;
+  return 0;
+}
+
+static int remote_read_control(const uint8_t *buf, size_t len)
+{
+  uint8_t type;
+
+  if(len < 1)
+    return -1;
+
+  type = buf[0];
+  buf++; len--;
+
+  switch(type)
+    {
+    case CONTROL_MASTER_ID:
+      return remote_read_control_id(buf, len);
+    case CONTROL_CHANNEL_NEW:
+      return remote_read_control_channel_new(buf, len);
+    case CONTROL_CHANNEL_FIN:
+      return remote_read_control_channel_fin(buf, len);
+    case CONTROL_KEEPALIVE:
+      return remote_read_control_keepalive(buf, len);
+    }
+
+  return -1;
+}
+
+/*
+ * remote_read_payload
+ *
+ * process a payload from reading the remote control socket.  the
+ * payload has gone through OpenSSL before reaching here, if used.
+ */
+static int remote_read_payload(control_remote_t *rm,
+			       const uint8_t *buf, size_t len)
+{
+  client_t *client;
+  uint16_t msglen, x, y;
+  uint32_t channel_id;
+  size_t off = 0;
+
+  while(off < len)
+    {
+      /* to start with, ensure that we have a complete header */
+      while(rm->bufoff < 6 && off < len)
+	rm->buf[rm->bufoff++] = buf[off++];
+      if(off == len)
+	return 0;
+
+      /* figure out how large the message is supposed to be */
+      msglen = bytes_ntohs(rm->buf+4);
+
+      /* figure out how to build the message */
+      x = msglen - (rm->bufoff - 6);
+      y = len - off;
+      if(y < x)
+	{
+	  /* if we cannot complete the message, buffer what we have */
+	  memcpy(rm->buf + rm->bufoff, buf+off, y);
+	  rm->bufoff += y;
+	  return 0;
+	}
+
+      /* we now have a complete message */
+      channel_id = bytes_ntohl(rm->buf);
+      memcpy(rm->buf + rm->bufoff, buf+off, x);
+      off += x;
+
+      rm->bufoff = 0;
+
+      /* if the message is a control message */
+      if(channel_id == 0)
+	{
+	  if(remote_read_control(rm->buf + 6, msglen) != 0)
+	    return -1;
+	  continue;
+	}
+
+      if((client = remote_channel_find(rm, channel_id)) == NULL)
+	{
+	  scamper_debug(__func__, "could not find channel %u", channel_id);
+	  return -1;
+	}
+      scamper_linepoll_handle(client->lp, rm->buf + 6, msglen);
+    }
+
+  return 0;
+}
+
+/*
+ * remote_send_master
+ *
+ */
+static int remote_send_master(control_remote_t *rm)
+{
+  const char *monitorname = scamper_monitorname_get();
+  size_t off, len;
+  uint8_t buf[512];
+
+  if(monitorname != NULL)
+    {
+      if(strlen(monitorname) > 254)
+	return -1;
+      off = 0;
+      while(monitorname[off] != '\0')
+	{
+	  if(isalnum(monitorname[off]) == 0 &&
+	     monitorname[off] != '.' && monitorname[off] != '-')
+	    return -1;
+	  off++;
+	}
+    }
+
+  off = 0;
+  len = 1 + 1 + 8 + 1 + (monitorname != NULL ? strlen(monitorname) + 1 : 0);
+  bytes_htonl(buf+off, 0); off += 4;
+  bytes_htons(buf+off, len); off += 2;
+  buf[off++] = CONTROL_MASTER_NEW;
+  buf[off++] = 8; /* length of magic */
+  memcpy(buf+off, rm->magic, 8); off += 8;
+  if(monitorname != NULL)
+    {
+      len = strlen(monitorname) + 1;
+      buf[off++] = len;
+      memcpy(buf+off, monitorname, len);
+      len += 1 + 1 + 8 + 1;
+    }
+  else
+    {
+      buf[off++] = 0;
+    }
+  len += 6;
+
+  return remote_sock_send(ctrl_rem, buf, len);
+}
+
+/*
+ * remote_read_sock
+ *
+ * handle a read event on remote control socket.  this function steps
+ * through TLS negotiation and decryption.
+ *
+ * returns zero if the socket was disconnected, 1 if there was no error,
+ * and -1 on error.
+ */
+static int remote_read_sock(control_remote_t *rm)
+{
+  ssize_t rrc;
+  uint8_t buf[4096];
+  int fd = scamper_fd_fd_get(rm->fd);
+
+#ifdef HAVE_OPENSSL
+  int rc;
+#endif
+
+  if((rrc = read(fd, buf, sizeof(buf))) < 0)
+    {
+      if(errno == EAGAIN || errno == EINTR)
+	return 1;
+      printerror(errno, strerror, __func__, "could not read from %d", fd);
+      return -1;
+    }
+
+  if(rrc == 0)
+    {
+      scamper_debug(__func__, "disconnected fd %d", fd);
+      return 0;
+    }
+
+#ifdef HAVE_OPENSSL
+  if(rm->ssl != NULL)
+    {
+      BIO_write(rm->rbio, buf, rrc);
+      if(rm->mode == SSL_MODE_HANDSHAKE)
+	{
+	  if(SSL_is_init_finished(rm->ssl) != 0 ||
+	     (rc = SSL_do_handshake(rm->ssl)) > 0)
+	    {
+	      if(remote_sock_is_valid_cert(rm) == 0)
+		return -1;
+	      rm->mode = SSL_MODE_ESTABLISHED;
+	    }
+	  if(remote_sock_ssl_want_read(rm) < 0)
+	    return -1;
+	}
+      else if(rm->mode == SSL_MODE_ESTABLISHED)
+	{
+	  while((rc = SSL_read(rm->ssl, buf, sizeof(buf))) > 0)
+	    {
+	      if(remote_read_payload(rm, buf, (size_t)rc) != 0)
+		return -1;
+	    }
+	  if(remote_sock_ssl_want_read(rm) < 0)
+	    return -1;
+	}
+      return 1;
+    }
+#endif
+
+  if(remote_read_payload(rm, buf, (size_t)rrc) != 0)
+    return -1;
+  return 1;
+}
+
+/*
+ * remote_read
+ *
+ * this function handles read events on the master control socket back
+ * to the remote controller.  it does not handle regular client socket
+ * traffic.
+ *
+ */
+static void remote_read(const int fd, void *param)
+{
+#ifdef HAVE_OPENSSL
+  int enter_mode = ctrl_rem->mode;
+#endif
+
+  struct timeval tv;
+  int rc;
+
+  assert(scamper_fd_fd_get(ctrl_rem->fd) == fd);
+  
+  if((rc = remote_read_sock(ctrl_rem)) < 0)
+    goto retry;
+
+  if(rc == 0)
+    {
+      scamper_debug(__func__, "disconnected fd %d", fd);
+      goto retry;
+    }
+
+  gettimeofday_wrap(&tv);
+  timeval_add_s(&ctrl_rem->rx_abort, &tv, 60);
+  remote_event_queue(ctrl_rem);
+
+#ifdef HAVE_OPENSSL
+  /* when TLS has completed, we need to enter into the attach mode */
+  if(ctrl_rem->ssl != NULL && enter_mode == SSL_MODE_HANDSHAKE &&
+     ctrl_rem->mode == SSL_MODE_ESTABLISHED)
+    {
+      scamper_debug(__func__, "remote established");
+      if(remote_send_master(ctrl_rem) != 0)
+	goto retry;
+    }
+#endif
+
+  return;
+
+ retry:
+  remote_retry(0);
+  return;
+}
+
+static int client_channel_send(client_t *client, void *buf, size_t len)
+{
+  uint8_t hdr[4+2];
+
+  assert(client->type == CLIENT_TYPE_CHANNEL);
+
+  if(len > 65535)
+    return -1;
+
+  bytes_htonl(hdr+0, client->un.chan.id);
+  bytes_htons(hdr+4, len);
+
+  if(remote_sock_send(ctrl_rem, hdr, 6) < 0 ||
+     remote_sock_send(ctrl_rem, buf, len) < 0)
+    return -1;
+
+  return 0;  
+}
+
+static void remote_write(const int fd, void *param)
+{
+  struct timeval tv;
+  dlist_node_t *dn;
+  client_t *client;
+  uint8_t buf[4+2+1+4];
+  int rc = 0;
+
+  /*
+   * if there is nothing buffered in the writebuf, then put some more
+   * in there.
+   */
+  if(scamper_writebuf_gtzero(ctrl_rem->wb) == 0)
+    {
+      /* if there are no clients, then we won't have anything to send */
+      if(dlist_head_node(ctrl_rem->list) == NULL)
+	{
+	  scamper_fd_write_pause(ctrl_rem->fd);
+	  return;
+	}
+
+      /*
+       * take a pass through the clients, getting something from each
+       * connected channel, if available
+       */
+      dn = dlist_head_node(ctrl_rem->list);
+      while(dn != NULL)
+	{
+	  client = dlist_node_item(dn);
+	  dn = dlist_node_next(dn);
+
+	  if(client->mode == CLIENT_MODE_FLUSH && client_isdone(client) != 0)
+	    {
+	      /* construct a channel FIN message */
+	      bytes_htonl(buf+0, 0); bytes_htons(buf+4, 5);
+	      buf[6] = CONTROL_CHANNEL_FIN;
+	      bytes_htonl(buf+7, client->un.chan.id);
+
+	      /* don't need the client anymore */
+	      client_free(client);
+
+	      /* send the FIN */
+	      if(remote_sock_send(ctrl_rem, buf, sizeof(buf)) != 0)
+		goto err;
+
+	      continue;
+	    }
+
+	  if((rc = client_write_do(client, client_channel_send)) != 0)
+	    goto err;
+	}
+
+      /* if there is still nothing in the writebuf, then pause for now */
+      if(scamper_writebuf_gtzero(ctrl_rem->wb) == 0)
+	{
+	  scamper_fd_write_pause(ctrl_rem->fd);
+	  return;
+	}
+    }
+
+  if(scamper_writebuf_write(fd, ctrl_rem->wb) != 0)
+    goto err;
+  gettimeofday_wrap(&tv);
+  timeval_add_s(&ctrl_rem->tx_ka, &tv, 30);
+
+  remote_event_queue(ctrl_rem);
+  return;
+
+ err:
+  remote_retry(0);
+  return;
+}
+
+/*
+ * remote_connect
+ *
+ * this function is tasked with establishing a connection to a remote
+ * control server.  it tries to negotiate SSL, if that is requested.
+ * if the connect fails, the code schedules a retry for a later time.
+ *
+ */
+static int remote_connect(void)
+{
+  struct addrinfo hints, *res, *res0 = NULL;
+  struct timeval tv;
+  char port[8];
+  int rc, fd = -1, opt;
+
+  snprintf(port, sizeof(port), "%d", ctrl_rem->server_port);
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family   = PF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_protocol = IPPROTO_TCP;
+
+  if((rc = getaddrinfo(ctrl_rem->server_name, port, &hints, &res0)) != 0)
+    {
+      printerror(rc, gai_strerror, __func__,
+		 "could not getaddrinfo %s:%s", ctrl_rem->server_name, port);
+      remote_retry(0);
+      goto done;
+    }
+
+  for(res=res0; res != NULL; res = res->ai_next)
+    {
+      if((fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol)) < 0)
+	continue;
+
+      if(connect(fd, res->ai_addr, res->ai_addrlen) != 0)
+	{
+	  close(fd); fd = -1;
+	  continue;
+	}
+      break;
+    }
+
+  if(fd < 0)
+    {
+      printerror(errno, strerror, __func__, "could not connect to %s:%s",
+		 ctrl_rem->server_name, port);
+      remote_retry(0);
+      goto done;
+    }
+
+  opt = 1;
+  if(setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,(char *)&opt,sizeof(opt)) != 0)
+    {
+      printerror(errno, strerror, __func__, "could not set TCP_NODELAY");
+      close(fd);
+      goto err;
+    }
+
+#ifdef O_NONBLOCK
+  if(fcntl_set(fd, O_NONBLOCK) != 0)
+    {
+      printerror(errno, strerror, __func__, "could not set O_NONBLOCK");
+      close(fd);
+      goto err;
+    }
+#endif
+
+  if((ctrl_rem->fd=scamper_fd_private(fd,NULL,remote_read,remote_write))==NULL)
+    {
+      printerror(errno, strerror, __func__, "could not add fd");
+      goto err;
+    }
+
+  if((ctrl_rem->wb = scamper_writebuf_alloc()) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not alloc wb");
+      goto err;
+    }
+
+  if(scamper_option_tls() == 0)
+    {
+      remote_send_master(ctrl_rem);
+      scamper_fd_write_unpause(ctrl_rem->fd);
+    }
+  else
+    {
+#ifdef HAVE_OPENSSL
+      if(remote_sock_ssl_init(ctrl_rem) != 0)
+	goto err;
+#else
+      goto err;
+#endif
+    }
+
+  gettimeofday_wrap(&tv);
+  timeval_add_s(&ctrl_rem->rx_abort, &tv, 60);
+  timeval_add_s(&ctrl_rem->tx_ka, &tv, 30);
+  remote_event_queue(ctrl_rem);
+
+ done:
+  if(res0 != NULL) freeaddrinfo(res0);
+  return 0;
+
+ err:
+  if(res0 != NULL) freeaddrinfo(res0);
+  return -1;
+}
+
+static int remote_reconnect(void *param)
+{
+  return remote_connect();
 }
 
 static void control_accept(const int fd, void *param)
 {
   struct sockaddr_storage ss;
   socklen_t socklen;
+  client_t *c = NULL;
   int s;
 
   /* accept the new client */
   socklen = sizeof(ss);
   if((s = accept(fd, (struct sockaddr *)&ss, &socklen)) == -1)
     {
+      printerror(errno, strerror, __func__, "could not accept");
       return;
     }
 
   scamper_debug(__func__, "fd %d", s);
 
-  /* allocate a client struct to keep track of data coming in on socket */
-  if(client_alloc((struct sockaddr *)&ss, socklen, s) == NULL)
+  /* make the socket non-blocking, so a read or write will not hang scamper */
+#ifndef _WIN32
+  if(fcntl_set(s, O_NONBLOCK) == -1)
     {
-      shutdown(s, SHUT_RDWR);
-      close(s);
+      printerror(errno, strerror, __func__, "could not set NONBLOCK");
+      goto err;
+    }
+#endif
+
+  /* allocate the structure that holds the socket/client together */
+  if((c = client_alloc(CLIENT_TYPE_SOCKET)) == NULL ||
+     (c->un.sock.wb = scamper_writebuf_alloc()) == NULL ||
+     (c->un.sock.sa = memdup(&ss, socklen)) == NULL ||
+     (c->un.sock.fdn = scamper_fd_private(s, c,
+				  (scamper_fd_cb_t)client_read,
+				  (scamper_fd_cb_t)client_write)) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not alloc client");
+      goto err;
     }
 
+  scamper_fd_write_pause(c->un.sock.fdn);
+  c->mode = CLIENT_MODE_INTERACTIVE;
+  return;
+
+ err:
+  close(s);
+  if(c != NULL) client_free(c);
   return;
 }
 
-static int control_init(int fd)
+int scamper_control_add_remote(const char *name, int port)
 {
-  if((client_list = dlist_alloc()) == NULL)
+  uint32_t u32;
+
+  if((ctrl_rem = malloc_zero(sizeof(control_remote_t))) == NULL ||
+     (ctrl_rem->list = dlist_alloc()) == NULL ||
+     (ctrl_rem->sq = scamper_queue_alloc(NULL)) == NULL)
+    return -1;
+
+  dlist_onremove(ctrl_rem->list, (dlist_onremove_t)remote_list_onremove);
+
+  random_u32(&u32); memcpy(ctrl_rem->magic+0, &u32, 4);
+  random_u32(&u32); memcpy(ctrl_rem->magic+4, &u32, 4);
+
+  if(scamper_option_tls() != 0)
     {
-      printerror(errno, strerror, __func__, "could not alloc client_list");
+#ifdef HAVE_OPENSSL
+      if((tls_ctx = SSL_CTX_new(SSLv23_client_method())) == NULL)
+	{
+	  scamper_debug(__func__, "could not create tls_ctx");
+	  return -1;
+	}
+      SSL_CTX_set_options(tls_ctx,
+			  SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1);
+      SSL_CTX_set_verify(tls_ctx, SSL_VERIFY_PEER, NULL);
+
+      /* load the default set of certs into the SSL context */
+      if(SSL_CTX_set_default_verify_paths(tls_ctx) != 1)
+	{
+	  scamper_debug(__func__, "could not load default CA certs");
+	  return -1;
+	}
+#else
       return -1;
+#endif
     }
 
-  if((fdn = scamper_fd_private(fd, NULL, control_accept, NULL)) == NULL)
+  if((ctrl_rem->server_name = strdup(name)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not add fd");
+      printerror(errno, strerror, __func__, "could not strdup name");
       return -1;
     }
+  ctrl_rem->server_port = port;
 
-  return 0;
+  return remote_connect();
 }
 
-int scamper_control_init_unix(const char *file)
+int scamper_control_add_unix(const char *file)
 {
 #if defined(AF_UNIX) && !defined(_WIN32)
   int fd = -1;
@@ -2237,7 +3324,6 @@ int scamper_control_init_unix(const char *file)
       printerror(errno, strerror, __func__, "could not listen");
       goto err;
     }
-
 #else
   if((fd = scamper_privsep_open_unix(file)) == -1)
     {
@@ -2246,26 +3332,25 @@ int scamper_control_init_unix(const char *file)
     }
 #endif
 
-  if(control_init(fd) != 0)
-    goto err;
-
-  if((ctrl_unix_name = strdup(file)) == NULL)
+  if((ctrl_unix = malloc_zero(sizeof(control_unix_t))) == NULL ||
+     (ctrl_unix->fd = scamper_fd_private(fd,NULL,control_accept,NULL))==NULL ||
+     (ctrl_unix->name = strdup(file)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup file");
+      printerror(errno, strerror, __func__, "could not alloc ctrl_unix");
       goto err;
     }
 
   return 0;
 
  err:
-  if(fd != -1 && fdn == NULL)
+  if(fd != -1 && (ctrl_unix == NULL || ctrl_unix->fd == NULL))
     close(fd);
 
 #endif
   return -1;
 }
 
-int scamper_control_init_inet(const char *ip, int port)
+int scamper_control_add_inet(const char *ip, int port)
 {
   struct sockaddr_storage sas;
   struct sockaddr *sa = (struct sockaddr *)&sas;
@@ -2328,15 +3413,29 @@ int scamper_control_init_inet(const char *ip, int port)
       goto err;
     }
 
-  if(control_init(fd) != 0)
-    goto err;
+  if((ctrl_inet = malloc_zero(sizeof(control_inet_t))) == NULL ||
+     (ctrl_inet->fd = scamper_fd_private(fd,NULL,control_accept,NULL)) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not malloc control_inet_t");
+      return -1;
+    }
 
   return 0;
 
  err:
-  if(fd != -1 && fdn == NULL)
+  if(fd != -1 && (ctrl_inet == NULL || ctrl_inet->fd == NULL))
     close(fd);
   return -1;
+}
+
+int scamper_control_init(void)
+{
+  if((client_list = dlist_alloc()) == NULL)
+    {
+      printerror(errno, strerror, __func__, "could not alloc client_list");
+      return -1;
+    }
+  return 0;
 }
 
 /*
@@ -2346,7 +3445,7 @@ int scamper_control_init_inet(const char *ip, int port)
  * write anything left in the writebuf to the clients (non-blocking) and
  * then close the socket.
  */
-void scamper_control_cleanup()
+void scamper_control_cleanup(void)
 {
   client_t *client;
   int fd;
@@ -2356,41 +3455,72 @@ void scamper_control_cleanup()
       while((client = dlist_head_pop(client_list)) != NULL)
 	{
 	  client->node = NULL;
-	  scamper_writebuf_write(scamper_fd_fd_get(client->fdn),
-				 client->wb);
+	  if(client->type == CLIENT_TYPE_SOCKET)
+	    scamper_writebuf_write(scamper_fd_fd_get(client->un.sock.fdn),
+				   client->un.sock.wb);
 	  client_free(client);
 	}
-
       dlist_free(client_list);
       client_list = NULL;
     }
 
   /* stop monitoring the control socket for new connections */
-  if(fdn != NULL)
+  if(ctrl_unix != NULL)
     {
-      if((fd = scamper_fd_fd_get(fdn)) != -1)
+      if(ctrl_unix->fd != NULL)
 	{
-	  close(fd);
+	  if((fd = scamper_fd_fd_get(ctrl_unix->fd)) != -1)
+	    {
+	      close(fd);
 
 #if defined(AF_UNIX) && !defined(_WIN32)
-	  if(ctrl_unix_name != NULL)
+	      if(ctrl_unix->name != NULL)
+		{
 #ifndef WITHOUT_PRIVSEP
-	    scamper_privsep_unlink(ctrl_unix_name);
+		  scamper_privsep_unlink(ctrl_unix->name);
 #else
-	    unlink(ctrl_unix_name);
+		  unlink(ctrl_unix->name);
 #endif
+		}
 #endif
+	    }
+	  scamper_fd_free(ctrl_unix->fd);
+	  ctrl_unix->fd = NULL;
 	}
 
-      scamper_fd_free(fdn);
-      fdn = NULL;
+      if(ctrl_unix->name != NULL)
+	{
+	  free(ctrl_unix->name);
+	  ctrl_unix->name = NULL;
+	}
+      free(ctrl_unix);
+      ctrl_unix = NULL;
     }
 
-#if defined(AF_UNIX) && !defined(_WIN32)
-  if(ctrl_unix_name != NULL)
+  if(ctrl_inet != NULL)
     {
-      free(ctrl_unix_name);
-      ctrl_unix_name = NULL;
+      if(ctrl_inet->fd != NULL)
+	{
+	  if((fd = scamper_fd_fd_get(ctrl_inet->fd)) != -1)
+	    close(fd);
+	  scamper_fd_free(ctrl_inet->fd);
+	  ctrl_inet->fd = NULL;
+	}
+      free(ctrl_inet);
+      ctrl_inet = NULL;
+    }
+
+  if(ctrl_rem != NULL)
+    {
+      remote_free(ctrl_rem, 1);
+      ctrl_rem = NULL;
+    }
+
+#ifdef HAVE_OPENSSL
+  if(tls_ctx != NULL)
+    {
+      SSL_CTX_free(tls_ctx);
+      tls_ctx = NULL;
     }
 #endif
 

@@ -1,7 +1,7 @@
 /*
  * scamper_linepoll
  *
- * $Id: scamper_linepoll.c,v 1.21 2014/06/13 03:33:43 mjl Exp $
+ * $Id: scamper_linepoll.c,v 1.23 2015/01/16 06:11:50 mjl Exp $
  *
  * this code takes a string chunk and splits it up into lines, calling
  * the callback for each line.  It buffers any partial lines in the
@@ -10,6 +10,7 @@
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
  * Copyright (C) 2014      The Regents of the University of California
+ * Copyright (C) 2015      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -29,7 +30,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_linepoll.c,v 1.21 2014/06/13 03:33:43 mjl Exp $";
+  "$Id: scamper_linepoll.c,v 1.23 2015/01/16 06:11:50 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -220,15 +221,34 @@ int scamper_linepoll_handle(scamper_linepoll_t *lp, uint8_t *buf, size_t len)
   return 0;
 }
 
-scamper_linepoll_t *scamper_linepoll_alloc(scamper_linepoll_handler_t handler,
+#ifndef DMALLOC
+scamper_linepoll_t *scamper_linepoll_alloc(scamper_linepoll_handler_t h,
 					   void *param)
+#else
+scamper_linepoll_t *scamper_linepoll_alloc_dm(scamper_linepoll_handler_t h,
+					      void *param, const char *file,
+					      const int line)
+#endif
 {
   scamper_linepoll_t *lp;
-  if((lp = malloc_zero(sizeof(scamper_linepoll_t))) == NULL)
+#ifndef DMALLOC
+  lp = malloc_zero(sizeof(scamper_linepoll_t));
+#else
+  lp = malloc_zero_dm(sizeof(scamper_linepoll_t), file, line);
+#endif
+  if(lp == NULL)
     return NULL;
-  lp->handler = handler;
+  lp->handler = h;
   lp->param = param;
   return lp;
+}
+
+void scamper_linepoll_update(scamper_linepoll_t *lp,
+			     scamper_linepoll_handler_t handler, void *param)
+{
+  lp->handler = handler;
+  lp->param = param;
+  return;
 }
 
 void scamper_linepoll_free(scamper_linepoll_t *lp, int feedlastline)
@@ -236,9 +256,7 @@ void scamper_linepoll_free(scamper_linepoll_t *lp, int feedlastline)
   assert(lp != NULL);
 
   if(feedlastline == 1)
-    {
-      scamper_linepoll_flush(lp);
-    }
+    scamper_linepoll_flush(lp);
 
   if(lp->buf != NULL) free(lp->buf);
   free(lp);

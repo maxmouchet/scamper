@@ -9,7 +9,9 @@ sc_speedtrap_SOURCES = \
 	../../utils.c \
 	../../mjl_heap.c \
 	../../mjl_list.c \
-	../../mjl_splaytree.c
+	../../mjl_splaytree.c \
+	../../scamper/scamper_linepoll.c \
+	../../scamper/scamper_writebuf.c
 
 sc_speedtrap_LDADD = ../../scamper/libscamperfile.la
 

@@ -1,11 +1,12 @@
 /*
  * scamper_addr.c
  *
- * $Id: scamper_addr.c,v 1.58 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_addr.c,v 1.67 2016/08/26 11:22:35 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2013-2014 The Regents of the University of California
+ * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_addr.c,v 1.58 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_addr.c,v 1.67 2016/08/26 11:22:35 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -33,7 +34,7 @@ static const char rcsid[] =
 #endif
 #include "internal.h"
 
-#include "mjl_splaytree.h"
+#include "mjl_patricia.h"
 #include "scamper_addr.h"
 #include "utils.h"
 
@@ -91,6 +92,16 @@ static int ipv4_prefix(const scamper_addr_t *, const scamper_addr_t *);
 static int ipv4_prefixhosts(const scamper_addr_t *, const scamper_addr_t *);
 static int ipv6_prefix(const scamper_addr_t *, const scamper_addr_t *);
 
+static int ipv4_bit(const scamper_addr_t *, int bit);
+static int ipv6_bit(const scamper_addr_t *, int bit);
+static int ethernet_bit(const scamper_addr_t *, int bit);
+static int firewire_bit(const scamper_addr_t *, int bit);
+
+static int ipv4_fbd(const scamper_addr_t *, const scamper_addr_t *);
+static int ipv6_fbd(const scamper_addr_t *, const scamper_addr_t *);
+static int ethernet_fbd(const scamper_addr_t *, const scamper_addr_t *);
+static int firewire_fbd(const scamper_addr_t *, const scamper_addr_t *);
+
 static int ipv4_islinklocal(const scamper_addr_t *);
 static int ipv6_islinklocal(const scamper_addr_t *);
 
@@ -98,6 +109,7 @@ static int ipv4_netaddr(const scamper_addr_t *, void *, int);
 static int ipv6_netaddr(const scamper_addr_t *, void *, int);
 
 static int ipv4_isreserved(const scamper_addr_t *);
+static int ipv6_isreserved(const scamper_addr_t *);
 
 static int ipv6_isunicast(const scamper_addr_t *);
 
@@ -115,6 +127,8 @@ struct handler
   int    (*netaddr)(const scamper_addr_t *a, void *net, int netlen);
   int    (*isunicast)(const scamper_addr_t *a);
   int    (*isreserved)(const scamper_addr_t *a);
+  int    (*bit)(const scamper_addr_t *a, int bit);
+  int    (*fbd)(const scamper_addr_t *a, const scamper_addr_t *b);
 };
 
 static const struct handler handlers[] = {
@@ -131,6 +145,8 @@ static const struct handler handlers[] = {
     ipv4_netaddr,
     NULL,
     ipv4_isreserved,
+    ipv4_bit,
+    ipv4_fbd,
   },
   {
     SCAMPER_ADDR_TYPE_IPV6,
@@ -144,7 +160,9 @@ static const struct handler handlers[] = {
     ipv6_islinklocal,
     ipv6_netaddr,
     ipv6_isunicast,
-    NULL,
+    ipv6_isreserved,
+    ipv6_bit,
+    ipv6_fbd,
   },
   {
     SCAMPER_ADDR_TYPE_ETHERNET,
@@ -159,6 +177,8 @@ static const struct handler handlers[] = {
     NULL,
     NULL,
     NULL,
+    ethernet_bit,
+    ethernet_fbd,
   },
   {
     SCAMPER_ADDR_TYPE_FIREWIRE,
@@ -173,12 +193,14 @@ static const struct handler handlers[] = {
     NULL,
     NULL,
     NULL,
+    firewire_bit,
+    firewire_fbd,
   }
 };
 
 struct scamper_addrcache
 {
-  splaytree_t *tree[sizeof(handlers)/sizeof(struct handler)];
+  patricia_t *trie[sizeof(handlers)/sizeof(struct handler)];
 };
 
 #ifndef NDEBUG
@@ -351,6 +373,55 @@ static int ipv4_isreserved(const scamper_addr_t *a)
     if((addr & prefs[i][1]) == prefs[i][0])
       return 1;
   return 0;
+}
+
+/*
+ * ipv4_bit:
+ *
+ * return a bit from the IPv4 address.  bit 1 is the left most bit,
+ * bit 32 is the right most bit.
+ */
+static int ipv4_bit(const scamper_addr_t *sa, int bit)
+{
+  struct in_addr *a = (struct in_addr *)sa->addr;
+  assert(bit > 0); assert(bit <= 32);
+  return (ntohl(a->s_addr) >> (32 - bit)) & 1;
+}
+
+/*
+ * ipv4_fbd:
+ *
+ * determine the first bit that is different between two IPv4 addresses.
+ * bit 32 is the right most bit
+ */
+static int ipv4_fbd(const scamper_addr_t *sa, const scamper_addr_t *sb)
+{
+  const struct in_addr *a, *b;
+  uint32_t v, r;
+
+  assert(sa->type == SCAMPER_ADDR_TYPE_IPV4);
+  assert(sb->type == SCAMPER_ADDR_TYPE_IPV4);
+  a = (const struct in_addr *)sa->addr;
+  b = (const struct in_addr *)sb->addr;
+
+  v = ntohl(a->s_addr ^ b->s_addr);
+
+#ifdef HAVE___BUILTIN_CLZ
+  if(v != 0)
+    r = __builtin_clz(v) + 1;
+  else
+    r = 32;
+#else
+  r = 0;
+  if(v & 0xFFFF0000) { v >>= 16; r += 16; }
+  if(v & 0xFF00)     { v >>= 8;  r += 8;  }
+  if(v & 0xF0)       { v >>= 4;  r += 4;  }
+  if(v & 0xC)        { v >>= 2;  r += 2;  }
+  if(v & 0x2)        {           r += 1;  }
+  r = 32 - r;
+#endif
+
+  return r;
 }
 
 static int ipv6_cmp(const scamper_addr_t *sa, const scamper_addr_t *sb)
@@ -594,6 +665,54 @@ static int ipv6_netaddr(const scamper_addr_t *sa, void *net, int nl)
   return 0;
 }
 
+static int ipv6_isreserved(const scamper_addr_t *sa)
+{
+  const struct in6_addr *a = sa->addr;
+
+  /* if the address falls outside of 2000::/3, then its reserved */
+  if((a->s6_addr[0] & 0xe0) != 0x20)
+    return 1;
+
+  /* 2002::/16 (6to4) */
+  if(a->s6_addr[1] == 0x02)
+    return 1;
+
+  /* 2001::/16 (many) */
+  if(a->s6_addr[1] == 0x01)
+    {
+      if(a->s6_addr[2] == 0)
+	{
+	  /* 2001::/32 (teredo) */
+	  if(a->s6_addr[3] == 0)
+	    return 1;
+
+	  /* 2001:2::/48 (benchmarking) */
+	  if(a->s6_addr[3] == 0x2 && a->s6_addr[4] == 0 && a->s6_addr[5] == 0)
+	    return 1;
+
+	  /* 2001:3::/32 (AMT) */
+	  if(a->s6_addr[3] == 0x3)
+	    return 1;
+
+	  /* 2001:4:112::/48 (AS112-v6) */
+	  if(a->s6_addr[4] == 0x4 && a->s6_addr[5] == 0x1 &&
+	     a->s6_addr[6] == 0x12)
+	    return 1;
+
+	  /* 2001:10::/28 (ORCHID) and 2001:20::/28 (ORCHIDv2) */
+	  if(((a->s6_addr[3] & 0xf0) == 0x10) ||
+	     ((a->s6_addr[3] & 0xf0) == 0x20))
+	    return 1;
+	}
+
+      /* 2001:db8::/32 (documentation */
+      if(a->s6_addr[2] == 0x0d && a->s6_addr[3] == 0xb8)
+	return 1;
+    }
+
+  return 0;
+}
+
 static int ipv6_isunicast(const scamper_addr_t *sa)
 {
   const struct in6_addr *a = sa->addr;
@@ -602,11 +721,55 @@ static int ipv6_isunicast(const scamper_addr_t *sa)
   return 0;
 }
 
+static int ipv6_bit(const scamper_addr_t *sa, int bit)
+{
+  struct in6_addr *a = (struct in6_addr *)sa->addr;
+  assert(bit > 0); assert(bit <= 128);
+#ifndef _WIN32
+  return (ntohl(a->s6_addr32[(bit-1)/32]) >> (32 - (bit % 32))) & 1;
+#else
+  return (ntohs(a->u.Word[(bit-1)/16]) >> (16 - (bit % 16))) & 1;
+#endif
+}
+
+static int ipv6_fbd(const scamper_addr_t *sa, const scamper_addr_t *sb)
+{
+  const struct in6_addr *a, *b;
+  int i, r;
+  uint32_t v;
+
+  assert(sa->type == SCAMPER_ADDR_TYPE_IPV6);
+  assert(sb->type == SCAMPER_ADDR_TYPE_IPV6);
+  a = (const struct in6_addr *)sa->addr;
+  b = (const struct in6_addr *)sb->addr;
+
+  for(i=0; i<4; i++)
+    {
+      if((v = ntohl(a->s6_addr32[i] ^ b->s6_addr32[i])) == 0)
+	continue;
+
+#ifdef HAVE___BUILTIN_CLZ
+      r = __builtin_clz(v) + 1 + (i * 32);
+#else
+      r = 0;
+      if(v & 0xFFFF0000) { v >>= 16; r += 16; }
+      if(v & 0xFF00)     { v >>= 8;  r += 8;  }
+      if(v & 0xF0)       { v >>= 4;  r += 4;  }
+      if(v & 0xC)        { v >>= 2;  r += 2;  }
+      if(v & 0x2)        {           r += 1;  }
+      r = (32 - r) + (i * 32);
+#endif
+
+      return r;
+    }
+
+  return 128;
+}
+
 static int ethernet_cmp(const scamper_addr_t *sa, const scamper_addr_t *sb)
 {
   assert(sa->type == SCAMPER_ADDR_TYPE_ETHERNET);
   assert(sb->type == SCAMPER_ADDR_TYPE_ETHERNET);
-
   return memcmp(sa->addr, sb->addr, 6);
 }
 
@@ -614,18 +777,49 @@ static void ethernet_tostr(const scamper_addr_t *addr,
 			   char *buf, const size_t len)
 {
   uint8_t *mac = (uint8_t *)addr->addr;
-
   snprintf(buf, len, "%02x:%02x:%02x:%02x:%02x:%02x",
 	   mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-
   return;
+}
+
+static int ethernet_bit(const scamper_addr_t *addr, int bit)
+{
+  static const uint8_t mask[] = {0x01,0x80,0x40,0x20,0x10,0x08,0x04,0x02};
+  static const uint8_t shift[] = {0, 7, 6, 5, 4, 3, 2, 1};
+  uint8_t *mac = (uint8_t *)addr->addr;
+  assert(bit > 0 && bit <= 48);
+  return (mac[(bit-1)/8] & mask[bit%8]) >> shift[bit%8];
+}
+
+static int ethernet_fbd(const scamper_addr_t *sa, const scamper_addr_t *sb)
+{
+  const uint8_t *a, *b;
+  uint8_t v;
+  int i, r = 0;
+
+  assert(sa->type == SCAMPER_ADDR_TYPE_ETHERNET);
+  assert(sb->type == SCAMPER_ADDR_TYPE_ETHERNET);
+  a = (const uint8_t *)sa->addr;
+  b = (const uint8_t *)sb->addr;
+
+  for(i=0; i<6; i++)
+    {
+      if((v = a[i] ^ b[i]) == 0)
+	continue;
+      if(v & 0xF0) { v >>= 4; r += 4; }
+      if(v & 0xC)  { v >>= 2; r += 2; }
+      if(v & 0x2)  {          r += 1; }
+      r = (8 - r) + (i * 8);
+      break;
+    }
+
+  return r;
 }
 
 static int firewire_cmp(const scamper_addr_t *sa, const scamper_addr_t *sb)
 {
   assert(sa->type == SCAMPER_ADDR_TYPE_FIREWIRE);
   assert(sb->type == SCAMPER_ADDR_TYPE_FIREWIRE);
-
   return memcmp(sa->addr, sb->addr, 8);
 }
 
@@ -633,11 +827,43 @@ static void firewire_tostr(const scamper_addr_t *addr,
 			   char *buf, const size_t len)
 {
   uint8_t *lla = (uint8_t *)addr->addr;
-
   snprintf(buf, len, "%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x",
 	   lla[0], lla[1], lla[2], lla[3], lla[4], lla[5], lla[6], lla[7]);
-
   return;
+}
+
+static int firewire_bit(const scamper_addr_t *addr, int bit)
+{
+  static const uint8_t mask[] = {0x01,0x80,0x40,0x20,0x10,0x08,0x04,0x02};
+  static const uint8_t shift[] = {0, 7, 6, 5, 4, 3, 2, 1};
+  uint8_t *lla = (uint8_t *)addr->addr;
+  assert(bit > 0 && bit <= 64);
+  return (lla[(bit-1)/8] >> mask[bit%8]) >> shift[bit%8];
+}
+
+static int firewire_fbd(const scamper_addr_t *sa, const scamper_addr_t *sb)
+{
+  const uint8_t *a, *b;
+  uint8_t v;
+  int i, r = 0;
+
+  assert(sa->type == SCAMPER_ADDR_TYPE_FIREWIRE);
+  assert(sb->type == SCAMPER_ADDR_TYPE_FIREWIRE);
+  a = (const uint8_t *)sa->addr;
+  b = (const uint8_t *)sb->addr;
+
+  for(i=0; i<8; i++)
+    {
+      if((v = a[i] ^ b[i]) == 0)
+	continue;
+      if(v & 0xF0) { v >>= 4; r += 4; }
+      if(v & 0xC)  { v >>= 2; r += 2; }
+      if(v & 0x2)  {          r += 1; }
+      r = (8 - r) + (i * 8);
+      break;
+    }
+
+  return r;
 }
 
 size_t scamper_addr_size(const scamper_addr_t *sa)
@@ -725,6 +951,16 @@ int scamper_addr_inprefix(const scamper_addr_t *addr, const void *p, int len)
   if(handlers[addr->type-1].inprefix != NULL)
     return handlers[addr->type-1].inprefix(addr, p, len);
   return -1;
+}
+
+int scamper_addr_bit(const scamper_addr_t *a, int bit)
+{
+  return handlers[a->type-1].bit(a, bit);
+}
+
+int scamper_addr_fbd(const scamper_addr_t *a, const scamper_addr_t *b)
+{
+  return handlers[a->type-1].fbd(a, b);
 }
 
 int scamper_addr_prefix(const scamper_addr_t *a, const scamper_addr_t *b)
@@ -825,7 +1061,7 @@ scamper_addr_t *scamper_addrcache_get(scamper_addrcache_t *ac,
   findme.type = type;
   findme.addr = (void *)addr;
 
-  if((sa = splaytree_find(ac->tree[type-1], &findme)) != NULL)
+  if((sa = patricia_find(ac->trie[type-1], &findme)) != NULL)
     {
       assert(sa->internal == ac);
       sa->refcnt++;
@@ -835,10 +1071,8 @@ scamper_addr_t *scamper_addrcache_get(scamper_addrcache_t *ac,
 
   if((sa = scamper_addr_alloc(type, addr)) != NULL)
     {
-      if(splaytree_insert(ac->tree[type-1], sa) == NULL)
-	{
-	  goto err;
-	}
+      if(patricia_insert(ac->trie[type-1], sa) == NULL)
+	goto err;
       sa->internal = ac;
     }
 
@@ -924,9 +1158,7 @@ void scamper_addr_free(scamper_addr_t *sa)
     }
 
   if((ac = sa->internal) != NULL)
-    {
-      splaytree_remove_item(ac->tree[sa->type-1], sa);
-    }
+    patricia_remove_item(ac->trie[sa->type-1], sa);
 
   scamper_addr_debug(sa);
 
@@ -1019,9 +1251,8 @@ void scamper_addrcache_free(scamper_addrcache_t *ac)
   int i;
 
   for(i=(sizeof(handlers)/sizeof(struct handler))-1; i>=0; i--)
-    {
-      if(ac->tree[i] != NULL) splaytree_free(ac->tree[i], free_cb);
-    }
+    if(ac->trie[i] != NULL)
+      patricia_free_cb(ac->trie[i], free_cb);
   free(ac);
 
   return;
@@ -1037,8 +1268,11 @@ scamper_addrcache_t *scamper_addrcache_alloc()
 
   for(i=(sizeof(handlers)/sizeof(struct handler))-1; i>=0; i--)
     {
-      ac->tree[i] = splaytree_alloc((splaytree_cmp_t)handlers[i].cmp);
-      if(ac->tree[i] == NULL) goto err;
+      ac->trie[i] = patricia_alloc((patricia_bit_t)handlers[i].bit,
+				   (patricia_cmp_t)handlers[i].cmp,
+				   (patricia_fbd_t)handlers[i].fbd);
+      if(ac->trie[i] == NULL)
+	goto err;
     }
 
   return ac;

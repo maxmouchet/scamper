@@ -1,9 +1,9 @@
 /*
  * scamper_neighbourdisc_warts.h
  *
- * $Id: scamper_neighbourdisc_warts.c,v 1.4.6.1 2016/12/02 18:38:16 mjl Exp $
+ * $Id: scamper_neighbourdisc_warts.c,v 1.6 2016/07/03 10:27:31 mjl Exp $
  *
- * Copyright (C) 2009-2011 Matthew Luckie
+ * Copyright (C) 2009-2016 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_neighbourdisc_warts.c,v 1.4.6.1 2016/12/02 18:38:16 mjl Exp $";
+  "$Id: scamper_neighbourdisc_warts.c,v 1.6 2016/07/03 10:27:31 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -117,17 +117,25 @@ static int warts_neighbourdisc_reply_state(scamper_neighbourdisc_reply_t *reply,
 					   warts_addrtable_t *table,
 					   uint32_t *len)
 {
-  int i = 0;
+  const warts_var_t *var;
+  int i, max_id = 0;
 
   memset(state->flags, 0, neighbourdisc_reply_vars_mfb);
   state->params_len = 0;
 
-  flag_set(state->flags, WARTS_NEIGHBOURDISC_REPLY_RX, &i);
-  state->params_len += 8;
-  flag_set(state->flags, WARTS_NEIGHBOURDISC_REPLY_MAC, &i);
-  state->params_len += warts_addr_size(table, reply->mac);
-
-  state->flags_len = fold_flags(state->flags, i);
+  for(i=0; i<sizeof(neighbourdisc_reply_vars)/sizeof(warts_var_t); i++)
+    {
+      var = &neighbourdisc_reply_vars[i];
+      flag_set(state->flags, var->id, &max_id);
+      if(var->id == WARTS_NEIGHBOURDISC_REPLY_MAC)
+	{
+	  state->params_len += warts_addr_size(table, reply->mac);
+	  continue;
+	}
+      assert(var->size != -1);
+      state->params_len += var->size;
+    }
+  state->flags_len = fold_flags(state->flags, max_id);
 
   *len += state->flags_len + state->params_len;
   if(state->params_len != 0) *len += 2;
@@ -174,18 +182,25 @@ static int warts_neighbourdisc_probe_state(const scamper_file_t *sf,
 					   warts_addrtable_t *table,
 					   uint32_t *len)
 {
-  int i = 0;
+  const warts_var_t *var;
+  int i, max_id = 0;
   size_t size;
 
   memset(state->flags, 0, neighbourdisc_probe_vars_mfb);
   state->params_len = 0;
 
-  flag_set(state->flags, WARTS_NEIGHBOURDISC_PROBE_TX, &i);
-  state->params_len += 8;
-  flag_set(state->flags, WARTS_NEIGHBOURDISC_PROBE_RXC, &i);
-  state->params_len += 2;
+  for(i=0; i<sizeof(neighbourdisc_probe_vars)/sizeof(warts_var_t); i++)
+    {
+      var = &neighbourdisc_probe_vars[i];
+      if(var->id == WARTS_NEIGHBOURDISC_PROBE_RXC && probe->rxc == 0)
+	continue;
 
-  state->flags_len = fold_flags(state->flags, i);
+      flag_set(state->flags, var->id, &max_id);
+      assert(var->size != -1);
+      state->params_len += var->size;
+    }
+
+  state->flags_len = fold_flags(state->flags, max_id);
   state->rxs = NULL;
 
   if(probe->rxc > 0)
@@ -290,26 +305,16 @@ static void warts_neighbourdisc_params(const scamper_neighbourdisc_t *nd,
   for(i=0; i<sizeof(neighbourdisc_vars)/sizeof(warts_var_t); i++)
     {
       var = &neighbourdisc_vars[i];
-
-      if(var->id == WARTS_NEIGHBOURDISC_LIST && nd->list == NULL)
+      if((var->id == WARTS_NEIGHBOURDISC_LIST && nd->list == NULL) ||
+	 (var->id == WARTS_NEIGHBOURDISC_CYCLE && nd->cycle == NULL) ||
+	 (var->id == WARTS_NEIGHBOURDISC_USERID && nd->userid == 0) ||
+	 (var->id == WARTS_NEIGHBOURDISC_IFNAME && nd->ifname == NULL) ||
+	 (var->id == WARTS_NEIGHBOURDISC_SRC_IP && nd->src_ip == NULL) ||
+	 (var->id == WARTS_NEIGHBOURDISC_SRC_MAC && nd->src_mac == NULL) ||
+	 (var->id == WARTS_NEIGHBOURDISC_DST_IP && nd->dst_ip == NULL) ||
+	 (var->id == WARTS_NEIGHBOURDISC_DST_MAC && nd->dst_mac == NULL) ||
+	 (var->id == WARTS_NEIGHBOURDISC_PROBEC && nd->probec == 0))
 	continue;
-      else if(var->id == WARTS_NEIGHBOURDISC_CYCLE && nd->cycle == NULL)
-	continue;
-      else if(var->id == WARTS_NEIGHBOURDISC_USERID && nd->userid == 0)
-	continue;
-      else if(var->id == WARTS_NEIGHBOURDISC_IFNAME && nd->ifname == NULL)
-	continue;
-      else if(var->id == WARTS_NEIGHBOURDISC_SRC_IP && nd->src_ip == NULL)
-	continue;
-      else if(var->id == WARTS_NEIGHBOURDISC_SRC_MAC && nd->src_mac == NULL)
-	continue;
-      else if(var->id == WARTS_NEIGHBOURDISC_DST_IP && nd->dst_ip == NULL)
-	continue;
-      else if(var->id == WARTS_NEIGHBOURDISC_DST_MAC && nd->dst_mac == NULL)
-	continue;
-      else if(var->id == WARTS_NEIGHBOURDISC_PROBEC && nd->probec == 0)
-	continue;
-
       flag_set(flags, var->id, &max_id);
 
       if(var->size < 0)
@@ -396,16 +401,8 @@ static int warts_neighbourdisc_params_read(scamper_neighbourdisc_t *nd,
     {&nd->dst_mac,  (wpr_t)extract_addr,    table},
     {&nd->probec,   (wpr_t)extract_uint16,  NULL},
   };
-  const int handler_cnt = sizeof(handlers) / sizeof(warts_param_reader_t);
-  int rc;
-
-  if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
-    return rc;
-
-  if(nd->src_mac == NULL)
-    return -1;
-
-  return 0;
+  const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
+  return warts_params_read(buf, off, len, handlers, handler_cnt);
 }
 
 static void warts_neighbourdisc_probes_free(warts_neighbourdisc_probe_t *ps,
@@ -428,7 +425,7 @@ static void warts_neighbourdisc_probes_free(warts_neighbourdisc_probe_t *ps,
 int scamper_file_warts_neighbourdisc_write(const scamper_file_t *sf,
 					   const scamper_neighbourdisc_t *nd)
 {
-  warts_addrtable_t table;
+  warts_addrtable_t *table = NULL;
   warts_neighbourdisc_probe_t *probes = NULL;
   scamper_neighbourdisc_probe_t *probe;
   uint8_t *buf = NULL;
@@ -438,10 +435,11 @@ int scamper_file_warts_neighbourdisc_write(const scamper_file_t *sf,
   size_t   size;
   int      i;
 
-  memset(&table, 0, sizeof(table));
+  if((table = warts_addrtable_alloc_byaddr()) == NULL)
+    goto err;
 
   /* figure out which neighbourdisc items we'll store in this record */
-  warts_neighbourdisc_params(nd, &table, flags, &flags_len, &params_len);
+  warts_neighbourdisc_params(nd, table, flags, &flags_len, &params_len);
   len = 8 + flags_len + params_len + 2;
 
   if(nd->probec > 0)
@@ -454,7 +452,7 @@ int scamper_file_warts_neighbourdisc_write(const scamper_file_t *sf,
 	{
 	  probe = nd->probes[i];
 	  len2 = len;
-	  if(warts_neighbourdisc_probe_state(sf, probe, &probes[i], &table,
+	  if(warts_neighbourdisc_probe_state(sf, probe, &probes[i], table,
 					     &len2) != 0)
 	    goto err;
 	  if(len2 < len)
@@ -467,7 +465,7 @@ int scamper_file_warts_neighbourdisc_write(const scamper_file_t *sf,
     goto err;
   insert_wartshdr(buf, &off, len, SCAMPER_FILE_OBJ_NEIGHBOURDISC);
 
-  if(warts_neighbourdisc_params_write(nd, sf, &table, buf, &off, len,
+  if(warts_neighbourdisc_params_write(nd, sf, table, buf, &off, len,
 				      flags, flags_len, params_len) != 0)
     {
       goto err;
@@ -478,7 +476,7 @@ int scamper_file_warts_neighbourdisc_write(const scamper_file_t *sf,
       for(i=0; i<nd->probec; i++)
 	{
 	  probe = nd->probes[i];
-	  warts_neighbourdisc_probe_write(probe, sf, &table, buf, &off, len,
+	  warts_neighbourdisc_probe_write(probe, sf, table, buf, &off, len,
 					  &probes[i]);
 	}
     }
@@ -493,12 +491,12 @@ int scamper_file_warts_neighbourdisc_write(const scamper_file_t *sf,
       goto err;
     }
 
-  warts_addrtable_clean(&table);
+  warts_addrtable_free(table);
   free(buf);
   return 0;
 
  err:
-  warts_addrtable_clean(&table);
+  if(table != NULL) warts_addrtable_free(table);
   if(probes != NULL) warts_neighbourdisc_probes_free(probes, nd->probec);
   if(buf != NULL) free(buf);
   return -1;
@@ -510,13 +508,11 @@ int scamper_file_warts_neighbourdisc_read(scamper_file_t *sf,
 {
   scamper_neighbourdisc_t *nd = NULL;
   scamper_neighbourdisc_probe_t *probe;
-  warts_addrtable_t table;
+  warts_addrtable_t *table = NULL;
   warts_state_t *state = scamper_file_getstate(sf);
   uint8_t *buf = NULL;
   uint32_t off = 0;
   uint16_t i;
-
-  memset(&table, 0, sizeof(table));
 
   if(warts_read(sf, &buf, hdr->len) != 0)
     {
@@ -533,7 +529,10 @@ int scamper_file_warts_neighbourdisc_read(scamper_file_t *sf,
       goto err;
     }
 
-  if(warts_neighbourdisc_params_read(nd,&table,state,buf,&off,hdr->len) != 0)
+  if((table = warts_addrtable_alloc_byid()) == NULL)
+    goto err;
+
+  if(warts_neighbourdisc_params_read(nd,table,state,buf,&off,hdr->len) != 0)
     {
       goto err;
     }
@@ -554,7 +553,7 @@ int scamper_file_warts_neighbourdisc_read(scamper_file_t *sf,
 	}
       nd->probes[i] = probe;
 
-      if(warts_neighbourdisc_probe_read(probe, state, &table,
+      if(warts_neighbourdisc_probe_read(probe, state, table,
 					buf, &off, hdr->len) != 0)
 	{
 	  goto err;
@@ -562,13 +561,14 @@ int scamper_file_warts_neighbourdisc_read(scamper_file_t *sf,
     }
 
  done:
-  warts_addrtable_clean(&table);
+  assert(off == hdr->len);
+  warts_addrtable_free(table);
   *nd_out = nd;
   free(buf);
   return 0;
 
  err:
-  warts_addrtable_clean(&table);
+  if(table != NULL) warts_addrtable_free(table);
   if(buf != NULL) free(buf);
   if(nd != NULL) scamper_neighbourdisc_free(nd);
   return -1;

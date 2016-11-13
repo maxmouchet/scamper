@@ -7,12 +7,12 @@
 .\"               2012 The Regents of the University of California
 .\"                    All rights reserved
 .\"
-.\" $Id: sc_attach.1,v 1.6.12.1 2016/06/15 08:03:50 mjl Exp $
+.\" $Id: sc_attach.1,v 1.11 2016/06/09 09:44:25 mjl Exp $
 .\"
 .\"  nroff -man sc_attach.1
 .\"  groff -man -Tascii sc_attach.1 | man2html -title sc_attach.1
 .\"
-.Dd October 15, 2010
+.Dd February 2, 2016
 .Dt SC_ATTACH 1
 .Os
 .Sh NAME
@@ -25,8 +25,11 @@
 .Op Fl c Ar command
 .Op Fl i Ar infile
 .Op Fl o Ar outfile
+.Op Fl O Ar options
 .Op Fl p Ar [ip:]port
 .Op Fl P Ar priority
+.Op Fl R Ar unix-domain
+.Op Fl U Ar unix-domain
 .Ek
 .\""""""""""""
 .Sh DESCRIPTION
@@ -66,6 +69,19 @@ If '-' is specified, commands are read from stdin.
 specifies the name of the output file to be written.
 The output file will use the warts format.
 If '-' is specified, output will be sent to stdout.
+.It Fl O Ar options
+allows the behavior of
+.Nm
+to be further tailored.
+The current choices for this option are:
+.Bl -dash -offset 2n -compact -width 1n
+.It
+.Sy random:
+shuffle the input commands randomly.
+.It
+.Sy impatient:
+send commands to scamper without waiting for scamper to ask for them.
+.El
 .It Fl p Ar [ip:]port
 specifies the IP address and port where a
 .Xr scamper 1
@@ -77,6 +93,14 @@ connects to the specified port on the local host.
 specifies the mixing priority
 .Xr scamper 1
 should assign to the source.
+.It Fl R Ar unix-domain
+specifies the unix domain socket on the local host where a remote
+.Xr scamper 1
+instance is accepting commands.
+.It Fl U Ar unix-domain
+specifies the unix domain socket on the local host where a local
+.Xr scamper 1
+isntance is accepting commands.
 .El
 .Sh EXAMPLES
 Given a set of commands in a file named infile.txt:
@@ -113,7 +137,7 @@ sc_attach -D -c 'ping' -i infile2.txt -o outfile2.warts -p 31337
 .Sh SEE ALSO
 .Xr scamper 1 ,
 .Xr sc_wartsdump 1 ,
-.Xr sc_warts2text 1
+.Xr sc_warts2json 1
 .Sh AUTHORS
 .Nm
-is written by Matthew Luckie <mjl@luckie.org.nz>.
+was written by Matthew Luckie <mjl@luckie.org.nz>.

@@ -1,7 +1,7 @@
 /*
  * sc_ipiddump
  *
- * $Id: sc_ipiddump.c,v 1.7.14.1 2015/10/21 06:17:45 mjl Exp $
+ * $Id: sc_ipiddump.c,v 1.13 2015/10/21 06:07:56 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_ipiddump.c,v 1.7.14.1 2015/10/21 06:17:45 mjl Exp $";
+  "$Id: sc_ipiddump.c,v 1.13 2015/10/21 06:07:56 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

@@ -6,7 +6,7 @@
  * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_text.c,v 1.20.6.2 2016/08/26 21:08:15 mjl Exp $
+ * $Id: scamper_trace_text.c,v 1.22 2016/08/08 08:37:23 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_text.c,v 1.20.6.2 2016/08/26 21:08:15 mjl Exp $";
+  "$Id: scamper_trace_text.c,v 1.22 2016/08/08 08:37:23 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

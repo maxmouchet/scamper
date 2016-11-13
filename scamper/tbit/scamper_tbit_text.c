@@ -4,7 +4,7 @@
  * Copyright (C) 2009-2011 The University of Waikato
  * Authors: Ben Stasiewicz, Matthew Luckie
  *
- * $Id: scamper_tbit_text.c,v 1.12.14.3 2016/09/17 08:43:05 mjl Exp $
+ * $Id: scamper_tbit_text.c,v 1.16 2016/09/17 08:40:13 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

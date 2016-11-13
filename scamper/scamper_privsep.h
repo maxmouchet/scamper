@@ -1,10 +1,11 @@
 /*
  * scamper_privsep.h
  *
- * $Id: scamper_privsep.h,v 1.23.16.2 2016/08/26 21:32:59 mjl Exp $
+ * $Id: scamper_privsep.h,v 1.25 2016/08/07 10:27:56 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify

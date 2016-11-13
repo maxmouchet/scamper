@@ -1,11 +1,11 @@
 /*
  * scamper_do_dealias.c
  *
- * $Id: scamper_dealias_do.c,v 1.153.6.3 2016/09/17 12:20:05 mjl Exp $
+ * $Id: scamper_dealias_do.c,v 1.159 2016/09/17 12:19:15 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
- * Copyright (C) 2012-2014 The Regents of the University of California
  * Copyright (C) 2012-2013 Matthew Luckie
+ * Copyright (C) 2012-2014 The Regents of the University of California
  * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
@@ -30,7 +30,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_do.c,v 1.153.6.3 2016/09/17 12:20:05 mjl Exp $";
+  "$Id: scamper_dealias_do.c,v 1.159 2016/09/17 12:19:15 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -307,7 +307,7 @@ static void dealias_queue(scamper_task_t *task)
 
   for(;;)
     {
-      if((p = dlist_head_get(state->recent_probes)) == NULL)
+      if((p = dlist_head_item(state->recent_probes)) == NULL)
 	break;
       timeval_add_s(&tv, &p->probe->tx, 10);
       if(timeval_cmp(&now, &tv) < 0)
@@ -415,16 +415,10 @@ static int dealias_target_cmp(const dealias_target_t *a,
 
 static void dealias_target_free(dealias_target_t *tgt)
 {
-  dealias_probe_t *p;
-
   if(tgt == NULL)
     return;
   if(tgt->probes != NULL)
-    {
-      while((p = dlist_head_pop(tgt->probes)) != NULL)
-	free(p);
-      dlist_free(tgt->probes);
-    }
+    dlist_free_cb(tgt->probes, free);
   if(tgt->addr != NULL)
     scamper_addr_free(tgt->addr);
   free(tgt);
@@ -2110,8 +2104,6 @@ static void dealias_bump_free(void *data)
 static void dealias_state_free(scamper_dealias_t *dealias,
 			       dealias_state_t *state)
 {
-  scamper_dealias_probe_t *probe;
-  dealias_ptb_t *ptb;
   int j;
 
   if(state == NULL)
@@ -2142,18 +2134,10 @@ static void dealias_state_free(scamper_dealias_t *dealias,
     }
 
   if(state->ptbq != NULL)
-    {
-      while((ptb = slist_head_pop(state->ptbq)) != NULL)
-	dealias_ptb_free(ptb);
-      slist_free(state->ptbq);
-    }
+    slist_free_cb(state->ptbq, (slist_free_t)dealias_ptb_free);
 
   if(state->discard != NULL)
-    {
-      while((probe = slist_head_pop(state->discard)) != NULL)
-	scamper_dealias_probe_free(probe);
-      slist_free(state->discard);
-    }
+    slist_free_cb(state->discard, (slist_free_t)scamper_dealias_probe_free);
 
   free(state);
   return;
@@ -2887,7 +2871,7 @@ static int dealias_alloc_radargun(scamper_dealias_t *d, dealias_options_t *o)
     }
   else if(pdc == 1)
     {
-      if(dealias_probedef_args(&pd0, (char *)slist_head_get(o->probedefs))!=0)
+      if(dealias_probedef_args(&pd0, (char *)slist_head_item(o->probedefs))!=0)
 	{
 	  scamper_debug(__func__, "could not parse radargun probedef 0");
 	  goto err;
@@ -3001,14 +2985,7 @@ static int dealias_alloc_radargun(scamper_dealias_t *d, dealias_options_t *o)
       free(pd);
     }
   if(pd_list != NULL)
-    {
-      while((pd = slist_head_pop(pd_list)) != NULL)
-	{
-	  scamper_addr_free(pd->dst);
-	  free(pd);
-	}
-      slist_free(pd_list);
-    }
+    slist_free_cb(pd_list, (slist_free_t)scamper_dealias_probedef_free);
   if(pd0.dst != NULL)
     scamper_addr_free(pd0.dst);
   return -1;
@@ -3074,7 +3051,7 @@ static int dealias_alloc_prefixscan(scamper_dealias_t *d, dealias_options_t *o)
 
   /* check the sanity of the probedef */
   memset(&pd0, 0, sizeof(pd0));
-  if(dealias_probedef_args(&pd0, (char *)slist_head_get(o->probedefs)) != 0)
+  if(dealias_probedef_args(&pd0, (char *)slist_head_item(o->probedefs)) != 0)
     {
       scamper_debug(__func__, "could not parse prefixscan probedef");
       goto err;

@@ -1,7 +1,7 @@
 /*
  * scamper_do_ping.c
  *
- * $Id: scamper_ping_do.c,v 1.143.6.3 2016/01/08 07:57:34 mjl Exp $
+ * $Id: scamper_ping_do.c,v 1.149 2016/01/08 07:28:32 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_do.c,v 1.143.6.3 2016/01/08 07:57:34 mjl Exp $";
+  "$Id: scamper_ping_do.c,v 1.149 2016/01/08 07:28:32 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

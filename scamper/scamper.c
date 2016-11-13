@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.241.2.5 2016/09/17 12:15:28 mjl Exp $
+ * $Id: scamper.c,v 1.261 2016/09/17 11:58:01 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -10,6 +10,7 @@
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2014      The Regents of the University of California
+ * Copyright (C) 2014-2016 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper.c,v 1.241.2.5 2016/09/17 12:15:28 mjl Exp $";
+  "$Id: scamper.c,v 1.261 2016/09/17 11:58:01 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -94,6 +95,7 @@ static const char rcsid[] =
 #define OPT_INFILE          0x00800000 /* f: */
 #define OPT_CTRL_INET       0x01000000 /* P: */
 #define OPT_CTRL_UNIX       0x02000000 /* U: */
+#define OPT_CTRL_REMOTE     0x04000000 /* R: */
 
 #define FLAG_NOINITNDC       0x00000001
 #define FLAG_OUTCOPY         0x00000002
@@ -103,6 +105,7 @@ static const char rcsid[] =
 #define FLAG_EPOLL           0x00000020
 #define FLAG_RAWTCP          0x00000040
 #define FLAG_DEBUGFILEAPPEND 0x00000080
+#define FLAG_TLS             0x00000100
 #define FLAG_NOTLS           0x00000200
 
 /*
@@ -118,6 +121,8 @@ static const char rcsid[] =
  * ctrl_inet_addr: address to use for control socket
  * ctrl_inet_port: port to use for control socket
  * ctrl_unix:   file to use for unix domain control
+ * ctrl_rem_port: port on remote host to connect to for direction
+ * ctrl_rem_name: name or IP address of remote host to connect to
  * monitorname: canonical name of monitor assigned by human
  * listname:    name of list assigned by human
  * listid:      id of list assigned by human
@@ -139,6 +144,8 @@ static char  *intype       = NULL;
 static char  *ctrl_inet_addr = NULL;
 static int    ctrl_inet_port = 0;
 static char  *ctrl_unix    = NULL;
+static int    ctrl_rem_port = 0;
+static char  *ctrl_rem_name = NULL;
 static char  *monitorname  = NULL;
 static char  *listname     = NULL;
 static int    listid       = -1;
@@ -206,7 +213,12 @@ static void usage(uint32_t opt_mask)
 #ifndef WITHOUT_DEBUGFILE
     "               [-d debugfile]\n"
 #endif
-    "               [-i IPs | -I cmds | -f file | -P [ip:]port | -U unix]\n");
+    "               [-i IPs | -I cmds | -f file | -P [ip:]port | -R name:port"
+#if defined(AF_UNIX) && !defined(_WIN32)
+    " |\n                -U unix]\n");
+#else
+    "]\n");
+#endif
 
   if(opt_mask == 0) return;
 
@@ -230,8 +242,10 @@ static void usage(uint32_t opt_mask)
     usage_str('d', "write debugging information to the specified file");
 #endif
 
+#ifdef HAVE_DAEMON
   if((opt_mask & OPT_DAEMON) != 0)
     usage_str('D', "start as a daemon listening for commands on a port");
+#endif
 
   if((opt_mask & OPT_PIDFILE) != 0)
     usage_str('e', "write process ID to specified file");
@@ -272,11 +286,10 @@ static void usage(uint32_t opt_mask)
       usage_line("noinitndc: do not initialise neighbour discovery cache");
       usage_line("outcopy: output copy of all results collected to file");
       usage_line("rawtcp: use raw socket to send IPv4 TCP probes");
-
 #ifdef HAVE_OPENSSL
       usage_line("notls: do not use TLS anywhere in scamper");
+      usage_line("tls: require TLS on remote control sockets");
 #endif
-
 #ifndef _WIN32
       usage_line("select: use select(2) rather than poll(2)");
 #endif
@@ -286,7 +299,6 @@ static void usage(uint32_t opt_mask)
 #ifdef HAVE_EPOLL
       usage_line("epoll: use epoll(7) rather than poll(2)");
 #endif
-
 #ifndef WITHOUT_DEBUGFILE
       usage_line("debugfileappend: append to debugfile, rather than truncate");
 #endif
@@ -302,6 +314,9 @@ static void usage(uint32_t opt_mask)
 
   if((opt_mask & OPT_CTRL_INET) != 0)
     usage_str('P', "[ip:]port for control socket, default to loopback");
+
+  if((opt_mask & OPT_CTRL_REMOTE) != 0)
+    usage_str('R', "name and port of remote host to receive commands from");
 
   if((opt_mask & OPT_CTRL_UNIX) != 0)
     usage_str('U', "name of control socket in the file system");
@@ -459,15 +474,16 @@ static int check_options(int argc, char *argv[])
   char *opt_cycleid = NULL, *opt_listid = NULL, *opt_listname = NULL;
   char *opt_ctrl_inet = NULL, *opt_ctrl_unix = NULL, *opt_monitorname = NULL;
   char *opt_pps = NULL, *opt_command = NULL, *opt_window = NULL;
-  char *opt_firewall = NULL, *opt_pidfile = NULL;
-  size_t argv0 = strlen(argv[0]);
-  size_t m, len;
-  size_t off;
-  uint32_t o;
+  char *opt_firewall = NULL, *opt_pidfile = NULL, *opt_ctrl_remote = NULL;
 
 #ifndef WITHOUT_DEBUGFILE
   char *opt_debugfile = NULL;
 #endif
+  
+  size_t argv0 = strlen(argv[0]);
+  size_t m, len;
+  size_t off;
+  uint32_t o;
 
   for(m=0; m<sizeof(multicall)/sizeof(scamper_multicall_t); m++)
     {
@@ -479,11 +495,11 @@ static int check_options(int argc, char *argv[])
     }
 
   off = 0;
-  string_concat(opts, sizeof(opts), &off, "c:C:e:fF:iIl:L:M:o:O:p:P:vw:?");
+  string_concat(opts, sizeof(opts), &off, "c:C:e:fF:iIl:L:M:o:O:p:P:R:vw:?");
 #ifndef WITHOUT_DEBUGFILE
   string_concat(opts, sizeof(opts), &off, "d:");
 #endif
-#if !defined(__sun__) && !defined(_WIN32)
+#if HAVE_DAEMON
   string_concat(opts, sizeof(opts), &off, "D");
 #endif
 #if defined(AF_UNIX)
@@ -511,9 +527,11 @@ static int check_options(int argc, char *argv[])
 	  break;
 #endif
 
+#ifdef HAVE_DAEMON
 	case 'D':
 	  options |= OPT_DAEMON;
 	  break;
+#endif
 
 	case 'e':
 	  options |= OPT_PIDFILE;
@@ -577,6 +595,8 @@ static int check_options(int argc, char *argv[])
 	  else if(strcasecmp(optarg, "rawtcp") == 0)
 	    flags |= FLAG_RAWTCP;
 #ifdef HAVE_OPENSSL
+	  else if(strcasecmp(optarg, "tls") == 0)
+	    flags |= FLAG_TLS;
 	  else if(strcasecmp(optarg, "notls") == 0)
 	    flags |= FLAG_NOTLS;
 #endif
@@ -613,6 +633,11 @@ static int check_options(int argc, char *argv[])
 	  opt_ctrl_inet = optarg;
 	  break;
 
+	case 'R':
+	  options |= OPT_CTRL_REMOTE;
+	  opt_ctrl_remote = optarg;
+	  break;
+
 	case 'U':
 	  options |= OPT_CTRL_UNIX;
 	  opt_ctrl_unix = optarg;
@@ -645,11 +670,13 @@ static int check_options(int argc, char *argv[])
       return -1;
     }
 
+ 
   /*
-   * if one of -CPUi is not provided, pretend that -f was for backward
+   * if one of -IPRUi is not provided, pretend that -f was for backward
    * compatibility
    */
-  if((options & (OPT_IP|OPT_CTRL_INET|OPT_CTRL_UNIX|OPT_CMDLIST)) == 0)
+  if((options & (OPT_CMDLIST | OPT_CTRL_INET | OPT_CTRL_REMOTE |
+		 OPT_CTRL_UNIX | OPT_IP)) == 0)
     {
       options |= OPT_INFILE;
     }
@@ -719,15 +746,10 @@ static int check_options(int argc, char *argv[])
       return -1;
     }
 
-  /* only one of the following should be specified */
-  o = options & (OPT_IP|OPT_CTRL_INET|OPT_CTRL_UNIX|OPT_CMDLIST|OPT_INFILE);
-  if(((o & OPT_IP)        != 0 && (o & ~OPT_IP)        != 0) ||
-     ((o & OPT_CTRL_INET)   != 0 && (o & ~OPT_CTRL_INET)   != 0) ||
-     ((o & OPT_CTRL_UNIX) != 0 && (o & ~OPT_CTRL_UNIX) != 0) ||
-     ((o & OPT_CMDLIST)   != 0 && (o & ~OPT_CMDLIST)   != 0) ||
-     ((o & OPT_INFILE)    != 0 && (o & ~OPT_INFILE)    != 0))
+  /* make sure incompatible flags were not specified */
+  if((flags & (FLAG_TLS|FLAG_NOTLS)) == (FLAG_TLS|FLAG_NOTLS))
     {
-      usage(o);
+      usage(OPT_OPTION);
       return -1;
     }
 
@@ -735,42 +757,79 @@ static int check_options(int argc, char *argv[])
   arglist     = argv + optind;
   arglist_len = argc - optind;
 
-  /* if one of -CPUi is used, then a default command must be set */
+  /* if one of -PUi is used, then a default command must be set */
   if((options & (OPT_CTRL_INET | OPT_CTRL_UNIX | OPT_IP | OPT_INFILE)) != 0 &&
      scamper_command_set((options & OPT_COMMAND) ?
-			 opt_command : SCAMPER_COMMAND_DEF) == -1)
+			 opt_command : SCAMPER_COMMAND_DEF) != 0)
     {
       return -1;
     }
 
-  if((options & OPT_DAEMON) && (options & (OPT_CTRL_INET|OPT_CTRL_UNIX)) == 0)
+#ifdef HAVE_DAEMON
+  if((options & OPT_DAEMON) &&
+     (options & (OPT_CTRL_INET|OPT_CTRL_UNIX|OPT_CTRL_REMOTE)) == 0)
     {
-      usage(OPT_DAEMON | OPT_CTRL_INET | OPT_CTRL_UNIX);
+      usage(OPT_DAEMON | OPT_CTRL_INET | OPT_CTRL_UNIX | OPT_CTRL_REMOTE);
       return -1;
     }
+#endif
 
-  if(options & OPT_CTRL_INET)
+  o = options & (OPT_CTRL_INET | OPT_CTRL_UNIX | OPT_CTRL_REMOTE |
+		 OPT_IP | OPT_CMDLIST | OPT_INFILE);
+
+  if(options & (OPT_CTRL_INET|OPT_CTRL_REMOTE|OPT_CTRL_UNIX))
     {
-      /* if listening on control socket there should be no leftover args */
-      if(arglist_len != 0 ||
-	 string_addrport(opt_ctrl_inet, &ctrl_inet_addr, &ctrl_inet_port) != 0)
+      if(options & (OPT_IP | OPT_CMDLIST | OPT_INFILE))
 	{
-	  usage(OPT_CTRL_INET);
+	  usage(o);
 	  return -1;
 	}
-    }
-  else if(options & OPT_CTRL_UNIX)
-    {
-      /* if listening on control socket there should be no leftover args */
-      if(arglist_len != 0)
+
+      if(options & OPT_CTRL_INET)
 	{
-	  usage(OPT_CTRL_UNIX);
-	  return -1;
+	  /* if listening on control socket there should be no leftover args */
+	  if(arglist_len != 0 ||
+	     string_addrport(opt_ctrl_inet, &ctrl_inet_addr, &ctrl_inet_port) != 0)
+	    {
+	      usage(OPT_CTRL_INET);
+	      return -1;
+	    }
 	}
-      ctrl_unix = opt_ctrl_unix;
+      if(options & OPT_CTRL_REMOTE)
+	{
+	  /*
+	   * if using a remote control socket, there should be no
+	   * leftover args
+	   */
+	  if(arglist_len != 0 ||
+	     string_addrport(opt_ctrl_remote, &ctrl_rem_name, &ctrl_rem_port) != 0)
+	    {
+	      scamper_debug(__func__, "hello %s %d", opt_ctrl_remote, arglist_len);
+	      usage(OPT_CTRL_REMOTE);
+	      return -1;
+	    }
+	}
+      if(options & OPT_CTRL_UNIX)
+	{
+	  /* if listening on control socket there should be no leftover args */
+	  if(arglist_len != 0)
+	    {
+	      usage(OPT_CTRL_UNIX);
+	      return -1;
+	    }
+	  ctrl_unix = opt_ctrl_unix;
+	}
     }
   else if(options & (OPT_IP | OPT_CMDLIST))
     {
+      /* only one of the following should be specified */
+      if((options & (OPT_CTRL_INET|OPT_CTRL_REMOTE|OPT_CTRL_UNIX|OPT_INFILE)) ||
+	 ((options & OPT_IP) && (options & OPT_CMDLIST)))
+	{
+	  usage(o);
+	  return -1;
+	}
+
       /*
        * if a list of IP addresses or commands is to be supplied, there has to
        * be at least one left over argument.
@@ -790,6 +849,7 @@ static int check_options(int argc, char *argv[])
        * if a listfile is specified, then there may only be one left over
        * argument, which specifies the listfile.
        */
+      assert(o == OPT_INFILE);
       if(arglist_len != 1)
 	{
 	  usage(0);
@@ -933,9 +993,21 @@ int scamper_option_debugfileappend(void)
   return 0;
 }
 
+int scamper_option_tls(void)
+{
+  if(flags & FLAG_TLS) return 1;
+  return 0;
+}
+
 int scamper_option_notls(void)
 {
   if(flags & FLAG_NOTLS) return 1;
+  return 0;
+}
+
+int scamper_option_daemon(void)
+{
+  if(options & OPT_DAEMON) return 1;
   return 0;
 }
 
@@ -1019,22 +1091,90 @@ uint16_t scamper_sport_default(void)
 }
 
 /*
+ * scamper_timeout
+ *
+ * figure out how long the timeout on the poll (or equivalent) should be.
+ *
+ * returns:
+ *  zero if there is a timeout value computed
+ *  one  if there is no timeout value computed
+ *  two  if scamper should exit because it is done.
+ */
+static int scamper_timeout(struct timeval *timeout, struct timeval *nextprobe,
+			   struct timeval *lastprobe)
+{
+  struct timeval tv;
+  int probe = 0;
+  
+  if(scamper_queue_readycount() > 0 ||
+     ((window == 0 || scamper_queue_windowcount() < window) &&
+      scamper_sources_isready() != 0))
+    {
+      /*
+       * if there is something ready to be probed right now, then set the
+       * timeout to go off when it is time to send the next probe
+       */
+      timeval_add_us(nextprobe, lastprobe, wait_between);
+      probe = 1;
+    }
+  else if(scamper_queue_count() > 0)
+    {
+      /*
+       * if there isn't anything ready to go right now, but we are
+       * waiting on a response from an earlier probe, then set the timer
+       * to go off when that probe expires.
+       */
+      scamper_queue_waittime(nextprobe);
+      probe = 1;
+    }
+  else
+    {
+      if(exit_when_done != 0 && scamper_sources_isempty() == 1)
+	return 2;
+    }
+
+  /*
+   * if there are no events to consider, then we only need to consider
+   * if there are events in the future
+   */
+  if(scamper_queue_event_waittime(&tv) == 0)
+    {
+      if(probe == 0)
+	return 1;
+      timeval_cpy(timeout, nextprobe);
+      return 0;
+    }
+
+  /*
+   * there is an event and (maybe) a probe timeout to consider.
+   * figure out which comes first: the event or the probe
+   */
+  if(probe != 0 && timeval_cmp(nextprobe, &tv) <= 0)
+    timeval_cpy(timeout, nextprobe);
+  else
+    timeval_cpy(timeout, &tv);
+  return 0;
+}
+
+/*
  * scamper:
+ *
  * this bit of code contains most of the logic for driving the parallel
- * traceroute process.
+ * measurement processes.
  */
 static int scamper(int argc, char *argv[])
 {
   struct timeval           tv;
   struct timeval           lastprobe;
   struct timeval           nextprobe;
-  struct timeval          *timeout;
+  struct timeval           timeout, *timeout_ptr;
   const char              *sofname;
   scamper_source_params_t  ssp;
   scamper_source_t        *source = NULL;
   scamper_task_t          *task;
   scamper_outfile_t       *sof, *sof2;
   scamper_file_t          *file;
+  int                      rc;
 
   if(check_options(argc, argv) == -1)
     {
@@ -1048,6 +1188,8 @@ static int scamper(int argc, char *argv[])
       return -1;
     }
 #endif
+
+  scamper_debug_init();
 
   /*
    * now that we've forked for privsep and again for daemon, write the
@@ -1116,25 +1258,28 @@ static int scamper(int argc, char *argv[])
   if(scamper_probe_init() != 0)
     return -1;
 
+  /* initialise the queues that hold the current tasks */
+  if(scamper_queue_init() == -1)
+    return -1;
+
   /* setup the file descriptor monitoring code */
   if(scamper_fds_init() == -1)
     {
       return -1;
     }
 
-  /* if we have been told to open a control socket then do that now */
-  if(options & OPT_CTRL_INET)
+  if(options & (OPT_CTRL_INET|OPT_CTRL_UNIX|OPT_CTRL_REMOTE))
     {
-      if(scamper_control_init_inet(ctrl_inet_addr, ctrl_inet_port) != 0)
+      if(scamper_control_init() != 0)
 	return -1;
-
-      /* wait for more tasks when finished with the active window */
-      exit_when_done = 0;
-    }
-
-  if(options & OPT_CTRL_UNIX)
-    {
-      if(scamper_control_init_unix(ctrl_unix) != 0)
+      if(options & OPT_CTRL_INET &&
+	 scamper_control_add_inet(ctrl_inet_addr, ctrl_inet_port) != 0)
+	return -1;
+      if(options & OPT_CTRL_UNIX &&
+	 scamper_control_add_unix(ctrl_unix) != 0)
+	return -1;
+      if(options & OPT_CTRL_REMOTE &&
+	 scamper_control_add_remote(ctrl_rem_name, ctrl_rem_port) != 0)
 	return -1;
 
       /* wait for more tasks when finished with the active window */
@@ -1169,12 +1314,6 @@ static int scamper(int argc, char *argv[])
    * of tasks currently being probed
    */
   if(scamper_task_init() == -1)
-    {
-      return -1;
-    }
-
-  /* initialise the queues that hold the current tasks */
-  if(scamper_queue_init() == -1)
     {
       return -1;
     }
@@ -1226,7 +1365,7 @@ static int scamper(int argc, char *argv[])
 	  return -1;
 	}
     }
-  else if((options & (OPT_CTRL_INET|OPT_CTRL_UNIX)) == 0)
+  else if((options & (OPT_CTRL_INET|OPT_CTRL_UNIX|OPT_CTRL_REMOTE)) == 0)
     {
       if(intype == NULL)
 	source = scamper_source_file_alloc(&ssp, arglist[0], command, 1, 0);
@@ -1248,66 +1387,39 @@ static int scamper(int argc, char *argv[])
 
   for(;;)
     {
-      if(scamper_queue_readycount() > 0 ||
-	 ((window == 0 || scamper_queue_windowcount() < window) &&
-	  scamper_sources_isready() != 0))
-	{
-	  /*
-	   * if there is something ready to be probed right now, then set the
-	   * timeout to go off when it is time to send the next probe
-	   */
-	  timeval_add_us(&nextprobe, &lastprobe, wait_between);
-	  timeout = &tv;
-	}
-      else if(scamper_queue_count() > 0)
-	{
-	  /*
-	   * if there isn't anything ready to go right now, but we are
-	   * waiting on a response from an earlier probe, then set the timer
-	   * to go off when that probe expires.
-	   */
-	  scamper_queue_waittime(&nextprobe);
-	  timeout = &tv;
-	}
-      else
-	{
-	  /*
-	   * there is nothing to do, so block in select until a file
-	   * descriptor supplies an address to probe.
-	   */
-	  timeout = NULL;
-	}
-
-      if(timeout != NULL)
+      if((rc = scamper_timeout(&timeout, &nextprobe, &lastprobe)) == 0)
 	{
 	  /*
 	   * we've been told to calculate a timeout value.  figure out what
 	   * it should be.
 	   */
 	  gettimeofday_wrap(&tv);
-	  if(timeval_cmp(&nextprobe, &tv) <= 0)
+	  if(timeval_cmp(&timeout, &tv) <= 0)
 	    memset(&tv, 0, sizeof(tv));
 	  else
-	    timeval_diff_tv(&tv, &tv, &nextprobe);
+	    timeval_diff_tv(&tv, &tv, &timeout);
+	  timeout_ptr = &tv;
+	}
+      else if(rc == 1)
+	{
+	  timeout_ptr = NULL;
 	}
       else
 	{
-	  if(exit_when_done != 0 && scamper_sources_isempty() == 1)
-	    {
-	      break;
-	    }
-	  timeout = NULL;
+	  /* exit when done */
+	  break;
 	}
 
       /* listen until it is time to send the next probe */
-      if(scamper_fds_poll(timeout) == -1)
-	{
-	  return -1;
-	}
+      if(scamper_fds_poll(timeout_ptr) == -1)
+	return -1;
 
       /* get the current time */
       gettimeofday_wrap(&tv);
 
+      if(scamper_queue_event_proc(&tv) != 0)
+	return -1;
+      
       /* take any 'done' tasks and output them now */
       while((task = scamper_queue_getdone(&tv)) != NULL)
 	{
@@ -1349,9 +1461,7 @@ static int scamper(int argc, char *argv[])
 	   * before the next probe is sent
 	   */
 	  if(timeval_inrange_us(&tv, &lastprobe, probe_window) == 0)
-	    {
-	      timeval_sub_us(&lastprobe, &tv, wait_between);
-	    }
+	    timeval_sub_us(&lastprobe, &tv, wait_between);
 
 	  /*
 	   * when probing at > HZ, scamper might find that select blocks it
@@ -1366,9 +1476,7 @@ static int scamper(int argc, char *argv[])
 
 	      /* if the next probe is not due to be sent, don't send one */
 	      if(timeval_cmp(&nextprobe, &tv) > 0)
-		{
-		  break;
-		}
+		break;
 
 	      /*
 	       * look for an address that we can send a probe to.  if
@@ -1383,18 +1491,14 @@ static int scamper(int argc, char *argv[])
 		   * add any new tasks
 		   */
 		  if(window != 0 && scamper_queue_windowcount() >= window)
-		    {
-		      break;
-		    }
+		    break;
 
 		  /*
 		   * if there are no more tasks ready to be added yet, there's
 		   * nothing more to be done in the loop
 		   */
 		  if(scamper_sources_gettask(&task) != 0 || task == NULL)
-		    {
-		      break;
-		    }
+		    break;
 		}
 
 	      scamper_task_probe(task);
@@ -1433,13 +1537,12 @@ static void cleanup(void)
   scamper_do_tbit_cleanup();
   scamper_do_sniff_cleanup();
 
-  scamper_sources_cleanup();
-
   scamper_dl_cleanup();
 
-  if(options & (OPT_CTRL_INET|OPT_CTRL_UNIX))
+  if(options & (OPT_CTRL_INET|OPT_CTRL_UNIX|OPT_CTRL_REMOTE))
     scamper_control_cleanup();
 
+  scamper_sources_cleanup();
   scamper_outfiles_cleanup();
   scamper_fds_cleanup();
 
@@ -1458,6 +1561,12 @@ static void cleanup(void)
     {
       free(ctrl_inet_addr);
       ctrl_inet_addr = NULL;
+    }
+
+  if(ctrl_rem_name != NULL)
+    {
+      free(ctrl_rem_name);
+      ctrl_rem_name = NULL;
     }
 
   if(monitorname != NULL)

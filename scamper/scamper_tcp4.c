@@ -1,7 +1,7 @@
 /*
  * scamper_tcp4.c
  *
- * $Id: scamper_tcp4.c,v 1.54.14.1 2015/10/17 07:56:11 mjl Exp $
+ * $Id: scamper_tcp4.c,v 1.57 2015/04/23 22:09:03 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tcp4.c,v 1.54.14.1 2015/10/17 07:56:11 mjl Exp $";
+  "$Id: scamper_tcp4.c,v 1.57 2015/04/23 22:09:03 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
