@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# $Id: build-man-pdfs.pl,v 1.8 2016/12/04 02:34:36 mjl Exp $
+# $Id: build-man-pdfs.pl,v 1.8.2.1 2017/06/22 08:25:27 mjl Exp $
 
 use strict;
 use warnings;
@@ -33,9 +33,13 @@ my @mans = ("scamper/scamper.1",
 	    "scamper/warts.5",
     );
 
-cmd("mkdir man");
+cmd("mkdir -p man");
 foreach my $man (@mans)
 {
-    cmd("groff -T ps -man $man | ps2pdf - >man/$1.pdf")
-	if($man =~ /^.+\/(.+)$/)
+    if($man =~ /^.+\/(.+)$/)
+    {
+	my $name = $1;
+	cmd("groff -T ps -man $man | ps2pdf - >man/$name.pdf");
+	cmd("touch -r $man man/$name.pdf");
+    }
 }

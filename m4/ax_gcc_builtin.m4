@@ -1,5 +1,5 @@
 # ===========================================================================
-#      http://www.gnu.org/software/autoconf-archive/ax_gcc_builtin.html
+#      https://www.gnu.org/software/autoconf-archive/ax_gcc_builtin.html
 # ===========================================================================
 #
 # SYNOPSIS
@@ -79,7 +79,7 @@
 #    __builtin_types_compatible_p
 #    __builtin_unreachable
 #
-#   Unsuppored built-ins will be tested with an empty parameter set and the
+#   Unsupported built-ins will be tested with an empty parameter set and the
 #   result of the check might be wrong or meaningless so use with care.
 #
 # LICENSE
@@ -91,7 +91,7 @@
 #   and this notice are preserved.  This file is offered as-is, without any
 #   warranty.
 
-#serial 3
+#serial 6
 
 AC_DEFUN([AX_GCC_BUILTIN], [
     AS_VAR_PUSHDEF([ac_var], [ax_cv_have_$1])

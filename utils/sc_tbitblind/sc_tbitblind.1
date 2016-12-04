@@ -6,7 +6,7 @@
 .\" Copyright (c) 2015 Matthew Luckie
 .\"                    All rights reserved
 .\"
-.\" $Id: sc_tbitblind.1,v 1.4 2015/09/20 02:53:54 mjl Exp $
+.\" $Id: sc_tbitblind.1,v 1.4.6.1 2017/06/22 08:27:27 mjl Exp $
 .\"
 .Dd September 19, 2015
 .Dt SC_TBITBLIND 1
@@ -94,9 +94,10 @@ system.
 .Sh EXAMPLES
 .Pp
 Use of this driver requires a scamper instance listening on a port for
-commands, which has been configured to use the IPFW firewall as follows:
+commands, which has been configured to use the IPFW firewall rules 1 to
+100, as follows:
 .Pp
-.Dl scamper -P 31337 -F ipfw
+.Dl scamper -P 31337 -F ipfw:1-100
 .Pp
 To test a set of web servers specified in a file named webservers.txt and
 formatted as follows:

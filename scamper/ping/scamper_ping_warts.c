@@ -7,7 +7,7 @@
  * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping_warts.c,v 1.15 2016/12/02 09:13:42 mjl Exp $
+ * $Id: scamper_ping_warts.c,v 1.15.2.1 2017/06/22 08:31:58 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_warts.c,v 1.15 2016/12/02 09:13:42 mjl Exp $";
+  "$Id: scamper_ping_warts.c,v 1.15.2.1 2017/06/22 08:31:58 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -181,7 +181,7 @@ static int extract_ping_reply_v4rr(const uint8_t *buf, uint32_t *off,
   scamper_addr_t *addr;
   uint8_t i, rrc;
 
-  if(len - *off < 1)
+  if(*off >= len || len - *off < 1)
     return -1;
 
   rrc = buf[(*off)++];
@@ -230,13 +230,22 @@ static int extract_ping_reply_v4ts(const uint8_t *buf, uint32_t *off,
   uint8_t i, tsc, ipc;
   uint32_t u32;
 
-  if(len - *off < 2)
+  if(*off >= len || len - *off < 2)
     return -1;
 
+  /*
+   * the v4ts structure will have timestamps, and sometimes IP
+   * addresses.  if there are IP addresses, the number must match the
+   * number of timestamp records.  the second parameter to
+   * scamper_ping_reply_v4ts_alloc is a binary flag that says whether
+   * or not to allocate the same number of IP addresses.  this is
+   * probably a design oversight in the warts records.
+   */
   tsc = buf[(*off)++];
   ipc = buf[(*off)++];
-
-  if((*out = scamper_ping_reply_v4ts_alloc(tsc, ipc)) == NULL)
+  if(ipc != 0 && ipc != tsc)
+    return -1;
+  if((*out = scamper_ping_reply_v4ts_alloc(tsc, ipc != 0 ? 1 : 0)) == NULL)
     return -1;
 
   for(i=0; i<tsc; i++)
@@ -273,7 +282,7 @@ static int extract_ping_reply_tsreply(uint8_t *buf, uint32_t *off,
 				      void *param)
 {
   scamper_ping_reply_tsreply_t *tsreply;
-  if(len - *off < 12)
+  if(*off >= len || len - *off < 12)
     return -1;
   if((tsreply = scamper_ping_reply_tsreply_alloc()) == NULL)
     return -1;
@@ -384,7 +393,7 @@ static int extract_ping_reply_icmptc(const uint8_t *buf, uint32_t *off,
 				     uint32_t len, scamper_ping_reply_t *reply,
 				     void *param)
 {
-  if(len - *off < 2)
+  if(*off >= len || len - *off < 2)
     return -1;
 
   reply->icmp_type = buf[(*off)++];
@@ -595,7 +604,7 @@ static int extract_ping_probe_tsps(const uint8_t *buf, uint32_t *off,
   uint8_t i, ipc;
 
   /* make sure there is room for the ip count */
-  if(len - *off < 1)
+  if(*off >= len || len - *off < 1)
     return -1;
 
   ipc = buf[(*off)++];

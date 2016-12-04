@@ -10,7 +10,7 @@
  *
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_trace_json.c,v 1.11 2016/12/03 20:39:30 mjl Exp $
+ * $Id: scamper_trace_json.c,v 1.11.2.1 2017/06/22 19:53:58 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_json.c,v 1.11 2016/12/03 20:39:30 mjl Exp $";
+  "$Id: scamper_trace_json.c,v 1.11.2.1 2017/06/22 19:53:58 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -140,8 +140,9 @@ static char *header_tostr(const scamper_trace_t *trace)
   string_concat(buf, sizeof(buf), &off, ", \"userid\":%u", trace->userid);
   string_concat(buf, sizeof(buf), &off, ", \"method\":\"%s\"",
 		scamper_trace_type_tostr(trace, tmp, sizeof(tmp)));
-  string_concat(buf, sizeof(buf), &off, ", \"src\":\"%s\"",
-		scamper_addr_tostr(trace->src, tmp, sizeof(tmp)));
+  if(trace->src != NULL)
+    string_concat(buf, sizeof(buf), &off, ", \"src\":\"%s\"",
+		  scamper_addr_tostr(trace->src, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off, ", \"dst\":\"%s\"",
 		scamper_addr_tostr(trace->dst, tmp, sizeof(tmp)));
   if(SCAMPER_TRACE_TYPE_IS_UDP(trace) || SCAMPER_TRACE_TYPE_IS_TCP(trace))

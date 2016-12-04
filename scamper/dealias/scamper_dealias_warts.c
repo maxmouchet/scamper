@@ -7,7 +7,7 @@
  * Copyright (C) 2015-2016 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_warts.c,v 1.15 2016/12/02 09:13:42 mjl Exp $
+ * $Id: scamper_dealias_warts.c,v 1.15.2.1 2017/06/22 08:30:47 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_warts.c,v 1.15 2016/12/02 09:13:42 mjl Exp $";
+  "$Id: scamper_dealias_warts.c,v 1.15.2.1 2017/06/22 08:30:47 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -428,6 +428,9 @@ static int warts_dealias_probedef_read(scamper_dealias_probedef_t *p,
   if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0)
     return -1;
 
+  if(p->src == NULL || p->dst == NULL)
+    return -1;
+
   if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(p))
     {
       if(flag_isset(&buf[o], WARTS_DEALIAS_PROBEDEF_4BYTES))
@@ -662,6 +665,7 @@ static int warts_dealias_prefixscan_read(scamper_dealias_t *dealias,
 					 warts_state_t *state,
 					 warts_addrtable_t *table,
 					 scamper_dealias_probedef_t **defs,
+					 uint32_t *defc,
 					 uint8_t *buf, uint32_t *off,
 					 uint32_t len)
 {
@@ -686,6 +690,8 @@ static int warts_dealias_prefixscan_read(scamper_dealias_t *dealias,
 
   memset(&pfs, 0, sizeof(pfs));
   if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0)
+    return -1;
+  if(pfs.a == NULL || pfs.b == NULL)
     return -1;
 
   if(scamper_dealias_prefixscan_alloc(dealias) != 0)
@@ -712,6 +718,7 @@ static int warts_dealias_prefixscan_read(scamper_dealias_t *dealias,
     }
 
   *defs = p->probedefs;
+  *defc = p->probedefc;
   return 0;
 }
 
@@ -812,6 +819,7 @@ static int warts_dealias_radargun_read(scamper_dealias_t *dealias,
 				       warts_state_t *state,
 				       warts_addrtable_t *table,
 				       scamper_dealias_probedef_t **defs,
+				       uint32_t *defc,
 				       uint8_t *buf,uint32_t *off,uint32_t len)
 {
   scamper_dealias_radargun_t *rg;
@@ -837,6 +845,8 @@ static int warts_dealias_radargun_read(scamper_dealias_t *dealias,
 
   if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0)
     return -1;
+  if(probedefc == 0)
+    return -1;
 
   rg = dealias->data;
   if(scamper_dealias_radargun_probedefs_alloc(rg, probedefc) != 0)
@@ -857,6 +867,7 @@ static int warts_dealias_radargun_read(scamper_dealias_t *dealias,
     }
 
   *defs = rg->probedefs;
+  *defc = rg->probedefc;
   return 0;
 }
 
@@ -935,6 +946,7 @@ static int warts_dealias_bump_read(scamper_dealias_t *dealias,
 				   warts_state_t *state,
 				   warts_addrtable_t *table,
 				   scamper_dealias_probedef_t **defs,
+				   uint32_t *defc,
 				   uint8_t *buf, uint32_t *off, uint32_t len)
 {
   scamper_dealias_bump_t *bump;
@@ -968,6 +980,7 @@ static int warts_dealias_bump_read(scamper_dealias_t *dealias,
     }
 
   *defs = bump->probedefs;
+  *defc = 2;
   return 0;
 }
 
@@ -1041,6 +1054,7 @@ static int warts_dealias_ally_read(scamper_dealias_t *dealias,
 				   warts_state_t *state,
 				   warts_addrtable_t *table,
 				   scamper_dealias_probedef_t **defs,
+				   uint32_t *defc,
 				   uint8_t *buf, uint32_t *off, uint32_t len)
 {
   scamper_dealias_ally_t *ally;
@@ -1080,6 +1094,7 @@ static int warts_dealias_ally_read(scamper_dealias_t *dealias,
     }
 
   *defs = ally->probedefs;
+  *defc = 2;
   return 0;
 }
 
@@ -1153,6 +1168,7 @@ static int warts_dealias_mercator_read(scamper_dealias_t *dealias,
 				       warts_state_t *state,
 				       warts_addrtable_t *table,
 				       scamper_dealias_probedef_t **def,
+				       uint32_t *defc,
 				       uint8_t *buf, uint32_t *off,
 				       uint32_t len)
 {
@@ -1182,6 +1198,7 @@ static int warts_dealias_mercator_read(scamper_dealias_t *dealias,
     }
 
   *def = &mercator->probedef;
+  *defc = 1;
   return 0;
 }
 
@@ -1464,6 +1481,7 @@ static int warts_dealias_probe_state(const scamper_file_t *sf,
 static int warts_dealias_probe_read(scamper_dealias_probe_t *probe,
 				    warts_state_t *state,
 				    scamper_dealias_probedef_t *defs,
+				    uint32_t defc,
 				    warts_addrtable_t *table,
 				    uint8_t *buf, uint32_t *off, uint32_t len)
 {
@@ -1483,6 +1501,9 @@ static int warts_dealias_probe_read(scamper_dealias_probe_t *probe,
     {
       return -1;
     }
+
+  if(probedef_id >= defc)
+    return -1;
 
   probe->def = defs + probedef_id;
 
@@ -1545,7 +1566,7 @@ int scamper_file_warts_dealias_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 {
   static int (*const read[])(scamper_dealias_t *,warts_state_t *,
 			     warts_addrtable_t *,scamper_dealias_probedef_t **,
-			     uint8_t *, uint32_t *, uint32_t) = {
+			     uint32_t *, uint8_t *, uint32_t *, uint32_t) = {
     warts_dealias_mercator_read,
     warts_dealias_ally_read,
     warts_dealias_radargun_read,
@@ -1558,6 +1579,7 @@ int scamper_file_warts_dealias_read(scamper_file_t *sf, const warts_hdr_t *hdr,
   warts_addrtable_t *table = NULL;
   warts_state_t *state = scamper_file_getstate(sf);
   uint8_t *buf = NULL;
+  uint32_t defc = 0;
   uint32_t off = 0;
   uint32_t i;
 
@@ -1592,7 +1614,8 @@ int scamper_file_warts_dealias_read(scamper_file_t *sf, const warts_hdr_t *hdr,
   if((table = warts_addrtable_alloc_byid()) == NULL)
     goto err;
 
-  if(read[dealias->method-1](dealias,state,table,&defs,buf,&off,hdr->len)!=0)
+  if(read[dealias->method-1](dealias, state, table, &defs, &defc,
+			     buf, &off, hdr->len) != 0)
     goto err;
 
   if(dealias->probec == 0)
@@ -1611,7 +1634,7 @@ int scamper_file_warts_dealias_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 	}
       dealias->probes[i] = probe;
 
-      if(warts_dealias_probe_read(probe, state, defs, table,
+      if(warts_dealias_probe_read(probe, state, defs, defc, table,
 				  buf, &off, hdr->len) != 0)
 	{
 	  goto err;
@@ -1619,7 +1642,6 @@ int scamper_file_warts_dealias_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     }
 
  done:
-  assert(off == hdr->len);
   warts_addrtable_free(table);
   *dealias_out = dealias;
   free(buf);

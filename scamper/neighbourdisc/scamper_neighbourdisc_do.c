@@ -1,7 +1,7 @@
 /*
  * scamper_do_neighbourdisc
  *
- * $Id: scamper_neighbourdisc_do.c,v 1.35 2012/05/14 21:55:02 mjl Exp $
+ * $Id: scamper_neighbourdisc_do.c,v 1.35.18.1 2017/06/22 08:44:30 mjl Exp $
  *
  * Copyright (C) 2009-2011 Matthew Luckie
  *
@@ -22,7 +22,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_neighbourdisc_do.c,v 1.35 2012/05/14 21:55:02 mjl Exp $";
+  "$Id: scamper_neighbourdisc_do.c,v 1.35.18.1 2017/06/22 08:44:30 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -252,6 +252,7 @@ static void do_nd_probe_nsol(scamper_task_t *task)
   scamper_neighbourdisc_t *nd = nd_getdata(task);
   struct ip6_hdr *ip6;
   struct icmp6_hdr *icmp6;
+  struct in6_addr a;
   uint16_t u16, *w;
   uint8_t ip6_dst[16];
   uint8_t sol[4];
@@ -299,10 +300,12 @@ static void do_nd_probe_nsol(scamper_task_t *task)
   mem_concat(pktbuf, nd->src_mac->addr, 6, &off, pktbuf_len);
 
   /* build up the ICMP6 checksum, which includes a psuedo header */
-  w = (uint16_t *)&ip6->ip6_src;
+  memcpy(&a, &ip6->ip6_src, sizeof(struct in6_addr));
+  w = (uint16_t *)&a;
   sum += *w++; sum += *w++; sum += *w++; sum += *w++;
   sum += *w++; sum += *w++; sum += *w++; sum += *w++;
-  w = (uint16_t *)&ip6->ip6_dst;
+  memcpy(&a, &ip6->ip6_dst, sizeof(struct in6_addr));
+  w = (uint16_t *)&a;
   sum += *w++; sum += *w++; sum += *w++; sum += *w++;
   sum += *w++; sum += *w++; sum += *w++; sum += *w++;
   sum += ip6->ip6_plen;

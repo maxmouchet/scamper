@@ -1,11 +1,12 @@
 /*
  * scamper_source_file.c
  *
- * $Id: scamper_source_file.c,v 1.21 2014/09/24 04:34:21 mjl Exp $
+ * $Id: scamper_source_file.c,v 1.21.10.1 2017/06/22 08:18:40 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2014      The Regents of the University of California
+ * Copyright (C) 2017      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_source_file.c,v 1.21 2014/09/24 04:34:21 mjl Exp $";
+  "$Id: scamper_source_file.c,v 1.21.10.1 2017/06/22 08:18:40 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -250,6 +251,8 @@ static void ssf_read(const int fd, void *param)
       scamper_linepoll_flush(ssf->lp);
       ssf->cycles = 0;
       scamper_fd_read_pause(ssf->fd);
+      if(scamper_source_isfinished(source) != 0)
+	scamper_source_finished(source);
     }
   else if(rc == 0)
     {
@@ -527,10 +530,13 @@ scamper_source_t *scamper_source_file_alloc(scamper_source_params_t *ssp,
     }
 
   /* allocate a scamper_fd_t to monitor when new data is able to be read */
-  if((ssf->fd = scamper_fd_file(fd, ssf_read, ssf)) == NULL)
-    {
-      goto err;
-    }
+  if(strcmp(filename, "-") != 0)
+    ssf->fd = scamper_fd_file(fd, ssf_read, ssf);
+  else
+    ssf->fd = scamper_fd_private(fd, ssf, ssf_read, NULL);
+
+  if(ssf->fd == NULL)
+    goto err;
   fd = -1;
 
   if((ssf->lp = scamper_linepoll_alloc(ssf_read_line, ssf)) == NULL)

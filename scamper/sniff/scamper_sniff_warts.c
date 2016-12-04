@@ -6,7 +6,7 @@
  * Copyright (C) 2016 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_sniff_warts.c,v 1.8 2016/12/02 09:13:42 mjl Exp $
+ * $Id: scamper_sniff_warts.c,v 1.8.2.1 2017/06/22 08:35:52 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sniff_warts.c,v 1.8 2016/12/02 09:13:42 mjl Exp $";
+  "$Id: scamper_sniff_warts.c,v 1.8.2.1 2017/06/22 08:35:52 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -143,6 +143,7 @@ static scamper_sniff_pkt_t *warts_sniff_pkt_read(warts_state_t *state,
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
 
   if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0 ||
+     plen == 0 || data == NULL ||
      (pkt = scamper_sniff_pkt_alloc(data, plen, &tv)) == NULL)
     goto err;
 

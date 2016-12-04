@@ -7,7 +7,7 @@
  * Copyright (C) 2016      Matthew Luckie
  * Authors: Matthew Luckie, Ben Stasiewicz
  *
- * $Id: scamper_tbit_warts.c,v 1.25.2.1 2016/12/04 05:46:57 mjl Exp $
+ * $Id: scamper_tbit_warts.c,v 1.25.2.2 2017/06/22 08:39:56 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_warts.c,v 1.25.2.1 2016/12/04 05:46:57 mjl Exp $";
+  "$Id: scamper_tbit_warts.c,v 1.25.2.2 2017/06/22 08:39:56 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -756,7 +756,7 @@ int extract_cookie(const uint8_t *buf, uint32_t *off,
 		   const uint32_t len, uint8_t *out, void *param)
 {
   uint8_t cookielen;
-  if(len - *off < 1)
+  if(*off >= len || len - *off < 1)
     return -1;
   out[0] = cookielen = buf[(*off)++];
   if(cookielen > 16 || cookielen > len - *off)

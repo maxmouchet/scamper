@@ -6,7 +6,7 @@
  * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping_text.c,v 1.14 2015/05/08 00:08:25 mjl Exp $
+ * $Id: scamper_ping_text.c,v 1.14.4.1 2017/06/22 08:22:20 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_text.c,v 1.14 2015/05/08 00:08:25 mjl Exp $";
+  "$Id: scamper_ping_text.c,v 1.14.4.1 2017/06/22 08:22:20 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -69,7 +69,7 @@ static char *ping_reply(const scamper_ping_t *ping,
 {
   scamper_ping_reply_v4rr_t *v4rr;
   scamper_ping_reply_v4ts_t *v4ts;
-  char buf[256], a[64], rtt[32], *tcp, flags[16], tso[16], tsr[16], tst[16];
+  char buf[256], a[64], rtt[32], *tcp, flags[16], tso[32], tsr[32], tst[32];
   uint8_t i;
   size_t off = 0;
 

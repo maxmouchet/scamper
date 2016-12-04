@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# $Id: bootstrap.pl,v 1.11 2016/10/19 02:14:52 mjl Exp $
+# $Id: bootstrap.pl,v 1.11.4.1 2017/06/22 08:16:20 mjl Exp $
 #
 # script to ship scamper with generated configure script ready to build.
 
@@ -20,9 +20,9 @@ my $ax_url = "http://git.savannah.gnu.org/gitweb/" .
 # the AX m4 files to get, and their SHA-2 256 checksums
 my %ax;
 $ax{"ax_check_openssl.m4"} =
-    "8574f228ef7294a8d53863f45f7f1456e087bbfadda14429f452a027d87f81a3";
+    "0b1b45f2041cfb4f8a3d5ed05a17dd08adebb6544e297451f66849235a6827e4";
 $ax{"ax_gcc_builtin.m4"} =
-    "0f70a54de0c4c8579eee252f4d8549d2b49d8be000e16e37a5de63f774bd4f4c";
+    "97d45c8aae9fd6a9def8b8a02d76258f5a428c0f490715dba32fad13222013cc";
 
 sub which($)
 {

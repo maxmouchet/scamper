@@ -1,7 +1,7 @@
 /*
  * scamper_file_arts.c
  *
- * $Id: scamper_file_arts.c,v 1.62 2015/04/27 03:22:31 mjl Exp $
+ * $Id: scamper_file_arts.c,v 1.62.4.1 2017/06/22 08:33:25 mjl Exp $
  *
  * code to read the legacy arts data file format into scamper_hop structures.
  *
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_arts.c,v 1.62 2015/04/27 03:22:31 mjl Exp $";
+  "$Id: scamper_file_arts.c,v 1.62.4.1 2017/06/22 08:33:25 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -245,7 +245,8 @@ static int arts_hop_read(scamper_trace_hop_t *hop, const uint8_t *buf,
   hop->hop_rtt.tv_usec = 0;
 
   /* read the 1 byte hop number this path entry refers to */
-  assert(hop->hop_probe_ttl > 0);
+  if(hop->hop_probe_ttl == 0)
+    return -1;
 
   /* the IPv4 address of the hop that responded */
   if((hop->hop_addr = scamper_addr_alloc_ipv4(buf+i)) == NULL)
@@ -274,6 +275,7 @@ static scamper_trace_hop_t *arts_hops_read(const arts_header_t *ah,
 {
   scamper_trace_hop_t *head = NULL, *hop = NULL;
   int i = 0;
+  int rc;
 
   if(count == 0)
     {
@@ -295,7 +297,9 @@ static scamper_trace_hop_t *arts_hops_read(const arts_header_t *ah,
       if(hop == NULL)
 	  goto err;
 
-      i += arts_hop_read(hop, buf+i, ah);
+      if((rc = arts_hop_read(hop, buf+i, ah)) <= 0)
+	goto err;
+      i += rc;
     }
 
   *off += i;
@@ -553,7 +557,8 @@ static scamper_trace_t *arts_read_trace(const scamper_file_t *sf,
 	}
     }
 
-  assert((uint32_t)i == ah->data_length);
+  if((uint32_t)i != ah->data_length)
+    goto err;
   free(buf); buf = NULL;
 
   if(max_hop == 0)
@@ -660,6 +665,9 @@ int scamper_file_arts_read(scamper_file_t *sf, scamper_file_filter_t *filter,
 	  /* partial record */
 	  return -1;
 	}
+
+      if(ah.data_length == 0)
+	return -1;
 
       if(ah.id == ARTS_IP_PATH &&
 	 scamper_file_filter_isset(filter, SCAMPER_FILE_OBJ_TRACE))

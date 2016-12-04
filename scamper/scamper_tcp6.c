@@ -1,7 +1,7 @@
 /*
  * scamper_tcp6.c
  *
- * $Id: scamper_tcp6.c,v 1.32 2015/05/09 01:56:31 mjl Exp $
+ * $Id: scamper_tcp6.c,v 1.32.4.1 2017/06/22 08:43:29 mjl Exp $
  *
  * Copyright (C) 2006      Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tcp6.c,v 1.32 2015/05/09 01:56:31 mjl Exp $";
+  "$Id: scamper_tcp6.c,v 1.32.4.1 2017/06/22 08:43:29 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -124,6 +124,7 @@ static size_t tcp_ts(uint8_t *buf, const scamper_probe_t *probe)
 
 static void tcp_cksum(struct ip6_hdr *ip6, struct tcphdr *tcp, size_t len)
 {
+  struct in6_addr a;
   uint16_t *w;
   int sum = 0;
 
@@ -132,10 +133,12 @@ static void tcp_cksum(struct ip6_hdr *ip6, struct tcphdr *tcp, size_t len)
    * that includes the src and dst IP addresses, the protocol type, and
    * the TCP length.
    */
-  w = (uint16_t *)&ip6->ip6_src;
+  memcpy(&a, &ip6->ip6_src, sizeof(struct in6_addr));
+  w = (uint16_t *)&a;
   sum += *w++; sum += *w++; sum += *w++; sum += *w++;
   sum += *w++; sum += *w++; sum += *w++; sum += *w++;
-  w = (uint16_t *)&ip6->ip6_dst;
+  memcpy(&a, &ip6->ip6_dst, sizeof(struct in6_addr));
+  w = (uint16_t *)&a;
   sum += *w++; sum += *w++; sum += *w++; sum += *w++;
   sum += *w++; sum += *w++; sum += *w++; sum += *w++;
   sum += htons(len);

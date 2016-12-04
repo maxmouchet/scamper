@@ -3,7 +3,7 @@
  *
  * the warts file format
  *
- * $Id: scamper_file_warts.c,v 1.252 2016/12/02 09:13:42 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.252.2.1 2017/06/22 08:34:33 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_warts.c,v 1.252 2016/12/02 09:13:42 mjl Exp $";
+  "$Id: scamper_file_warts.c,v 1.252.2.1 2017/06/22 08:34:33 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -425,6 +425,10 @@ int extract_addr(const uint8_t *buf, uint32_t *off,
 
   assert(table != NULL);
 
+  /* make sure the offset is sane */
+  if(*off >= len)
+    return -1;
+
   /* make sure there is enough data left for the address header */
   if(len - *off < 1)
     return -1;
@@ -505,7 +509,7 @@ int extract_string(const uint8_t *buf, uint32_t *off,
 int extract_uint16(const uint8_t *buf, uint32_t *off,
 		   const uint32_t len, uint16_t *out, void *param)
 {
-  if(len - *off < 2)
+  if(*off >= len || len - *off < 2)
     return -1;
   memcpy(out, buf + *off, 2); *off += 2;
   *out = ntohs(*out);
@@ -515,7 +519,7 @@ int extract_uint16(const uint8_t *buf, uint32_t *off,
 int extract_uint32(const uint8_t *buf, uint32_t *off,
 		   const uint32_t len, uint32_t *out, void *param)
 {
-  if(len - *off < 4)
+  if(*off >= len || len - *off < 4)
     return -1;
   memcpy(out, buf + *off, 4); *off += 4;
   *out = ntohl(*out);
@@ -526,7 +530,7 @@ int extract_int32(const uint8_t *buf, uint32_t *off,
 		  const uint32_t len, int32_t *out, void *param)
 {
   uint32_t u32;
-  if(len - *off < 4)
+  if(*off >= len || len - *off < 4)
     return -1;
   memcpy(&u32, buf + *off, 4); *off += 4;
   *out = (int32_t)ntohl(u32);
@@ -536,11 +540,8 @@ int extract_int32(const uint8_t *buf, uint32_t *off,
 int extract_byte(const uint8_t *buf, uint32_t *off,
 			const uint32_t len, uint8_t *out, void *param)
 {
-  if(len - *off < 1)
-    {
-      return -1;
-    }
-
+  if(*off >= len || len - *off < 1)
+    return -1;
   *out = buf[(*off)++];
   return 0;
 }
@@ -549,7 +550,7 @@ int extract_bytes_ptr(const uint8_t *buf, uint32_t *off,
 			     const uint32_t len, const uint8_t **out,
 			     uint16_t *req)
 {
-  if(len - *off < *req)
+  if(*off >= len || len - *off < *req)
     return -1;
 
   if(*req > 0)
@@ -565,10 +566,8 @@ int extract_bytes_alloc(const uint8_t *buf, uint32_t *off,
 			       const uint32_t len, uint8_t **out,
 			       uint16_t *req)
 {
-  if(len - *off < *req)
-    {
-      return -1;
-    }
+  if(*off >= len || len - *off < *req)
+    return -1;
 
   if(*req == 0)
     {
@@ -577,10 +576,7 @@ int extract_bytes_alloc(const uint8_t *buf, uint32_t *off,
   else
     {
       if((*out = malloc_zero(*req)) == NULL)
-	{
-	  return -1;
-	}
-
+	return -1;
       memcpy(*out, buf + *off, *req);
       *off += *req;
     }
@@ -596,7 +592,7 @@ int extract_bytes_alloc(const uint8_t *buf, uint32_t *off,
 int extract_bytes(const uint8_t *buf, uint32_t *off, const uint32_t len,
 			 uint8_t *out, uint16_t *req)
 {
-  if(len - *off < *req)
+  if(*off >= len || len - *off < *req)
     return -1;
 
   if(req == 0)
@@ -655,16 +651,12 @@ int extract_cycle(const uint8_t *buf, uint32_t *off,
   uint32_t id;
 
   if(extract_uint32(buf, off, len, &id, NULL) != 0)
-    {
-      return -1;
-    }
+    return -1;
 
-  if(id >= state->cycle_count)
-    {
-      return -1;
-    }
-
+  if(id >= state->cycle_count || state->cycle_table[id] == NULL)
+    return -1;
   *cycle = scamper_cycle_use(state->cycle_table[id]->cycle);
+
   return 0;
 }
 

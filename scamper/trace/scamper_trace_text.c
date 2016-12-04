@@ -6,7 +6,7 @@
  * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_text.c,v 1.22 2016/08/08 08:37:23 mjl Exp $
+ * $Id: scamper_trace_text.c,v 1.22.4.1 2017/06/22 08:21:29 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_text.c,v 1.22 2016/08/08 08:37:23 mjl Exp $";
+  "$Id: scamper_trace_text.c,v 1.22.4.1 2017/06/22 08:21:29 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -227,7 +227,7 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
   char     str_hop[128];
   char     str_addr[64];
   char     str_rtt[24];
-  char     str_icmp[24];
+  char     str_icmp[48];
   int      spare;
   int      replyc;
 

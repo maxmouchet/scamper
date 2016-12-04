@@ -5,7 +5,7 @@
  * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_tracelb_warts.c,v 1.6 2016/12/02 09:13:42 mjl Exp $
+ * $Id: scamper_tracelb_warts.c,v 1.6.2.1 2017/06/22 08:40:56 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb_warts.c,v 1.6 2016/12/02 09:13:42 mjl Exp $";
+  "$Id: scamper_tracelb_warts.c,v 1.6.2.1 2017/06/22 08:40:56 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -422,9 +422,9 @@ static int warts_tracelb_node_read(scamper_tracelb_node_t *node,
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
 
   if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0)
-    {
-      return -1;
-    }
+    return -1;
+  if(node->addr == NULL)
+    return -1;
 
   return 0;
 }
@@ -452,10 +452,8 @@ static int extract_tracelb_reply_icmp_tc(const uint8_t *buf, uint32_t *off,
 					 scamper_tracelb_reply_t *reply,
 					 void *param)
 {
-  if(len - *off < 2)
-    {
-      return -1;
-    }
+  if(*off >= len || len - *off < 2)
+    return -1;
   reply->reply_icmp_type = buf[(*off)++];
   reply->reply_icmp_code = buf[(*off)++];
   return 0;
@@ -957,6 +955,9 @@ static int warts_tracelb_link_read(scamper_tracelb_t *trace,
     {
       return -1;
     }
+
+  if(from >= trace->nodec)
+    return -1;
   link->from = trace->nodes[from];
 
   if(flag_isset(&buf[o], WARTS_TRACELB_LINK_TO) != 0)

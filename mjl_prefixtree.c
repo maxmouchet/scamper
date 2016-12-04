@@ -31,13 +31,13 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_prefixtree.c,v 1.9 2016/10/28 06:45:52 mjl Exp $
+ * $Id: mjl_prefixtree.c,v 1.9.4.1 2017/06/22 08:19:51 mjl Exp $
  *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_prefixtree.c,v 1.9 2016/10/28 06:45:52 mjl Exp $";
+  "$Id: mjl_prefixtree.c,v 1.9.4.1 2017/06/22 08:19:51 mjl Exp $";
 #endif
 
 #include <sys/types.h>
@@ -193,9 +193,9 @@ prefix6_t *prefix6_dup_dm(const prefix6_t *item,
 {
   prefix6_t *dup;
 #ifndef DMALLOC
-  dup = malloc(sizeof(prefix4_t));
+  dup = malloc(sizeof(prefix6_t));
 #else
-  dup = dmalloc_malloc(file,line,sizeof(prefix4_t), DMALLOC_FUNC_MALLOC, 0, 0);
+  dup = dmalloc_malloc(file,line,sizeof(prefix6_t), DMALLOC_FUNC_MALLOC, 0, 0);
 #endif
   if(dup == NULL)
     return NULL;
