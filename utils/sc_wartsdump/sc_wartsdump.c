@@ -1,7 +1,7 @@
 /*
  * sc_wartsdump
  *
- * $Id: sc_wartsdump.c,v 1.213.2.1 2016/11/14 05:09:47 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.213.4.1 2016/12/04 06:33:53 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartsdump.c,v 1.213.2.1 2016/11/14 05:09:47 mjl Exp $";
+  "$Id: sc_wartsdump.c,v 1.213.4.1 2016/12/04 06:33:53 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

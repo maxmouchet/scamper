@@ -5,7 +5,7 @@
  * Copyright (C) 2016      Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_tracelb_warts.c,v 1.5 2016/07/03 10:27:31 mjl Exp $
+ * $Id: scamper_tracelb_warts.c,v 1.6 2016/12/02 09:13:42 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb_warts.c,v 1.5 2016/07/03 10:27:31 mjl Exp $";
+  "$Id: scamper_tracelb_warts.c,v 1.6 2016/12/02 09:13:42 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -301,7 +301,13 @@ static int warts_tracelb_params_read(scamper_tracelb_t *trace,
     {&trace->userid,       (wpr_t)extract_uint32,    NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
-  return warts_params_read(buf, off, len, handlers, handler_cnt);
+  int rc;
+
+  if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
+    return rc;
+  if(trace->src == NULL || trace->dst == NULL)
+    return -1;
+  return 0;
 }
 
 static int warts_tracelb_params_write(const scamper_tracelb_t *trace,

@@ -1,7 +1,7 @@
 /*
  * scamper_neighbourdisc_warts.h
  *
- * $Id: scamper_neighbourdisc_warts.c,v 1.6 2016/07/03 10:27:31 mjl Exp $
+ * $Id: scamper_neighbourdisc_warts.c,v 1.7 2016/12/02 09:13:42 mjl Exp $
  *
  * Copyright (C) 2009-2016 Matthew Luckie
  *
@@ -22,7 +22,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_neighbourdisc_warts.c,v 1.6 2016/07/03 10:27:31 mjl Exp $";
+  "$Id: scamper_neighbourdisc_warts.c,v 1.7 2016/12/02 09:13:42 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -401,8 +401,16 @@ static int warts_neighbourdisc_params_read(scamper_neighbourdisc_t *nd,
     {&nd->dst_mac,  (wpr_t)extract_addr,    table},
     {&nd->probec,   (wpr_t)extract_uint16,  NULL},
   };
-  const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
-  return warts_params_read(buf, off, len, handlers, handler_cnt);
+  const int handler_cnt = sizeof(handlers) / sizeof(warts_param_reader_t);
+  int rc;
+
+  if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
+    return rc;
+
+  if(nd->src_mac == NULL)
+    return -1;
+
+  return 0;
 }
 
 static void warts_neighbourdisc_probes_free(warts_neighbourdisc_probe_t *ps,
@@ -561,7 +569,6 @@ int scamper_file_warts_neighbourdisc_read(scamper_file_t *sf,
     }
 
  done:
-  assert(off == hdr->len);
   warts_addrtable_free(table);
   *nd_out = nd;
   free(buf);

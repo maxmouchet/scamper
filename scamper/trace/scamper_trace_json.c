@@ -6,9 +6,11 @@
  * Copyright (C) 2011-2013 Internap Network Services Corporation
  * Copyright (C) 2013-2014 The Regents of the University of California
  * Copyright (C) 2015      The University of Waikato
+ * Copyright (C) 2016      Matthew Luckie
+ *
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_trace_json.c,v 1.10 2015/10/14 04:26:08 mjl Exp $
+ * $Id: scamper_trace_json.c,v 1.11 2016/12/03 20:39:30 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_json.c,v 1.10 2015/10/14 04:26:08 mjl Exp $";
+  "$Id: scamper_trace_json.c,v 1.11 2016/12/03 20:39:30 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -38,6 +40,7 @@ static const char rcsid[] =
 #include "scamper_addr.h"
 #include "scamper_list.h"
 #include "scamper_trace.h"
+#include "scamper_icmpext.h"
 #include "scamper_file.h"
 #include "scamper_trace_json.h"
 #include "utils.h"
@@ -45,12 +48,15 @@ static const char rcsid[] =
 static char *hop_tostr(scamper_trace_hop_t *hop)
 {
   char buf[512], tmp[128];
+  scamper_icmpext_t *ie;
   size_t off = 0;
+  uint32_t u32;
+  int i;
 
   string_concat(buf, sizeof(buf), &off,	"{\"addr\":\"%s\"",
 		scamper_addr_tostr(hop->hop_addr, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off,
-		", \"probe_ttl\":%u, \"probe_id\":%u, \"probe_size\":%u", 
+		", \"probe_ttl\":%u, \"probe_id\":%u, \"probe_size\":%u",
 		hop->hop_probe_ttl, hop->hop_probe_id, hop->hop_probe_size);
   if(hop->hop_tx.tv_sec != 0)
     string_concat(buf, sizeof(buf), &off, ", \"tx\":%s",
@@ -86,6 +92,40 @@ static char *hop_tostr(scamper_trace_hop_t *hop)
       string_concat(buf, sizeof(buf), &off,
 		    ", \"tcp_flags\":%u", hop->hop_tcp_flags);
     }
+
+  if(hop->hop_icmpext != NULL)
+    {
+      string_concat(buf, sizeof(buf), &off, ", \"icmpext\":[");
+      for(ie=hop->hop_icmpext; ie != NULL; ie=ie->ie_next)
+	{
+	  if(ie != hop->hop_icmpext)
+	    string_concat(buf, sizeof(buf), &off, ",");
+	  string_concat(buf, sizeof(buf), &off,
+			"{\"ie_cn\":%u,\"ie_ct\":%u,\"ie_dl\":%u",
+			ie->ie_cn, ie->ie_ct, ie->ie_dl);
+	  if(SCAMPER_ICMPEXT_IS_MPLS(ie))
+	    {
+	      string_concat(buf, sizeof(buf), &off,
+			    ",\"mpls_labels\":[");
+	      for(i=0; i<SCAMPER_ICMPEXT_MPLS_COUNT(ie); i++)
+		{
+		  u32 = SCAMPER_ICMPEXT_MPLS_LABEL(ie, i);
+		  if(i > 0)
+		    string_concat(buf, sizeof(buf), &off, ",");
+		  string_concat(buf, sizeof(buf), &off,
+				"{\"mpls_ttl\":%u,\"mpls_s\":%u,"
+				"\"mpls_exp\":%u,\"mpls_label\":%u}",
+				SCAMPER_ICMPEXT_MPLS_TTL(ie, i),
+				SCAMPER_ICMPEXT_MPLS_S(ie, i),
+				SCAMPER_ICMPEXT_MPLS_EXP(ie, i), u32);
+		}
+	      string_concat(buf, sizeof(buf), &off, "]");
+	    }
+	  string_concat(buf, sizeof(buf), &off, "}");
+	}
+      string_concat(buf, sizeof(buf), &off, "]");
+    }
+
   string_concat(buf, sizeof(buf), &off, "}");
   return strdup(buf);
 }

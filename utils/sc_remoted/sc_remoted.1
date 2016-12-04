@@ -6,7 +6,7 @@
 .\" Copyright (c) 2014-2015 Matthew Luckie
 .\"               All rights reserved
 .\"
-.\" $Id: sc_remoted.1,v 1.8 2015/12/04 08:14:27 mjl Exp $
+.\" $Id: sc_remoted.1,v 1.9 2016/11/20 17:33:49 mjl Exp $
 .\"
 .Dd September 21, 2014
 .Dt SC_REMOTED 1
@@ -71,9 +71,6 @@ with all sockets, rather than
 .Xr epoll 2
 or
 .Xr kqueue 2
-.It
-.Sy tka:
-use TCP keepalives with all remote scamper processes, sent every 2 minutes.
 .El
 .It Fl P Ar port
 specifies the port on the local host where
@@ -84,7 +81,9 @@ specifies the directory on the local host where unix domain sockets
 corresponding to remote hosts should be placed.
 .It Fl c Ar tls-certificate
 specifies the server certificate file in PEM format to advertise to
-remote scamper instances.
+remote
+.Xr scamper 1
+instances.
 .It Fl p Ar tls-privatekey
 specifies the private key file in PEM format that corresponds to the
 certificate file.  This key should have a passphrase.
@@ -93,7 +92,9 @@ will prompt for the passphrase when starting up.
 .El
 .\""""""""""""
 .Sh EXAMPLES
-The intended use of scamper's remote control socket is as follows.
+The intended use of the remote control socket built into
+.Xr scamper 1
+is as follows.
 A central server with IP addresses 192.0.2.1 and 2001:db8::1
 runs a
 .Nm
@@ -138,8 +139,7 @@ OpenSSL to authenticate and encrypt communications between
 .Nm
 and scamper.
 To use this support requires a public certificate signed by a
-certificate authority or signed by the certificate authority built
-into scamper.
+certificate authority.
 Scamper will verify the certificate presented by
 .Nm
 and disconnect if the certificate presented by
@@ -147,9 +147,8 @@ and disconnect if the certificate presented by
 cannot be validated.
 .Pp
 Generating a certificate that will be accepted by scamper requires you
-to create a certificate request and pass it for signing either to a
-certificate authority or to scamper's author, whose details are found
-in the authors section of this page.
+to create a certificate request and pass it for signing to a
+certificate authority.
 To generate a private key in file remotepriv.pem, and a request to
 sign the key in remotereq.pem:
 .Pp

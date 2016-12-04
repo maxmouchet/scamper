@@ -1,7 +1,7 @@
 /*
  * scamper_dealias.c
  *
- * $Id: scamper_dealias.c,v 1.50 2016/09/17 03:59:46 mjl Exp $
+ * $Id: scamper_dealias.c,v 1.51 2016/11/21 04:20:47 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2012-2013 The Regents of the University of California
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias.c,v 1.50 2016/09/17 03:59:46 mjl Exp $";
+  "$Id: scamper_dealias.c,v 1.51 2016/11/21 04:20:47 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -458,16 +458,10 @@ static int dealias_ipid16_inseq3(uint32_t a,uint32_t b,uint32_t c,uint32_t f)
   if(a > c)
     c += 0x10000;
 
-  if(f != 0)
-    {
-      if(b - a > f || c - b > f)
-	return 0;
-    }
-  else
-    {
-      if(a > b || b > c)
-	return 0;
-    }
+  if(a > b || b > c)
+    return 0;
+  if(f != 0 && (b - a > f || c - b > f))
+    return 0;
 
   return 1;
 }
@@ -496,16 +490,10 @@ static int dealias_ipid32_inseq3(uint64_t a,uint64_t b,uint64_t c,uint64_t f)
   if(a > c)
     c += 0x100000000ULL;
 
-  if(f != 0)
-    {
-      if(b - a > f || c - b > f)
-	return 0;
-    }
-  else
-    {
-      if(a > b || b > c)
-	return 0;
-    }
+  if(a > b || b > c)
+    return 0;
+  if(f != 0 && (b - a > f || c - b > f))
+    return 0;
 
   return 1;
 }

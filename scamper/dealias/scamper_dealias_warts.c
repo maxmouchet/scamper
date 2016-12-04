@@ -7,7 +7,7 @@
  * Copyright (C) 2015-2016 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_warts.c,v 1.14 2016/07/03 10:27:31 mjl Exp $
+ * $Id: scamper_dealias_warts.c,v 1.15 2016/12/02 09:13:42 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_warts.c,v 1.14 2016/07/03 10:27:31 mjl Exp $";
+  "$Id: scamper_dealias_warts.c,v 1.15 2016/12/02 09:13:42 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1577,8 +1577,16 @@ int scamper_file_warts_dealias_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     }
 
   if(warts_dealias_params_read(dealias, state, buf, &off, hdr->len) != 0)
+    goto err;
+  if(dealias->method == 0)
+    goto err;
+
+  /* bounds check the type, can only read types we know about */
+  if(dealias->method > 5)
     {
-      goto err;
+      scamper_dealias_free(dealias);
+      *dealias_out = NULL;
+      return 0;
     }
 
   if((table = warts_addrtable_alloc_byid()) == NULL)

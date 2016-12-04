@@ -6,7 +6,7 @@
  * Copyright (C) 2016 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_sniff_warts.c,v 1.7 2016/07/03 10:27:31 mjl Exp $
+ * $Id: scamper_sniff_warts.c,v 1.8 2016/12/02 09:13:42 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sniff_warts.c,v 1.7 2016/07/03 10:27:31 mjl Exp $";
+  "$Id: scamper_sniff_warts.c,v 1.8 2016/12/02 09:13:42 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -232,8 +232,12 @@ static int warts_sniff_params_read(scamper_sniff_t *sniff,
     {&sniff->icmpid,       (wpr_t)extract_uint16,       NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
-
-  return warts_params_read(buf, off, len, handlers, handler_cnt);
+  int rc;
+  if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
+    return rc;
+  if(sniff->src == NULL)
+    return -1;
+  return 0;
 }
 
 static int warts_sniff_params_write(const scamper_sniff_t *sniff,
@@ -331,7 +335,6 @@ int scamper_file_warts_sniff_read(scamper_file_t *sf, const warts_hdr_t *hdr,
         }
     }
 
-  assert(off == hdr->len);
   warts_addrtable_free(table);
   *sniff_out = sniff;
   free(buf);

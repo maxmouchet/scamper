@@ -1,7 +1,7 @@
 /*
  * sc_bdrmap: driver to map first hop border routers of networks
  *
- * $Id: sc_bdrmap.c,v 1.4.2.2 2016/11/15 00:50:49 mjl Exp $
+ * $Id: sc_bdrmap.c,v 1.4.4.1 2016/12/04 06:35:21 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@caida.org / mjl@wand.net.nz
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_bdrmap.c,v 1.4.2.2 2016/11/15 00:50:49 mjl Exp $";
+  "$Id: sc_bdrmap.c,v 1.4.4.1 2016/12/04 06:35:21 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

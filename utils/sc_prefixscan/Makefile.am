@@ -15,4 +15,6 @@ sc_prefixscan_SOURCES = \
 
 sc_prefixscan_LDADD = ../../scamper/libscamperfile.la
 
+man_MANS = sc_prefixscan.1
+
 CLEANFILES = *~ *.core

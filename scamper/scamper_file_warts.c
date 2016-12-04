@@ -3,7 +3,7 @@
  *
  * the warts file format
  *
- * $Id: scamper_file_warts.c,v 1.251 2016/10/19 07:05:53 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.252 2016/12/02 09:13:42 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_warts.c,v 1.251 2016/10/19 07:05:53 mjl Exp $";
+  "$Id: scamper_file_warts.c,v 1.252 2016/12/02 09:13:42 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -441,7 +441,11 @@ int extract_addr(const uint8_t *buf, uint32_t *off,
       if(len - *off < 4)
 	return -1;
 
+      /* load the index value out, and sanity check it */
       memcpy(&u32, &buf[*off], 4); u32 = ntohl(u32);
+      if(u32 >= table->addrc)
+	return -1;
+
       *out = scamper_addr_use(table->addrs[u32]->addr);
       *off += 4;
       return 0;
@@ -449,9 +453,12 @@ int extract_addr(const uint8_t *buf, uint32_t *off,
 
   /*
    * we have an address defined inline.  extract the address out and store
-   * it in a table, incase it is referenced shortly
+   * it in a table, incase it is referenced shortly.  sanity check the type
+   * of address
    */
   type = buf[(*off)++];
+  if(type == 0 || type > SCAMPER_ADDR_TYPE_MAX)
+    return -1;
   if((wa = malloc_zero(sizeof(warts_addr_t))) == NULL ||
      (wa->addr = scamper_addr_alloc(type, &buf[*off])) == NULL ||
      array_insert((void ***)&table->addrs, &table->addrc, wa, NULL) != 0)
@@ -863,6 +870,8 @@ int warts_read(scamper_file_t *sf, uint8_t **buf, size_t len)
   size_t         rc;
 
   *buf = NULL;
+  if(len == 0)
+    return -1;
 
   if(rf != NULL)
     {
@@ -1075,9 +1084,7 @@ int warts_addr_read(scamper_file_t *sf, const warts_hdr_t *hdr,
   if(buf == NULL)
     {
       if(addr_out != NULL)
-	{
-	  *addr_out = NULL;
-	}
+	*addr_out = NULL;
       return 0;
     }
 
@@ -1086,23 +1093,21 @@ int warts_addr_read(scamper_file_t *sf, const warts_hdr_t *hdr,
    * think it should be.
    */
   if(state->addr_count % 255 != buf[0])
-    {
-      goto err;
-    }
+    goto err;
 
+  /* sanity check the type of address */
+  if(buf[1] == 0 || buf[1] > SCAMPER_ADDR_TYPE_MAX)
+    goto err;
+  
   /* allocate a scamper address using the record read from disk */
   if((addr = scamper_addr_alloc(buf[1], buf+2)) == NULL)
-    {
-      goto err;
-    }
+    goto err;
 
   state->addr_table[state->addr_count++] = addr;
   free(buf);
 
   if(addr_out != NULL)
-    {
-      *addr_out = addr;
-    }
+    *addr_out = addr;
 
   return 0;
 
@@ -1880,13 +1885,13 @@ int warts_icmpext_read(const uint8_t *buf, uint32_t *off, uint32_t len,
 
   *off += 2;
 
-  assert(tmp > 0);
+  /* the length value must be greater than zero */
+  if(tmp == 0)
+    return -1;
 
   /* make sure there's enough left for the extension data */
   if(len - *off < tmp)
-    {
-      return -1;
-    }
+    return -1;
 
   while(tmp >= 4)
     {
@@ -1917,7 +1922,9 @@ int warts_icmpext_read(const uint8_t *buf, uint32_t *off, uint32_t len,
       tmp  -= (2 + 1 + 1 + u16);
     }
 
-  assert(tmp == 0);
+  if(tmp != 0)
+    return -1;
+
   return 0;
 }
 

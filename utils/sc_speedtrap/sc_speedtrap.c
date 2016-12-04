@@ -1,7 +1,7 @@
 /*
  * sc_speedtrap
  *
- * $Id: sc_speedtrap.c,v 1.30.2.1 2016/11/14 04:57:26 mjl Exp $
+ * $Id: sc_speedtrap.c,v 1.31 2016/11/21 02:26:55 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_speedtrap.c,v 1.30.2.1 2016/11/14 04:57:26 mjl Exp $";
+  "$Id: sc_speedtrap.c,v 1.31 2016/11/21 02:26:55 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -512,17 +512,10 @@ static int ipid_inseq3(uint64_t a, uint64_t b, uint64_t c)
     b += 0x100000000ULL;
   if(a > c)
     c += 0x100000000ULL;
-
-  if(fudge != 0)
-    {
-      if(b - a > fudge || c - b > fudge)
-	return 0;
-    }
-  else
-    {
-      if(a > b || b > c)
-	return 0;
-    }
+  if(a > b || b > c)
+    return 0;
+  if(fudge != 0 && (b - a > fudge || c - b > fudge))
+    return 0;
   return 1;
 }
 
@@ -1543,7 +1536,7 @@ static int do_method_ping(void)
     {
       heap_remove(waiting);
       tg = w->un.target;
-      sc_wait_free(w);
+      free(w);
     }
   else if((tg = target_func[mode]()) == NULL)
     return 0;
@@ -1582,7 +1575,7 @@ static int do_method_ally(void)
     {
       heap_remove(waiting);
       ts = w->un.targetset;
-      sc_wait_free(w);
+      free(w);
     }
   else if((ts = targetset_ally()) == NULL)
     return 0;
