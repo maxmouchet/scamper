@@ -3,7 +3,7 @@
  *
  * the warts file format
  *
- * $Id: scamper_file_warts.c,v 1.252.2.1 2017/06/22 08:34:33 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.253 2016/12/09 08:42:51 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_warts.c,v 1.252.2.1 2017/06/22 08:34:33 mjl Exp $";
+  "$Id: scamper_file_warts.c,v 1.253 2016/12/09 08:42:51 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

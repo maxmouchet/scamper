@@ -1,7 +1,7 @@
 /*
  * sc_bdrmap: driver to map first hop border routers of networks
  *
- * $Id: sc_bdrmap.c,v 1.4.4.1 2016/12/04 06:35:21 mjl Exp $
+ * $Id: sc_bdrmap.c,v 1.7 2017/07/10 07:24:51 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@caida.org / mjl@wand.net.nz
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_bdrmap.c,v 1.4.4.1 2016/12/04 06:35:21 mjl Exp $";
+  "$Id: sc_bdrmap.c,v 1.7 2017/07/10 07:24:51 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -2159,7 +2159,10 @@ static sc_test_t *sc_pingtest_alloc(scamper_addr_t *addr)
 
   if((pt = malloc_zero(sizeof(sc_pingtest_t))) == NULL ||
      (pt->target = sc_target_alloc(addr)) == NULL)
-    return NULL;
+    {
+      if(pt != NULL) sc_pingtest_free(pt);
+      return NULL;
+    }
   pt->ping = ping;
 
   if((test = sc_test_alloc(TEST_PING, pt)) == NULL)
@@ -2662,6 +2665,34 @@ static int sc_router_ttlexp_count(const sc_router_t *rtr)
   return ttlexpc;
 }
 
+/*
+ * sc_router_ispt2pt
+ *
+ * for the two routers, infer if they are connected by a pt2pt link:
+ * if we find an address x on X that is in a /30 or /31 subnet of an
+ * y on Y, and y was observed in a ttl-expired message.
+ */
+static int sc_router_ispt2pt(const sc_router_t *x, const sc_router_t *y)
+{
+  sc_addr2router_t *a2r_x, *a2r_y;
+  slist_node_t *sx, *sy;
+
+  for(sy=slist_head_node(y->addrs); sy != NULL; sy = slist_node_next(sy))
+    {
+      a2r_y = slist_node_item(sy);
+      if(a2r_y->ttlexp != 0)
+	continue;
+      for(sx=slist_head_node(x->addrs); sx != NULL; sx=slist_node_next(sx))
+	{
+	  a2r_x = slist_node_item(sx);
+	  if(scamper_addr_prefixhosts(a2r_x->addr, a2r_y->addr) >= 30)
+	    return 1;
+	}
+    }
+
+  return 0;
+}
+
 static int sc_router_isvp(const sc_router_t *rtr)
 {
   sc_addr2router_t *a2r;
@@ -2682,6 +2713,28 @@ static int sc_router_isvp(const sc_router_t *rtr)
   if(vpc == 0)
     return 0;
   return 1;
+}
+
+static int sc_router_ispt2pt_vp(const sc_router_t *rtr)
+{
+  dlist_node_t *dn;
+  sc_router_t *prev;
+
+  if(rtr->prev == NULL)
+    return 0;
+
+  for(dn=dlist_head_node(rtr->prev); dn != NULL; dn=dlist_node_next(dn))
+    {
+      prev = dlist_node_item(dn);
+      if(prev->owner_as == vpas[0] ||
+	 (prev->owner_as == 0 && sc_router_isvp(prev) != 0))
+	{
+	  if(sc_router_ispt2pt(prev, rtr) != 0)
+	    return 1;
+	}
+    }
+
+  return 0;
 }
 
 static int sc_router_isborder(const sc_router_t *rtr)
@@ -5123,7 +5176,7 @@ static int ip2name_line(char *line, void *param)
   if(*name == '\0')
     return 0;
   *name = '\0'; name++;
-  while(isspace(*name) == 1)
+  while(isspace(*name) != 0)
     name++;
 
   if(af == AF_INET)
@@ -5153,7 +5206,10 @@ static int ip2name_line(char *line, void *param)
      (a2n->addr = scamper_addr_alloc(sa.type, sa.addr)) == NULL ||
      (a2n->name = strdup(name)) == NULL ||
      splaytree_insert(ip2name_tree, a2n) == NULL)
-    return -1;
+    {
+      if(a2n != NULL) sc_addr2name_free(a2n);
+      return -1;
+    }
 
   return 0;
 }
@@ -5181,7 +5237,7 @@ static int ip2as_line(char *line, void *param)
   if(*m == '\0')
     return -1;
   *m = '\0'; m++;
-  while(isspace(*m) == 1)
+  while(isspace(*m) != 0)
     m++;
   if(string_tolong(m, &lo) != 0)
     return -1;
@@ -5192,7 +5248,7 @@ static int ip2as_line(char *line, void *param)
   if(*a == '\0')
     return -1;
   *a = '\0'; a++;
-  while(isspace(*a) == 1)
+  while(isspace(*a) != 0)
     a++;
 
   if(af == AF_INET)

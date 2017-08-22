@@ -1,7 +1,7 @@
 /*
  * scamper_do_trace.c
  *
- * $Id: scamper_trace_do.c,v 1.302 2015/10/14 04:26:08 mjl Exp $
+ * $Id: scamper_trace_do.c,v 1.303 2017/08/21 20:21:13 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_do.c,v 1.302 2015/10/14 04:26:08 mjl Exp $";
+  "$Id: scamper_trace_do.c,v 1.303 2017/08/21 20:21:13 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1008,7 +1008,7 @@ static void trace_stop(scamper_trace_t *trace,
   /* if we've already set a stop reason, then don't clobber it */
   if(trace->stop_reason != SCAMPER_TRACE_STOP_NONE)
     {
-      scamper_debug(__func__, "reason %d/%d preceeds %d/%d",
+      scamper_debug(__func__, "reason %d/%d precedes %d/%d",
 		    trace->stop_reason, trace->stop_data, reason, data);
       return;
     }

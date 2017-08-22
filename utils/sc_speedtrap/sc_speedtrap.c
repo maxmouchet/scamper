@@ -1,7 +1,7 @@
 /*
  * sc_speedtrap
  *
- * $Id: sc_speedtrap.c,v 1.31 2016/11/21 02:26:55 mjl Exp $
+ * $Id: sc_speedtrap.c,v 1.40 2017/07/10 07:24:13 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -26,13 +26,17 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_speedtrap.c,v 1.31 2016/11/21 02:26:55 mjl Exp $";
+  "$Id: sc_speedtrap.c,v 1.40 2017/07/10 07:24:13 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 #include "internal.h"
+
+#ifdef HAVE_PTHREAD
+#include <pthread.h>
+#endif
 
 #include "scamper_addr.h"
 #include "scamper_list.h"
@@ -57,6 +61,7 @@ static const char rcsid[] =
 #define OPT_ALIASFILE   0x0100
 #define OPT_DUMP        0x0200
 #define OPT_INCR        0x0400
+#define OPT_THREADC     0x0800
 #define OPT_ALL         0xffff
 
 typedef struct sc_targetipid sc_targetipid_t;
@@ -127,6 +132,18 @@ typedef struct sc_addr2ptr
   void               *ptr;
 } sc_addr2ptr_t;
 
+/*
+ * sc_routerset
+ *
+ * keep a set of routers.  the tree contains sc_addr2ptr_t, the list
+ * contains a list of routers.
+ */
+typedef struct sc_routerset
+{
+  splaytree_t        *tree;
+  dlist_t            *list;
+} sc_routerset_t;
+
 typedef struct sc_dump
 {
   char  *descr;
@@ -182,9 +199,15 @@ static char                  *stop_stepname = NULL;
 static int                    stop_stepid   = 0;
 
 static uint32_t              *pairwise_uint32 = NULL;
-static int                    pairwise_uint32_max = 0;
-static sc_targetipid_t      **pairwise_tipid = NULL;
-static int                    pairwise_tipid_max = 0;
+static sc_targetipid_t      **pairwise_tipid  = NULL;
+static int                    pairwise_max    = 0;
+
+#ifdef HAVE_PTHREAD
+static pthread_mutex_t        targets_sn_mutex;
+static slist_t               *targets_sn = NULL;
+static pthread_mutex_t        rset_mutex;
+static long                   threadc       = -1;
+#endif
 
 static int                    dump_id       = 0;
 static int                    dump_stop     = 0;
@@ -215,6 +238,9 @@ static void usage(uint32_t opt_mask)
   fprintf(stderr,
     "usage: sc_speedtrap [-a addressfile] [-o outfile] [-p port] [-U unix]\n"
     "                    [-I] [-A aliasfile] [-l log] [-s stop] [-S skipfile]\n"
+#ifdef HAVE_PTHREAD
+    "                    [-t thread-count]\n"
+#endif
     "\n"
     "       sc_speedtrap [-d dump] file1.warts .. fileN.warts\n"
     "\n");
@@ -238,6 +264,9 @@ static void usage(uint32_t opt_mask)
   if(opt_mask & OPT_INCR)
     fprintf(stderr, "     -I input addresses increment, skip classify step\n");
 
+  if(opt_mask & OPT_LOG)
+    fprintf(stderr, "     -l output logfile\n");
+
   if(opt_mask & OPT_OUTFILE)
     fprintf(stderr, "     -o output warts file\n");
 
@@ -246,9 +275,6 @@ static void usage(uint32_t opt_mask)
 
   if(opt_mask & OPT_SKIPFILE)
     fprintf(stderr, "     -S input skipfile\n");
-
-  if(opt_mask & OPT_LOG)
-    fprintf(stderr, "     -l output logfile\n");
 
   if(opt_mask & OPT_STOP)
     {
@@ -260,6 +286,11 @@ static void usage(uint32_t opt_mask)
       fprintf(stderr, "]\n");
     }
 
+#ifdef HAVE_PTHREAD
+  if(opt_mask & OPT_THREADC)
+    fprintf(stderr, "     -t number of threads to infer candidate sets\n");
+#endif
+
   if(opt_mask & OPT_UNIX)
     fprintf(stderr, "     -U unix domain to find scamper on\n");
 
@@ -270,11 +301,19 @@ static int check_options(int argc, char *argv[])
 {
   char hostname[255+1];
   long lo;
-  char *opts = "?a:A:d:Il:o:p:s:S:U:w:";
+  char *opts = "?a:A:d:Il:o:p:s:S:"
+#ifdef HAVE_PTHREAD
+    "t:"
+#endif
+    "U:w:";
   char *opt_port = NULL, *opt_unix = NULL, *opt_log = NULL;
   char *opt_aliasfile = NULL, *opt_dump = NULL;
   time_t tt;
   int i, ch;
+
+#ifdef HAVE_PTHREAD
+  char *opt_threadc = NULL;
+#endif
 
   while((ch = getopt(argc, argv, opts)) != -1)
     {
@@ -324,14 +363,24 @@ static int check_options(int argc, char *argv[])
 	  skipfile = optarg;
 	  break;
 
+#ifdef HAVE_PTHREAD
+	case 't':
+	  options |= OPT_THREADC;
+	  opt_threadc = optarg;
+	  break;
+#endif
+
 	case 'U':
 	  options |= OPT_UNIX;
 	  opt_unix = optarg;
 	  break;
 
 	case '?':
-	default:
 	  usage(OPT_ALL);
+	  return -1;
+
+	default:
+	  usage(0);
 	  return -1;
 	}
     }
@@ -366,6 +415,18 @@ static int check_options(int argc, char *argv[])
 	{
 	  unix_name = opt_unix;
 	}
+
+#ifdef HAVE_PTHREAD
+      if(opt_threadc != NULL)
+	{
+	  if(string_tolong(opt_threadc, &lo) != 0 || lo < 0)
+	    {
+	      usage(OPT_THREADC);
+	      return -1;
+	    }
+	  threadc = lo;
+	}
+#endif
 
       if(opt_aliasfile != NULL)
 	{
@@ -547,14 +608,18 @@ static sc_addr2ptr_t *sc_addr2ptr_find(splaytree_t *tree, scamper_addr_t *addr)
 
 static int sc_addr2ptr_add(splaytree_t *tree, scamper_addr_t *addr, void *ptr)
 {
-  sc_addr2ptr_t *a2p;
+  sc_addr2ptr_t *a2p = NULL;
   if((a2p = malloc_zero(sizeof(sc_addr2ptr_t))) == NULL)
-    return -1;
+    goto err;
   a2p->addr = scamper_addr_use(addr);
   a2p->ptr  = ptr;
   if(splaytree_insert(tree, a2p) == NULL)
-    return -1;
+    goto err;
   return 0;
+
+ err:
+  if(a2p != NULL) sc_addr2ptr_free(a2p);
+  return -1;
 }
 
 static int sc_addr2ptr_cmp(const sc_addr2ptr_t *a, const sc_addr2ptr_t *b)
@@ -1137,6 +1202,83 @@ static sc_targetset_t *sc_targetset_alloc(void)
   return ts;
 }
 
+static void sc_routerset_free(sc_routerset_t *set)
+{
+  if(set == NULL)
+    return;
+  if(set->tree != NULL)
+    splaytree_free(set->tree, (splaytree_free_t)sc_addr2ptr_free);
+  if(set->list != NULL)
+    dlist_free(set->list);
+  free(set);
+  return;
+}
+
+static sc_routerset_t *sc_routerset_alloc(void)
+{
+  sc_routerset_t *set = NULL;
+  if((set = malloc_zero(sizeof(sc_routerset_t))) == NULL ||
+     (set->tree = splaytree_alloc((splaytree_cmp_t)sc_addr2ptr_cmp)) == NULL ||
+     (set->list = dlist_alloc()) == NULL)
+    {
+      sc_routerset_free(set);
+      return NULL;
+    }
+  return set;
+}
+
+static int sc_routerset_do(sc_routerset_t *set, sc_target_t *a, sc_target_t *b)
+{
+  sc_addr2ptr_t *a2ts, *a2ts_a, *a2ts_b;
+  sc_targetset_t *ts, *tsa, *tsb;
+  sc_target_t *tg;
+
+  a2ts_a = sc_addr2ptr_find(set->tree, a->addr);
+  a2ts_b = sc_addr2ptr_find(set->tree, b->addr);
+  if(a2ts_a != NULL && a2ts_b != NULL)
+    {
+      tsa = a2ts_a->ptr; tsb = a2ts_b->ptr;
+      if(tsa != tsb)
+	{
+	  while((tg = slist_head_pop(tsb->targets)) != NULL)
+	    {
+	      if(slist_tail_push(tsa->targets, tg) == NULL)
+		return -1;
+	      a2ts = sc_addr2ptr_find(set->tree, tg->addr);
+	      a2ts->ptr = tsa;
+	    }
+	  dlist_node_pop(set->list, tsb->node);
+	  sc_targetset_free(tsb);
+	}
+    }
+  else if(a2ts_a != NULL)
+    {
+      ts = a2ts_a->ptr;
+      if(slist_tail_push(ts->targets, b) == NULL ||
+	 sc_addr2ptr_add(set->tree, b->addr, ts) != 0)
+	return -1;
+    }
+  else if(a2ts_b != NULL)
+    {
+      ts = a2ts_b->ptr;
+      if(slist_tail_push(ts->targets, a) == NULL ||
+	 sc_addr2ptr_add(set->tree, a->addr, ts) != 0)
+	return -1;
+    }
+  else
+    {
+      if((ts = sc_targetset_alloc()) == NULL ||
+	 (ts->node = dlist_tail_push(set->list, ts)) == NULL ||
+	 slist_tail_push(ts->targets, a) == NULL ||
+	 slist_tail_push(ts->targets, b) == NULL ||
+	 sc_addr2ptr_add(set->tree, a->addr, ts) != 0 ||
+	 sc_addr2ptr_add(set->tree, b->addr, ts) != 0)
+	return -1;
+    }
+
+  return 0;
+}
+
 static int sample_overlap(const sc_targetipid_t *a, const sc_targetipid_t *b)
 {
   int rc = timeval_cmp(&a->tx, &b->tx);
@@ -1153,7 +1295,7 @@ static int sample_overlap(const sc_targetipid_t *a, const sc_targetipid_t *b)
   return 1;
 }
 
-static int pairwise_test(sc_targetipid_t **tis, int tc)
+static int pairwise_test(sc_targetipid_t **tis, int tc, uint32_t *pairwise_u32)
 {
   sc_targetipid_t *ti, *st[2][2];
   sc_target_t *x = tis[0]->target;
@@ -1163,21 +1305,14 @@ static int pairwise_test(sc_targetipid_t **tis, int tc)
   st[0][0] = NULL; st[0][1] = NULL;
   st[1][0] = NULL; st[1][1] = NULL;
 
-  if(tc > pairwise_uint32_max)
-    {
-      if(realloc_wrap((void **)&pairwise_uint32, tc * sizeof(uint32_t)) != 0)
-	return -1;
-      pairwise_uint32_max = tc;
-    }
-
   for(i=0; i<tc; i++)
     {
       /* first, check if this IPID has already been observed */
       ti = tis[i];
-      if(uint32_find(pairwise_uint32, ipidc, ti->ipid) != 0)
+      if(uint32_find(pairwise_u32, ipidc, ti->ipid) != 0)
 	return 0;
-      pairwise_uint32[ipidc++] = ti->ipid;
-      qsort(pairwise_uint32, ipidc, sizeof(uint32_t), uint32_cmp);
+      pairwise_u32[ipidc++] = ti->ipid;
+      qsort(pairwise_u32, ipidc, sizeof(uint32_t), uint32_cmp);
 
       if(ti->target == x) { si = 0; sj = 1; }
       else                { si = 1; sj = 0; }
@@ -1224,12 +1359,15 @@ static int pairwise(sc_target_t *ta, sc_target_t *tb)
   int tc;
 
   tc = slist_count(ta->samples) + slist_count(tb->samples);
-  if(tc > pairwise_tipid_max)
+  if(tc > pairwise_max)
     {
       len = tc * sizeof(sc_targetipid_t *);
       if(realloc_wrap((void **)&pairwise_tipid, len) != 0)
 	return -1;
-      pairwise_tipid_max = tc;
+      len = tc * sizeof(uint32_t);
+      if(realloc_wrap((void **)&pairwise_uint32, len) != 0)
+	return -1;
+      pairwise_max = tc;
     }
 
   tc = 0;
@@ -1239,109 +1377,206 @@ static int pairwise(sc_target_t *ta, sc_target_t *tb)
     pairwise_tipid[tc++] = slist_node_item(ss);
   array_qsort((void **)pairwise_tipid, tc, (array_cmp_t)sc_targetipid_tx_cmp);
 
-  return pairwise_test(pairwise_tipid, tc);
+  return pairwise_test(pairwise_tipid, tc, pairwise_uint32);
 }
 
-static int pairwise_all(slist_t *targets, slist_t *sets)
+#ifdef HAVE_PTHREAD
+static void *pairwise_all_thread(void *param)
 {
-  slist_node_t *sa, *sb;
-  sc_target_t *ta, *tb, *tg;
-  sc_targetipid_t **tis = NULL;
-  sc_targetset_t *ts, *tsa, *tsb;
-  sc_addr2ptr_t *a2ts, *a2ts_a, *a2ts_b;
-  splaytree_t *tree;
-  dlist_t *list = NULL;
-  char a[64], b[64];
+  sc_routerset_t *rset = param;
+  sc_targetipid_t **pairwise_tipid = NULL;
+  uint32_t *pairwise_uint32 = NULL;
+  int pairwise_max = 0;
+  int rset_mutex_held = 0;
+  slist_node_t *sa, *sb, *ss;
+  sc_target_t *ta, *tb;
+  slist_t *list;
+  size_t len;
+  int tc;
 
-  if((tree = splaytree_alloc((splaytree_cmp_t)sc_addr2ptr_cmp)) == NULL ||
-     (list = dlist_alloc()) == NULL)
-    goto err;
+  if((list = slist_alloc()) == NULL)
+    return NULL;
 
-  for(sa=slist_head_node(targets); sa != NULL; sa=slist_node_next(sa))
+  for(;;)
     {
-      ta = slist_node_item(sa);
-      if(slist_count(ta->samples) == 0)
-	continue;
+      pthread_mutex_lock(&targets_sn_mutex);
+      for(;;)
+	{
+	  if((sa = slist_head_pop(targets_sn)) == NULL)
+	    break;
+	  ta = slist_node_item(sa);
+	  if(slist_count(ta->samples) > 0)
+	    break;
+	}
+      pthread_mutex_unlock(&targets_sn_mutex);
+      if(sa == NULL)
+	break;
 
       for(sb=slist_node_next(sa); sb != NULL; sb=slist_node_next(sb))
 	{
 	  tb = slist_node_item(sb);
 	  if(slist_count(tb->samples) == 0)
 	    continue;
-	  if(pairwise(ta, tb) != 1)
-	    continue;
 
-	  logprint("likely aliases: %s %s\n",
-		   scamper_addr_tostr(ta->addr, a, sizeof(a)),
-		   scamper_addr_tostr(tb->addr, b, sizeof(b)));
-	  a2ts_a = sc_addr2ptr_find(tree, ta->addr);
-	  a2ts_b = sc_addr2ptr_find(tree, tb->addr);
+	  tc = slist_count(ta->samples) + slist_count(tb->samples);
+	  if(tc > pairwise_max)
+	    {
+	      len = tc * sizeof(sc_targetipid_t *);
+	      if(realloc_wrap((void **)&pairwise_tipid, len) != 0)
+		goto done;
+	      len = tc * sizeof(uint32_t);
+	      if(realloc_wrap((void **)&pairwise_uint32, len) != 0)
+		goto done;
+	      pairwise_max = tc;
+	    }
 
-	  if(a2ts_a != NULL && a2ts_b != NULL)
-	    {
-	      tsa = a2ts_a->ptr; tsb = a2ts_b->ptr;
-	      if(tsa == tsb)
-		continue;
-	      while((tg = slist_head_pop(tsb->targets)) != NULL)
-		{
-		  if(slist_tail_push(tsa->targets, tg) == NULL)
-		    goto err;
-		  a2ts = sc_addr2ptr_find(tree, tg->addr);
-		  a2ts->ptr = tsa;
-		}
-	      dlist_node_pop(list, tsb->node);
-	      sc_targetset_free(tsb);
-	    }
-	  else if(a2ts_a != NULL)
-	    {
-	      ts = a2ts_a->ptr;
-	      if(slist_tail_push(ts->targets, tb) == NULL ||
-		 sc_addr2ptr_add(tree, tb->addr, ts) != 0)
-		goto err;
-	    }
-	  else if(a2ts_b != NULL)
-	    {
-	      ts = a2ts_b->ptr;
-	      if(slist_tail_push(ts->targets, ta) == NULL ||
-		 sc_addr2ptr_add(tree, ta->addr, ts) != 0)
-		goto err;
-	    }
-	  else
-	    {
-	      if((ts = sc_targetset_alloc()) == NULL ||
-		 (ts->node = dlist_tail_push(list, ts)) == NULL ||
-		 slist_tail_push(ts->targets, ta) == NULL ||
-		 slist_tail_push(ts->targets, tb) == NULL ||
-		 sc_addr2ptr_add(tree, ta->addr, ts) != 0 ||
-		 sc_addr2ptr_add(tree, tb->addr, ts) != 0)
-		goto err;
-	    }
+	  tc = 0;
+	  for(ss=slist_head_node(ta->samples); ss!=NULL; ss=slist_node_next(ss))
+	    pairwise_tipid[tc++] = slist_node_item(ss);
+	  for(ss=slist_head_node(tb->samples); ss!=NULL; ss=slist_node_next(ss))
+	    pairwise_tipid[tc++] = slist_node_item(ss);
+	  array_qsort((void **)pairwise_tipid, tc,
+		      (array_cmp_t)sc_targetipid_tx_cmp);
+
+	  if(pairwise_test(pairwise_tipid, tc, pairwise_uint32) != 0 &&
+	     slist_tail_push(list, tb) == NULL)
+	    goto done;
+	}
+
+      if(slist_count(list) > 0)
+	{
+	  /* so merge the addresses into a router */
+	  pthread_mutex_lock(&rset_mutex);
+	  rset_mutex_held = 1;
+	  while((tb = slist_head_pop(list)) != NULL)
+	    if(sc_routerset_do(rset, ta, tb) != 0)
+	      goto done;
+	  pthread_mutex_unlock(&rset_mutex);
+	  rset_mutex_held = 0;
 	}
     }
 
-  if(tree != NULL)
+ done:
+  if(rset_mutex_held != 0)
+    pthread_mutex_unlock(&rset_mutex);
+  if(pairwise_tipid != NULL)
+    free(pairwise_tipid);
+  if(pairwise_uint32 != NULL)
+    free(pairwise_uint32);
+  if(list != NULL)
+    slist_free(list);
+  return NULL;
+}
+#endif
+
+static int pairwise_all(slist_t *targets, slist_t *sets)
+{
+  sc_routerset_t *rset = NULL;
+  slist_node_t *sa, *sb;
+  sc_target_t *ta, *tb;
+  sc_targetset_t *ts;
+
+#if defined(HAVE_PTHREAD)
+  pthread_t *threads = NULL;
+  int targets_sn_mutex_ok = 0;
+  int rset_mutex_ok = 0;
+  long i, threadn;
+#endif
+
+#if defined(HAVE_PTHREAD) && defined(_SC_NPROCESSORS_ONLN)
+  if(threadc == -1)
     {
-      splaytree_free(tree, (splaytree_free_t)sc_addr2ptr_free);
-      tree = NULL;
+      if((i = sysconf(_SC_NPROCESSORS_ONLN)) < 1)
+	threadc = 1;
+      else
+	threadc = i;
     }
-  if(tis != NULL)
+#endif
+
+  if((rset = sc_routerset_alloc()) == NULL)
+    goto err;
+
+#if defined(HAVE_PTHREAD)
+  if(threadc < 2)
     {
-      free(tis);
-      tis = NULL;
+#endif
+      for(sa=slist_head_node(targets); sa != NULL; sa=slist_node_next(sa))
+	{
+	  ta = slist_node_item(sa);
+	  if(slist_count(ta->samples) == 0)
+	    continue;
+	  for(sb=slist_node_next(sa); sb != NULL; sb=slist_node_next(sb))
+	    {
+	      tb = slist_node_item(sb);
+	      if(slist_count(tb->samples) == 0)
+		continue;
+	      if(pairwise(ta, tb) != 1)
+		continue;
+	      if(sc_routerset_do(rset, ta, tb) != 0)
+		goto err;
+	    }
+	}
+#if defined(HAVE_PTHREAD)
     }
-  while((ts = dlist_head_pop(list)) != NULL)
+  else
+    {
+      /* construct a list of slist_node_t pointing to targets */
+      if((targets_sn = slist_alloc()) == NULL)
+	goto err;
+      for(sa=slist_head_node(targets); sa != NULL; sa=slist_node_next(sa))
+	slist_tail_push(targets_sn, sa);
+
+      /* create a thread pool to work over the targets */
+      if((threads = malloc(sizeof(pthread_t) * threadc)) == NULL)
+	goto err;
+      if(pthread_mutex_init(&targets_sn_mutex, NULL) != 0)
+	goto err;
+      targets_sn_mutex_ok = 1;
+      if(pthread_mutex_init(&rset_mutex, NULL) != 0)
+	goto err;
+      rset_mutex_ok = 1;
+      for(threadn=0; threadn<threadc; threadn++)
+	{
+	  if(pthread_create(&threads[threadn],NULL,pairwise_all_thread,rset)!=0)
+	    goto err;
+	}
+
+      /* wait for threads to complete and clean up */
+      for(i=0; i<threadc; i++)
+	pthread_join(threads[i], NULL);
+      free(threads);
+      pthread_mutex_destroy(&rset_mutex); rset_mutex_ok = 0;
+      pthread_mutex_destroy(&targets_sn_mutex); targets_sn_mutex_ok = 0;
+    }
+#endif
+
+  while((ts = dlist_head_pop(rset->list)) != NULL)
     {
       sc_targetset_print(ts);
       if(slist_tail_push(sets, ts) == NULL)
 	goto err;
     }
-  dlist_free(list);
+  sc_routerset_free(rset);
   return 0;
 
  err:
-  if(tree != NULL) splaytree_free(tree, free);
-  if(list != NULL) dlist_free(list);
-  if(tis != NULL) free(tis);
+  if(rset != NULL) sc_routerset_free(rset);
+
+#if defined(HAVE_PTHREAD)
+  if(threads != NULL)
+    {
+      for(i=0; i<threadc; i++)
+	pthread_cancel(threads[i]);
+      for(i=0; i<threadc; i++)
+	pthread_join(threads[i], NULL);
+      free(threads);
+    }
+  if(rset_mutex_ok != 0)
+    pthread_mutex_destroy(&rset_mutex);
+  if(targets_sn_mutex_ok != 0)
+    pthread_mutex_destroy(&targets_sn_mutex);
+#endif
+
   return -1;
 }
 
@@ -1536,7 +1771,7 @@ static int do_method_ping(void)
     {
       heap_remove(waiting);
       tg = w->un.target;
-      free(w);
+      sc_wait_free(w);
     }
   else if((tg = target_func[mode]()) == NULL)
     return 0;
@@ -1575,7 +1810,7 @@ static int do_method_ally(void)
     {
       heap_remove(waiting);
       ts = w->un.targetset;
-      free(w);
+      sc_wait_free(w);
     }
   else if((ts = targetset_ally()) == NULL)
     return 0;

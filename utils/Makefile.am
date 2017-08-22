@@ -10,7 +10,13 @@ SUBDIRS = \
 	sc_remoted \
 	sc_speedtrap \
 	sc_tbitblind \
-	sc_tracediff \
+	sc_tracediff
+
+if WITH_SC_UPTIME
+SUBDIRS+= sc_uptime
+endif
+
+SUBDIRS+= \
 	sc_warts2csv \
 	sc_warts2json \
 	sc_warts2pcap \

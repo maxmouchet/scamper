@@ -10,7 +10,7 @@
  *
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_trace_json.c,v 1.11.2.1 2017/06/22 19:53:58 mjl Exp $
+ * $Id: scamper_trace_json.c,v 1.14 2017/07/12 07:34:02 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_json.c,v 1.11.2.1 2017/06/22 19:53:58 mjl Exp $";
+  "$Id: scamper_trace_json.c,v 1.14 2017/07/12 07:34:02 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -42,6 +42,7 @@ static const char rcsid[] =
 #include "scamper_trace.h"
 #include "scamper_icmpext.h"
 #include "scamper_file.h"
+#include "scamper_file_json.h"
 #include "scamper_trace_json.h"
 #include "utils.h"
 
@@ -59,10 +60,11 @@ static char *hop_tostr(scamper_trace_hop_t *hop)
 		", \"probe_ttl\":%u, \"probe_id\":%u, \"probe_size\":%u",
 		hop->hop_probe_ttl, hop->hop_probe_id, hop->hop_probe_size);
   if(hop->hop_tx.tv_sec != 0)
-    string_concat(buf, sizeof(buf), &off, ", \"tx\":%s",
-		  timeval_tostr(&hop->hop_tx, tmp, sizeof(tmp)));
+    string_concat(buf, sizeof(buf), &off,
+		  ", \"tx\":{\"sec\":%u, \"usec\":%u}",
+		  hop->hop_tx.tv_sec, hop->hop_tx.tv_usec);
   string_concat(buf, sizeof(buf), &off, ", \"rtt\":%s",
-		timeval_tostr(&hop->hop_rtt, tmp, sizeof(tmp)));
+		timeval_tostr_us(&hop->hop_rtt, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off,
 		", \"reply_ttl\":%u, \"reply_tos\":%u, \"reply_size\":%u",
 		hop->hop_reply_ttl, hop->hop_reply_tos, hop->hop_reply_size);
@@ -136,7 +138,7 @@ static char *header_tostr(const scamper_trace_t *trace)
   size_t off = 0;
   time_t tt = trace->start.tv_sec;
 
-  string_concat(buf, sizeof(buf), &off, "\"version\":\"0.1\",\"type\":\"trace\"");
+  string_concat(buf,sizeof(buf),&off,"\"type\":\"trace\",\"version\":\"0.1\"");
   string_concat(buf, sizeof(buf), &off, ", \"userid\":%u", trace->userid);
   string_concat(buf, sizeof(buf), &off, ", \"method\":\"%s\"",
 		scamper_trace_type_tostr(trace, tmp, sizeof(tmp)));
@@ -174,14 +176,9 @@ int scamper_file_json_trace_write(const scamper_file_t *sf,
 				  const scamper_trace_t *trace)
 {
   scamper_trace_hop_t *hop;
-  int fd = scamper_file_getfd(sf);
-  size_t wc, len, off = 0;
-  off_t foff = 0;
+  size_t len, off = 0;
   char *str = NULL, *header = NULL, **hops = NULL;
   int i, j, hopc = 0, rc = -1;
-
-  if(fd != STDOUT_FILENO && (foff = lseek(fd, 0, SEEK_CUR)) == -1)
-    return -1;
 
   if((header = header_tostr(trace)) == NULL)
     goto cleanup;
@@ -226,17 +223,7 @@ int scamper_file_json_trace_write(const scamper_file_t *sf,
   string_concat(str, len, &off, "}\n");
   assert(off+1 == len);
 
-  if(write_wrap(fd, str, &wc, off) != 0)
-    {
-      if(fd != STDOUT_FILENO)
-	{
-	  if(ftruncate(fd, foff) != 0)
-	    goto cleanup;
-	}
-      goto cleanup;
-    }
-
-  rc = 0; /* we succeeded */
+  rc = json_write(sf, str, off);
 
  cleanup:
   if(hops != NULL)

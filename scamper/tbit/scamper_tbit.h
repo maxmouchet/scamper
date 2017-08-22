@@ -1,7 +1,7 @@
 /*
  * scamper_tbit.h
  *
- * $Id: scamper_tbit.h,v 1.53.4.1 2016/12/04 05:46:57 mjl Exp $
+ * $Id: scamper_tbit.h,v 1.54 2017/08/21 20:41:53 mjl Exp $
  *
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2010-2011 University of Waikato

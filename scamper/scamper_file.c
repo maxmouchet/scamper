@@ -1,7 +1,7 @@
 /*
  * scamper_file.c
  *
- * $Id: scamper_file.c,v 1.69 2016/08/08 08:33:21 mjl Exp $
+ * $Id: scamper_file.c,v 1.71 2017/07/09 09:16:21 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file.c,v 1.69 2016/08/08 08:33:21 mjl Exp $";
+  "$Id: scamper_file.c,v 1.71 2017/07/09 09:16:21 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -39,6 +39,7 @@ static const char rcsid[] =
 #include "scamper_file_warts.h"
 #include "scamper_file_text.h"
 #include "scamper_file_arts.h"
+#include "scamper_file_json.h"
 
 #include "trace/scamper_trace.h"
 #include "trace/scamper_trace_text.h"
@@ -201,12 +202,12 @@ static struct handler handlers[] = {
   {"json",                                 /* type */
    NULL,                                   /* detect */
    NULL,                                   /* init_read */
-   NULL,                                   /* init_write */
+   scamper_file_json_init_write,           /* init_write */
    NULL,                                   /* init_append */
    NULL,                                   /* read */
    scamper_file_json_trace_write,          /* write_trace */
-   NULL,                                   /* write_cycle_start */
-   NULL,                                   /* write_cycle_stop */
+   scamper_file_json_cyclestart_write,     /* write_cycle_start */
+   scamper_file_json_cyclestop_write,      /* write_cycle_stop */
    scamper_file_json_ping_write,           /* write_ping */
    NULL,                                   /* write_tracelb */
    NULL,                                   /* write_sting */
@@ -214,7 +215,7 @@ static struct handler handlers[] = {
    NULL,                                   /* write_neighbourdisc */
    scamper_file_json_tbit_write,           /* write_tbit */
    NULL,                                   /* write_sniff */
-   NULL,                                   /* free_state */
+   scamper_file_json_free_state,           /* free_state */
   },
 };
 
@@ -367,9 +368,9 @@ int scamper_file_write_obj(scamper_file_t *sf, uint16_t type, const void *data)
   static int (*const func[])(scamper_file_t *sf, const void *) = {
     NULL,
     NULL, /* SCAMPER_FILE_OBJ_LIST */
-    NULL, /* SCAMPER_FILE_OBJ_CYCLE_START */
+    (write_obj_func_t)scamper_file_write_cycle_start,
     NULL, /* SCAMPER_FILE_OBJ_CYCLE_DEF */
-    NULL, /* SCAMPER_FILE_OBJ_CYCLE_STOP */
+    (write_obj_func_t)scamper_file_write_cycle_stop,
     NULL, /* SCAMPER_FILE_OBJ_ADDR */
     (write_obj_func_t)scamper_file_write_trace,
     (write_obj_func_t)scamper_file_write_ping,
@@ -714,9 +715,18 @@ static scamper_file_t *file_open(int fd, char *fn, char mode, int type)
   return sf;
 }
 
-scamper_file_t *scamper_file_opennull(char mode)
+scamper_file_t *scamper_file_opennull(char mode, char *format)
 {
-  return file_open(-1, NULL, mode, SCAMPER_FILE_WARTS);
+  uint8_t file_type;
+
+  if(strcasecmp(format, "warts") == 0)
+    file_type = SCAMPER_FILE_WARTS;
+  else if(strcasecmp(format, "json") == 0)
+    file_type = SCAMPER_FILE_JSON;
+  else
+    return NULL;
+
+  return file_open(-1, NULL, mode, file_type);
 }
 
 scamper_file_t *scamper_file_openfd(int fd, char *fn, char mode, char *type)

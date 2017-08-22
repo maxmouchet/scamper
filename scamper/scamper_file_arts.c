@@ -1,7 +1,7 @@
 /*
  * scamper_file_arts.c
  *
- * $Id: scamper_file_arts.c,v 1.62.4.1 2017/06/22 08:33:25 mjl Exp $
+ * $Id: scamper_file_arts.c,v 1.63 2016/12/09 08:42:51 mjl Exp $
  *
  * code to read the legacy arts data file format into scamper_hop structures.
  *
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_arts.c,v 1.62.4.1 2017/06/22 08:33:25 mjl Exp $";
+  "$Id: scamper_file_arts.c,v 1.63 2016/12/09 08:42:51 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

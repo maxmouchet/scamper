@@ -1,7 +1,7 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.184 2016/09/17 05:30:49 mjl Exp $
+ * $Id: utils.c,v 1.185 2017/07/12 07:34:02 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.184 2016/09/17 05:30:49 mjl Exp $";
+  "$Id: utils.c,v 1.185 2017/07/12 07:34:02 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -901,7 +901,7 @@ int timeval_inrange_us(const struct timeval *a, const struct timeval *b, int c)
   return 1;
 }
 
-char *timeval_tostr(const struct timeval *rtt, char *str, size_t len)
+char *timeval_tostr_us(const struct timeval *rtt, char *str, size_t len)
 {
   uint32_t usec = (rtt->tv_sec * 1000000) + rtt->tv_usec;
   snprintf(str, len, "%d.%03d", usec / 1000, usec % 1000);

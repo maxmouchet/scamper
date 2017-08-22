@@ -7,7 +7,7 @@
  * Copyright (C) 2016      Matthew Luckie
  * Authors: Matthew Luckie, Ben Stasiewicz
  *
- * $Id: scamper_tbit_warts.c,v 1.25.2.2 2017/06/22 08:39:56 mjl Exp $
+ * $Id: scamper_tbit_warts.c,v 1.27 2017/08/21 20:41:53 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_warts.c,v 1.25.2.2 2017/06/22 08:39:56 mjl Exp $";
+  "$Id: scamper_tbit_warts.c,v 1.27 2017/08/21 20:41:53 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

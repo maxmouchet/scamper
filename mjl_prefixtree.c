@@ -31,13 +31,13 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_prefixtree.c,v 1.9.4.1 2017/06/22 08:19:51 mjl Exp $
+ * $Id: mjl_prefixtree.c,v 1.11 2017/07/10 07:00:40 mjl Exp $
  *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_prefixtree.c,v 1.9.4.1 2017/06/22 08:19:51 mjl Exp $";
+  "$Id: mjl_prefixtree.c,v 1.11 2017/07/10 07:00:40 mjl Exp $";
 #endif
 
 #include <sys/types.h>
@@ -650,7 +650,7 @@ prefixtree_node_t *prefixtree_insert4_dm(prefixtree_t *tree, prefix4_t *pref,
 #endif
       if(g == NULL)
 	{
-	  free(x);
+	  free(t);
 	  return NULL;
 	}
       g->parent = x->parent;
@@ -792,7 +792,7 @@ prefixtree_node_t *prefixtree_insert6_dm(prefixtree_t *tree, prefix6_t *pref,
 #endif
       if(g == NULL)
 	{
-	  free(x);
+	  free(t);
 	  return NULL;
 	}
       g->parent = x->parent;

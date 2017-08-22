@@ -5,7 +5,7 @@
  * Copyright (c) 2013-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_json.c,v 1.12 2016/09/17 07:06:40 mjl Exp $
+ * $Id: scamper_dealias_json.c,v 1.13 2017/07/09 09:16:21 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_json.c,v 1.12 2016/09/17 07:06:40 mjl Exp $";
+  "$Id: scamper_dealias_json.c,v 1.13 2017/07/09 09:16:21 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -36,6 +36,7 @@ static const char rcsid[] =
 #include "scamper_list.h"
 #include "scamper_dealias.h"
 #include "scamper_file.h"
+#include "scamper_file_json.h"
 #include "scamper_dealias_json.h"
 
 #include "utils.h"
@@ -78,7 +79,7 @@ static char *dealias_header_tostr(const scamper_dealias_t *dealias)
   uint16_t u16;
 
   string_concat(buf, sizeof(buf), &off,
-		"{\"version\":\"0.2\", \"type\":\"dealias\", \"method\":\"%s\"",
+		"{\"type\":\"dealias\",\"version\":\"0.2\",\"method\":\"%s\"",
 		scamper_dealias_method_tostr(dealias, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off, ", \"userid\":%u, \"result\":\"%s\"",
 		dealias->userid,
@@ -339,8 +340,6 @@ static char *dealias_probe_tostr(const scamper_dealias_probe_t *probe)
 int scamper_file_json_dealias_write(const scamper_file_t *sf,
 				    const scamper_dealias_t *dealias)
 {
-  int       fd          = scamper_file_getfd(sf);
-  off_t     off         = 0;
   char     *str         = NULL;
   size_t    len         = 0;
   size_t    wc          = 0;
@@ -354,10 +353,6 @@ int scamper_file_json_dealias_write(const scamper_file_t *sf,
   uint32_t  j;
   scamper_dealias_probedef_t *defs = NULL;
   int defc = 0;
-
-  /* get current position incase trunction is required */
-  if(fd != 1 && (off = lseek(fd, 0, SEEK_CUR)) == -1)
-    return -1;
 
   /* get the header string */
   if((header = dealias_header_tostr(dealias)) == NULL)
@@ -431,20 +426,7 @@ int scamper_file_json_dealias_write(const scamper_file_t *sf,
 
   assert(wc == len);
 
-  /*
-   * try and write the string to disk.  if it fails, then truncate the
-   * write and fail
-   */
-  if(write_wrap(fd, str, &wc, len) != 0)
-    {
-      if(fd != 1)
-	{
-	  if(ftruncate(fd, off) != 0)
-	    goto cleanup;
-	}
-      goto cleanup;
-    }
-  rc = 0; /* we succeeded */
+  rc = json_write(sf, str, len);
 
  cleanup:
   if(str != NULL) free(str);

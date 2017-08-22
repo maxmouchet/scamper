@@ -17,6 +17,7 @@ ltmain.sh
 m4
 man
 missing
+mjl_patricia.lo
 mjl_splaytree.lo
 stamp-h1
 utils.lo

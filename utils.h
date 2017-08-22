@@ -1,7 +1,7 @@
 /*
  * utils.h
  *
- * $Id: utils.h,v 1.114 2016/08/27 07:11:36 mjl Exp $
+ * $Id: utils.h,v 1.115 2017/07/12 07:34:02 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -48,7 +48,7 @@ void timeval_add_s(struct timeval *out, const struct timeval *in, int s);
 void timeval_sub_us(struct timeval *out, const struct timeval *in, int us);
 void timeval_cpy(struct timeval *dst, const struct timeval *src);
 int timeval_inrange_us(const struct timeval *a,const struct timeval *b,int c);
-char *timeval_tostr(const struct timeval *rtt, char *str, size_t len);
+char *timeval_tostr_us(const struct timeval *rtt, char *str, size_t len);
 
 void gettimeofday_wrap(struct timeval *tv);
 

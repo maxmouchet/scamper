@@ -7,7 +7,7 @@
  * Copyright (C) 2012,2015 The Regents of the University of California
  * Authors: Ben Stasiewicz, Matthew Luckie
  *
- * $Id: scamper_tbit.c,v 1.46.4.1 2016/12/04 05:46:57 mjl Exp $
+ * $Id: scamper_tbit.c,v 1.47 2017/08/21 20:41:53 mjl Exp $
  *
  * This file implements algorithms described in the tbit-1.0 source code,
  * as well as the papers:
@@ -34,7 +34,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit.c,v 1.46.4.1 2016/12/04 05:46:57 mjl Exp $";
+  "$Id: scamper_tbit.c,v 1.47 2017/08/21 20:41:53 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

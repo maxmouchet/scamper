@@ -3,7 +3,7 @@
  * By Matthew Luckie
  * U of Waikato 0657.317b 1999
  *
- * Copyright (C) 1999-2010 Matthew Luckie. All rights reserved.
+ * Copyright (C) 1999-2017 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,7 +30,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_splaytree.c,v 1.27 2013/08/07 22:34:17 mjl Exp $";
+  "$Id: mjl_splaytree.c,v 1.29 2017/04/29 09:45:30 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -341,82 +341,79 @@ static splaytree_node_t *splaytree_node_alloc(const void *item,
  * returns 0 if inserted, -1 on error.
  */
 #ifndef DMALLOC
-static int splaytree_insert2(splaytree_t *tree, const void *item,
-			     splaytree_node_t *parent)
+static int splaytree_insert2(splaytree_t *tree, const void *item)
 #else
 static int splaytree_insert2(splaytree_t *tree, const void *item,
-			     splaytree_node_t *parent,
 			     const char *file, const int line)
 #endif
 {
-  splaytree_node_t *node;
+  splaytree_node_t *tn, *node;
   int i;
 
-  /* put the node into the insert path and try the next level */
-  if(stack_push(tree->stack, parent) != 0)
-    {
-      return -1;
-    }
+  tn = tree->head;
 
-  /* see whether the data belongs to the left, right, or is a duplicate */
-  i = tree->cmp(item, parent->item);
-  if(i < 0)
+  for(;;)
     {
-      if(parent->left != NULL)
-	{
-#ifndef DMALLOC
-	  return splaytree_insert2(tree, item, parent->left);
-#else
-	  return splaytree_insert2(tree, item, parent->left, file, line);
-#endif
-	}
-
-      /* insert the item into the tree here */
-#ifndef DMALLOC
-      if((node = splaytree_node_alloc(item)) == NULL)
-#else
-      if((node = splaytree_node_alloc(item, file, line)) == NULL)
-#endif
+      /* put the node into the insert path and try the next level */
+      if(stack_push(tree->stack, tn) != 0)
 	return -1;
 
-      if(stack_push(tree->stack, node) != 0)
+      /* see whether the data belongs to the left, right, or is a duplicate */
+      i = tree->cmp(item, tn->item);
+      if(i < 0)
 	{
-	  free(node);
+	  if(tn->left != NULL)
+	    {
+	      tn = tn->left;
+	      continue;
+	    }
+
+	  /* insert the item into the tree here */
+#ifndef DMALLOC
+	  if((node = splaytree_node_alloc(item)) == NULL)
+#else
+	  if((node = splaytree_node_alloc(item, file, line)) == NULL)
+#endif
+	    return -1;
+
+	  if(stack_push(tree->stack, node) != 0)
+	    {
+	      free(node);
+	      return -1;
+	    }
+
+	  tn->left = node;
+	  break;
+	}
+      else if(i > 0)
+	{
+	  if(tn->right != NULL)
+	    {
+	      tn = tn->right;
+	      continue;
+	    }
+
+#ifndef DMALLOC
+	  if((node = splaytree_node_alloc(item)) == NULL)
+#else
+	  if((node = splaytree_node_alloc(item, file, line)) == NULL)
+#endif
+	    return -1;
+
+	  if(stack_push(tree->stack, node) != 0)
+	    {
+	      free(node);
+	      return -1;
+	    }
+
+	  tn->right = node;
+	  break;
+	}
+      else
+	{
+	  /* the data already exists in the tree: do not add it */
 	  return -1;
 	}
-
-      parent->left = node;
-    }
-  else if(i > 0)
-    {
-      if(parent->right != NULL)
-	{
-#ifndef DMALLOC
-	  return splaytree_insert2(tree, item, parent->right);
-#else
-	  return splaytree_insert2(tree, item, parent->right, file, line);
-#endif
-	}
-
-#ifndef DMALLOC
-      if((node = splaytree_node_alloc(item)) == NULL)
-#else
-      if((node = splaytree_node_alloc(item, file, line)) == NULL)
-#endif
-	return -1;
-
-      if(stack_push(tree->stack, node) != 0)
-	{
-	  free(node);
-	  return -1;
-	}
-
-      parent->right = node;
-    }
-  else
-    {
-      /* the data already exists in the tree: do not add it */
-      return -1;
     }
 
   return 0;
@@ -453,9 +450,9 @@ splaytree_node_t *splaytree_insert_dm(splaytree_t *tree, const void *item,
        * one is already there
        */
 #ifndef DMALLOC
-      if(splaytree_insert2(tree, item, tree->head) != 0)
+      if(splaytree_insert2(tree, item) != 0)
 #else
-      if(splaytree_insert2(tree, item, tree->head, file, line) != 0)
+      if(splaytree_insert2(tree, item, file, line) != 0)
 #endif
 	{
 	  return NULL;
@@ -487,36 +484,32 @@ splaytree_node_t *splaytree_insert_dm(splaytree_t *tree, const void *item,
  *
  * find the node with the data item matching.  returns the node, if found.
  */
-static splaytree_node_t *splaytree_find2(splaytree_t *tree, const void *item,
-					 splaytree_node_t *tn)
+static splaytree_node_t *splaytree_find2(splaytree_t *tree, const void *item)
 {
+  splaytree_node_t *tn;
   int i;
 
-  /* item is not in the tree */
-  if(tn == NULL)
-    {
-      return NULL;
-    }
+  stack_clean(tree->stack);
 
-  /*
-   * try and push the node onto the stack.
-   * if we don't then we can't splay the node to the top of the tree, so
-   * we fail.
-   */
-  if(stack_push(tree->stack, tn) != 0)
+  tn = tree->head;
+  while(tn != NULL)
     {
-      return NULL;
-    }
+      /*
+       * try and push the node onto the stack.
+       * if we don't then we can't splay the node to the top of the tree, so
+       * we fail.
+       */
+      if(stack_push(tree->stack, tn) != 0)
+	return NULL;
 
-  if((i = tree->cmp(item, tn->item)) < 0)
-    {
-      /* look left */
-      return splaytree_find2(tree, item, tn->left);
-    }
-  else if(i > 0)
-    {
-      /* look right */
-      return splaytree_find2(tree, item, tn->right);
+      /* determine the next node to visit */
+      i = tree->cmp(item, tn->item);
+      if(i < 0)
+	tn = tn->left;
+      else if(i > 0)
+	tn = tn->right;
+      else
+	break;
     }
 
   /* we found it ! */
@@ -536,8 +529,7 @@ void *splaytree_find(splaytree_t *tree, const void *item)
     }
 
   splaytree_assert(tree);
-  stack_clean(tree->stack);
-  if(splaytree_find2(tree, item, tree->head) == NULL)
+  if(splaytree_find2(tree, item) == NULL)
     {
       return NULL;
     }
@@ -620,8 +612,7 @@ int splaytree_remove_item(splaytree_t *tree, const void *item)
    * find the node that we are supposed to delete.
    * if we can't find it, then the remove operation has failed.
    */
-  stack_clean(tree->stack);
-  if(splaytree_find2(tree, item, tree->head) == NULL)
+  if(splaytree_find2(tree, item) == NULL)
     {
       return -1;
     }
@@ -645,8 +636,7 @@ int splaytree_remove_node(splaytree_t *tree, splaytree_node_t *node)
    * find the path to the node that we are supposed to delete.  the node
    * that we find has to match what was passed in
    */
-  stack_clean(tree->stack);
-  if(splaytree_find2(tree, node->item, tree->head) != node)
+  if(splaytree_find2(tree, node->item) != node)
     {
       return -1;
     }
@@ -673,10 +663,8 @@ void *splaytree_findclosest(splaytree_t *tree, const void *item,
 
   if(tree == NULL || tree->head == NULL) return NULL;
 
-  stack_clean(tree->stack);
-
   /* wow, the value we are looking for is actually in the tree! */
-  if((ret = splaytree_find2(tree, item, tree->head)) != NULL)
+  if((ret = splaytree_find2(tree, item)) != NULL)
     {
       splaytree_splay(tree);
       assert(ret == tree->head);
@@ -772,17 +760,39 @@ int splaytree_depth(splaytree_t *tree)
 /*
  * splaytree_free2
  *
- * recursive function used to free a splaytree's nodes.
+ * iterative function used to free a splaytree's nodes.
  */
-static void splaytree_free2(splaytree_t *tree,
-			    splaytree_node_t *tn, splaytree_free_t free_ptr)
+static void splaytree_free2(splaytree_t *tree, splaytree_free_t free_ptr)
 {
-  if(tn == NULL) return;
-  splaytree_free2(tree, tn->left, free_ptr);
-  splaytree_free2(tree, tn->right, free_ptr);
-  if(tree->onremove != NULL) tree->onremove(tn->item);
-  if(free_ptr != NULL) free_ptr(tn->item);
-  free(tn);
+  splaytree_node_t *tn = tree->head, *tn2;
+
+  stack_clean(tree->stack);
+
+  while(tn != NULL)
+    {
+      if(tn->left != NULL)
+	{
+	  tn2 = tn->left; tn->left = NULL;
+	  stack_push(tree->stack, tn);
+	  tn = tn2;
+	  continue;
+	}
+
+      if(tn->right != NULL)
+	{
+	  tn2 = tn->right; tn->right = NULL;
+	  stack_push(tree->stack, tn);
+	  tn = tn2;
+	  continue;
+	}
+
+      if(tree->onremove != NULL) tree->onremove(tn->item);
+      if(free_ptr != NULL) free_ptr(tn->item);
+      free(tn);
+
+      tn = stack_pop(tree->stack);
+    }
+
   return;
 }
 
@@ -794,7 +804,7 @@ static void splaytree_free2(splaytree_t *tree,
 void splaytree_free(splaytree_t *tree, splaytree_free_t free_ptr)
 {
   if(tree == NULL) return;
-  splaytree_free2(tree, tree->head, free_ptr);
+  splaytree_free2(tree, free_ptr);
   stack_destroy(tree->stack);
   free(tree);
   return;
@@ -803,7 +813,7 @@ void splaytree_free(splaytree_t *tree, splaytree_free_t free_ptr)
 void splaytree_empty(splaytree_t *tree, splaytree_free_t free_ptr)
 {
   if(tree == NULL) return;
-  splaytree_free2(tree, tree->head, free_ptr);
+  splaytree_free2(tree, free_ptr);
   tree->head = NULL;
   tree->size = 0;
   return;
@@ -917,35 +927,35 @@ void splaytree_display(splaytree_t *tree, splaytree_display_t disp)
 }
 
 /*
- * splaytree_inorder2
- *
- * recursive function to call a user-provided function on all items in
- * the splay tree in order.
- */
-static void splaytree_inorder2(splaytree_node_t *node,
-			       splaytree_inorder_t func, void *in)
-{
-  if(node != NULL)
-    {
-      splaytree_inorder2(node->left, func, in);
-      func(in, node->item);
-      splaytree_inorder2(node->right, func, in);
-    }
-
-  return;
-}
-
-/*
  * splaytree_inorder
  *
  * call a user-provided function on all items in the splay tree in order
  */
 void splaytree_inorder(splaytree_t *tree, splaytree_inorder_t func, void *in)
 {
-  if(tree != NULL && func != NULL)
+  splaytree_node_t *tn;
+
+  if(tree == NULL || func == NULL)
+    return;
+
+  stack_clean(tree->stack);
+  tn = tree->head;
+
+  for(;;)
     {
-      splaytree_inorder2(tree->head, func, in);
+      if(tn != NULL)
+	{
+	  stack_push(tree->stack, tn);
+	  tn = tn->left;
+	}
+      else if((tn = stack_pop(tree->stack)) != NULL)
+	{
+	  func(in, tn->item);
+	  tn = tn->right;
+	}
+      else break;
     }
+
   return;
 }
 

@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2014 The Regents of the University of California
  *
- * $Id: sc_warts2csv.c,v 1.2 2015/01/18 20:29:02 mjl Exp $
+ * $Id: sc_warts2csv.c,v 1.3 2017/07/12 07:34:02 mjl Exp $
  *
  * Authors: Vaibhav Bajpai, Matthew Luckie
  *
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_warts2csv.c,v 1.2 2015/01/18 20:29:02 mjl Exp $";
+  "$Id: sc_warts2csv.c,v 1.3 2017/07/12 07:34:02 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -72,7 +72,7 @@ static void csv_trace(scamper_trace_t *trace)
 		 trace->userid, (int)trace->start.tv_sec, src, dst, tptr,
 		 sptr, hop->hop_probe_ttl,
 		 scamper_addr_tostr(hop->hop_addr,addr,sizeof(addr)),
-		 timeval_tostr(&hop->hop_rtt, rtt, sizeof(addr)));
+		 timeval_tostr_us(&hop->hop_rtt, rtt, sizeof(addr)));
 	}
     }
 

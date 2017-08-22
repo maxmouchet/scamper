@@ -1,7 +1,7 @@
 /*
  * scamper_do_dealias.c
  *
- * $Id: scamper_dealias_do.c,v 1.159 2016/09/17 12:19:15 mjl Exp $
+ * $Id: scamper_dealias_do.c,v 1.160 2017/08/21 20:21:13 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012-2013 Matthew Luckie
@@ -30,7 +30,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_do.c,v 1.159 2016/09/17 12:19:15 mjl Exp $";
+  "$Id: scamper_dealias_do.c,v 1.160 2017/08/21 20:21:13 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -2771,7 +2771,7 @@ static int dealias_alloc_ally(scamper_dealias_t *d, dealias_options_t *o)
     {
       if(pd[0].dst != NULL || pd[1].dst != NULL)
 	{
-	  scamper_debug(__func__, "dst IP specified inconsisently");
+	  scamper_debug(__func__, "dst IP specified inconsistently");
 	  goto err;
 	}
 

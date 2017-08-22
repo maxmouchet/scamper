@@ -1,7 +1,7 @@
 /*
  * scamper_do_tbit.c
  *
- * $Id: scamper_tbit_do.c,v 1.176.4.1 2016/12/04 05:46:57 mjl Exp $
+ * $Id: scamper_tbit_do.c,v 1.177 2017/08/21 20:41:53 mjl Exp $
  *
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2009-2010 Stephen Eichler
@@ -37,7 +37,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_do.c,v 1.176.4.1 2016/12/04 05:46:57 mjl Exp $";
+  "$Id: scamper_tbit_do.c,v 1.177 2017/08/21 20:41:53 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

@@ -8,7 +8,7 @@
  * Copyright (c) 2013-2015 The Regents of the University of California
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_ping_json.c,v 1.12 2015/01/15 21:38:06 mjl Exp $
+ * $Id: scamper_ping_json.c,v 1.15 2017/07/12 07:34:02 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_json.c,v 1.12 2015/01/15 21:38:06 mjl Exp $";
+  "$Id: scamper_ping_json.c,v 1.15 2017/07/12 07:34:02 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -39,6 +39,7 @@ static const char rcsid[] =
 #include "scamper_list.h"
 #include "scamper_ping.h"
 #include "scamper_file.h"
+#include "scamper_file_json.h"
 #include "scamper_ping_json.h"
 
 #include "utils.h"
@@ -66,7 +67,7 @@ static char *ping_header(const scamper_ping_t *ping)
   uint8_t u8, c;
 
   string_concat(buf, sizeof(buf), &off,
-		"{\"version\":\"0.4\", \"type\":\"ping\", \"method\":\"%s\"",
+		"{\"type\":\"ping\", \"version\":\"0.4\", \"method\":\"%s\"",
 		scamper_ping_method2str(ping, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off, ", \"src\":\"%s\"",
 		scamper_addr_tostr(ping->src, tmp, sizeof(tmp)));
@@ -179,7 +180,7 @@ static char *ping_reply(const scamper_ping_t *ping,
 		    tv.tv_sec, tv.tv_usec);
     }
   string_concat(buf, sizeof(buf), &off, ", \"rtt\":%s",
-		timeval_tostr(&reply->rtt, tmp, sizeof(tmp)));
+		timeval_tostr_us(&reply->rtt, tmp, sizeof(tmp)));
 
   if(SCAMPER_ADDR_TYPE_IS_IPV4(reply->addr))
     {
@@ -277,13 +278,13 @@ static char *ping_stats(const scamper_ping_t *ping)
   if(stats.nreplies > 0)
     {
       string_concat(buf, sizeof(buf), &off, ", \"min\":%s",
-		    timeval_tostr(&stats.min_rtt, str, sizeof(str)));
+		    timeval_tostr_us(&stats.min_rtt, str, sizeof(str)));
       string_concat(buf, sizeof(buf), &off, ", \"max\":%s",
-		    timeval_tostr(&stats.max_rtt, str, sizeof(str)));
+		    timeval_tostr_us(&stats.max_rtt, str, sizeof(str)));
       string_concat(buf, sizeof(buf), &off, ", \"avg\":%s",
-		    timeval_tostr(&stats.avg_rtt, str, sizeof(str)));
+		    timeval_tostr_us(&stats.avg_rtt, str, sizeof(str)));
       string_concat(buf, sizeof(buf), &off, ", \"stddev\":%s",
-		    timeval_tostr(&stats.stddev_rtt, str, sizeof(str)));
+		    timeval_tostr_us(&stats.stddev_rtt, str, sizeof(str)));
     }
   string_concat(buf, sizeof(buf), &off, "}");
 
@@ -294,8 +295,6 @@ int scamper_file_json_ping_write(const scamper_file_t *sf,
 				 const scamper_ping_t *ping)
 {
   scamper_ping_reply_t *reply;
-  int       fd          = scamper_file_getfd(sf);
-  off_t     off         = 0;
   uint32_t  reply_count = scamper_ping_reply_count(ping);
   char     *header      = NULL;
   size_t    header_len  = 0;
@@ -308,10 +307,6 @@ int scamper_file_json_ping_write(const scamper_file_t *sf,
   size_t    wc          = 0;
   int       ret         = -1;
   uint32_t  i,j;
-
-  /* get current position incase trunction is required */
-  if(fd != 1 && (off = lseek(fd, 0, SEEK_CUR)) == -1)
-    return -1;
 
   /* get the header string */
   if((header = ping_header(ping)) == NULL)
@@ -370,20 +365,8 @@ int scamper_file_json_ping_write(const scamper_file_t *sf,
     }
   memcpy(str+wc, "}\n", 2); wc += 2;
 
-  /*
-   * try and write the string to disk.  if it fails, then truncate the
-   * write and fail
-   */
-  if(write_wrap(fd, str, &wc, len) != 0)
-    {
-      if(fd != 1)
-	{
-	  if(ftruncate(fd, off) != 0)
-	    goto cleanup;
-	}
-      goto cleanup;
-    }
-  ret = 0; /* we succeeded */
+  assert(wc == len);
+  ret = json_write(sf, str, len);
 
  cleanup:
   if(str != NULL) free(str);

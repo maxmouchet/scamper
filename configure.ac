@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([scamper], [20161204a], [mjl@luckie.org.nz])
+AC_INIT([scamper], [20170822], [mjl@luckie.org.nz])
 
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([scamper/scamper.c])
@@ -19,7 +19,7 @@ AC_ARG_ENABLE([debug],
   [AS_HELP_STRING([--enable-debug], [build with debugging symbols])])
 
 if test "x$enable_debug" != "xyes"; then
-  AC_DEFINE([NDEBUG],[1],[Defined to 1 if we don't want to do any debugging])
+  AC_DEFINE([NDEBUG],[1],[Define to 1 if we don't want to do any debugging])
 fi
 
 # No privilege separation
@@ -27,7 +27,7 @@ AC_ARG_ENABLE([privsep],
   [AS_HELP_STRING([--disable-privsep], [disable privilege separation])])
 
 if test "x$enable_privsep" = xno; then
-  AC_DEFINE([WITHOUT_PRIVSEP], [1], [Defined to 1 if we don't want privilege separation])
+  AC_DEFINE([WITHOUT_PRIVSEP], [1], [Define to 1 if we don't want privilege separation])
 fi
 
 # privsep parameters
@@ -91,6 +91,15 @@ if test "x$with_dmalloc" = xyes; then
 		[AC_MSG_FAILURE([dmalloc test failed (remove --with-dmalloc)])])
 
 fi
+
+# sc_uptime prober support
+AC_ARG_WITH([sc_uptime],
+  [AS_HELP_STRING([--with-sc_uptime],
+     [enable support for sc_uptime])],
+     [with_sc_uptime=$withval],
+     [with_sc_uptime=no]
+)
+AM_CONDITIONAL([WITH_SC_UPTIME], [test x$with_sc_uptime = xyes])
 
 # Checks for libraries.
 AC_CHECK_LIB([iphlpapi], [GetIpNetTable])
@@ -291,6 +300,15 @@ AX_CHECK_OPENSSL(
 
 AX_GCC_BUILTIN(__builtin_clz)
 
+# No thread support
+AC_ARG_ENABLE([threads],
+  [AS_HELP_STRING([--disable-threads], [disable use of threads])])
+
+if test "x$enable_threads" != xno; then
+  AX_PTHREAD(
+	[AC_DEFINE([HAVE_PTHREAD], [1], [Define to 1 if you have pthread])])
+fi
+
 AC_CONFIG_FILES([
 	Makefile
 	scamper/Makefile
@@ -307,6 +325,15 @@ AC_CONFIG_FILES([
 	utils/sc_speedtrap/Makefile
 	utils/sc_tbitblind/Makefile
 	utils/sc_tracediff/Makefile
+])
+
+if test "x$with_sc_uptime" != xno; then
+   AC_CONFIG_FILES([
+   utils/sc_uptime/Makefile
+   ])
+fi
+
+AC_CONFIG_FILES([
 	utils/sc_warts2csv/Makefile
 	utils/sc_warts2json/Makefile
 	utils/sc_warts2pcap/Makefile
@@ -315,4 +342,5 @@ AC_CONFIG_FILES([
 	utils/sc_wartsdump/Makefile
 	utils/sc_wartsfix/Makefile
 ])
+
 AC_OUTPUT

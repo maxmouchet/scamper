@@ -1,7 +1,7 @@
 /*
  * scamper_control.c
  *
- * $Id: scamper_control.c,v 1.192 2016/10/28 06:45:04 mjl Exp $
+ * $Id: scamper_control.c,v 1.194 2017/07/12 07:23:15 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_control.c,v 1.192 2016/10/28 06:45:04 mjl Exp $";
+  "$Id: scamper_control.c,v 1.194 2017/07/12 07:23:15 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -177,12 +177,14 @@ typedef struct client
    *  sof_objs:   warts objects waiting to be written.
    *  sof_obj:    current object partially written over socket.
    *  sof_off:    offset into current object being written.
+   *  sof_format: the format (warts/json) of results being sent to clients
    */
   scamper_source_t   *source;
   scamper_outfile_t  *sof;
   slist_t            *sof_objs;
   client_obj_t       *sof_obj;
   size_t              sof_off;
+  uint8_t             sof_format;
 } client_t;
 
 #define CLIENT_MODE_INTERACTIVE 0
@@ -191,6 +193,9 @@ typedef struct client
 
 #define CLIENT_TYPE_SOCKET      0
 #define CLIENT_TYPE_CHANNEL     1
+
+#define CLIENT_FORMAT_WARTS     0
+#define CLIENT_FORMAT_JSON      1
 
 typedef struct command
 {
@@ -703,18 +708,33 @@ static int client_data_send(void *param, const void *vdata, size_t len)
   assert(len >= 8);
   assert(client->sof_objs != NULL);
 
-  if(data[0] != 0x12 || data[1] != 0x05)
+  if(client->sof_format == CLIENT_FORMAT_WARTS)
     {
-      printerror(0, NULL, __func__,
-		 "lost synchronisation: %02x%02x %02x%02x %02x%02x%02x%02x",
-		 data[0], data[1], data[2], data[3], data[4], data[5],
-		 data[6], data[7]);
-      goto err;
-    }
+      if(data[0] != 0x12 || data[1] != 0x05)
+        {
+	  printerror(0, NULL, __func__,
+		     "lost synchronisation: %02x%02x %02x%02x %02x%02x%02x%02x",
+		     data[0], data[1], data[2], data[3], data[4], data[5],
+		     data[6], data[7]);
+	  goto err;
+	}
 
-  /* cycle end */
-  if(data[2] == 0 && data[3] == 0x04)
-    client->mode = CLIENT_MODE_FLUSH;
+      /* cycle end */
+      if(data[2] == 0 && data[3] == 0x04)
+	client->mode = CLIENT_MODE_FLUSH;
+    }
+  else if(client->sof_format == CLIENT_FORMAT_JSON)
+    {
+      if(data[0] != '{')
+	{
+	  printerror(0, NULL, __func__, "lost synchronisation %c", data[0]);
+	  goto err;
+	}
+
+      /* cycle end */
+      if(strncmp("{\"type\":\"cycle-stop\",", (const char *)data, 21) == 0)
+	client->mode = CLIENT_MODE_FLUSH;
+    }
 
   if((obj = malloc_zero(sizeof(client_obj_t))) == NULL)
     {
@@ -788,10 +808,11 @@ static int command_attach(client_t *client, char *buf)
   scamper_file_t *sf;
   char sab[128];
   long priority = 1;
-  char *priority_str = NULL, *params[2], *next;
+  char *priority_str = NULL, *format = NULL, *params[2], *next;
   int i, cnt = sizeof(params) / sizeof(char *);
   param_t handlers[] = {
     {"priority", &priority_str},
+    {"format", &format},
   };
   int handler_cnt = sizeof(handlers) / sizeof(param_t);
 
@@ -818,6 +839,23 @@ static int command_attach(client_t *client, char *buf)
       return 0;
     }
 
+  if(format == NULL)
+    format = "warts";
+
+  if(strcasecmp(format, "warts") == 0)
+    {
+      client->sof_format = CLIENT_FORMAT_WARTS;
+    }
+  else if(strcasecmp(format, "json") == 0)
+    {
+      client->sof_format = CLIENT_FORMAT_JSON;
+    }
+  else
+    {
+      client_send(client, "ERR format must be warts or json");
+      return 0;
+    }
+
   if(client_sockaddr_tostr(client, sab, sizeof(sab)) == NULL)
     goto err;
 
@@ -827,7 +865,7 @@ static int command_attach(client_t *client, char *buf)
       goto err;
     }
 
-  if((client->sof = scamper_outfile_opennull(sab)) == NULL)
+  if((client->sof = scamper_outfile_opennull(sab, format)) == NULL)
     {
       printerror(errno, strerror, __func__, "could not alloc outfile");
       goto err;
@@ -2171,8 +2209,11 @@ static int client_write_do(client_t *client,
 	 (o = slist_head_pop(client->sof_objs)) != NULL)
 	{
 	  client->sof_obj = o;
-	  len = snprintf(str, sizeof(str), "DATA %d\n",
-			 (int)uuencode_len(o->len, NULL, NULL));
+	  if(client->sof_format == CLIENT_FORMAT_WARTS)
+	    len = snprintf(str, sizeof(str), "DATA %d\n",
+			   (int)uuencode_len(o->len, NULL, NULL));
+	  else
+	    len = snprintf(str, sizeof(str), "DATA %d\n", (int)o->len);
 	  if(sendfunc(client, str, len) < 0)
 	    {
 	      printerror(errno,strerror,__func__, "could not send DATA header");
@@ -2187,7 +2228,19 @@ static int client_write_do(client_t *client,
 
   if(o != NULL)
     {
-      len = uuencode_bytes(o->data,o->len, &client->sof_off, data,sizeof(data));
+      if(client->sof_format == CLIENT_FORMAT_WARTS)
+	{
+	  len = uuencode_bytes(o->data, o->len, &client->sof_off,
+			       data, sizeof(data));
+	}
+      else
+	{
+	  if((len = o->len - client->sof_off) > sizeof(data))
+	    len = sizeof(data);
+	  memcpy(data, o->data + client->sof_off, len);
+	  client->sof_off += len;
+	}
+
       if(client->sof_off == o->len)
 	{
 	  client_obj_free(o);
@@ -2652,7 +2705,7 @@ static int remote_read_control_channel_new(const uint8_t *buf, size_t len)
   
   if((client = client_alloc(CLIENT_TYPE_CHANNEL)) == NULL ||
      (client->sof_objs = slist_alloc()) == NULL ||
-     (client->sof = scamper_outfile_opennull(listname)) == NULL)
+     (client->sof = scamper_outfile_opennull(listname, "warts")) == NULL)
     goto err;
   client->un.chan.id = channel;
   client->un.chan.rem = ctrl_rem;

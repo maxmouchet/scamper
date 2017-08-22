@@ -9,12 +9,12 @@
 .\" Copyright (c) 2015      Matthew Luckie
 .\"                         All rights reserved
 .\"
-.\" $Id: scamper.1,v 1.70 2016/11/18 22:06:29 mjl Exp $
+.\" $Id: scamper.1,v 1.74 2017/08/21 21:50:50 mjl Exp $
 .\"
 .\"  nroff -man scamper.1
 .\"  groff -man -Tascii scamper.1 | man2html -title scamper.1
 .\"
-.Dd August 8, 2016
+.Dd July 2, 2017
 .Dt SCAMPER 1
 .Os
 .\""""""""""""
@@ -677,8 +677,9 @@ Defaults to 1000.
 .Sh TBIT OPTIONS
 The tbit command can be used to infer TCP behaviour of a specified host.
 At present, it implements tests to check the ability of the host to respond
-to ICMP Packet Too Big messages, and respond to Explicit Congestion
-Notification.
+to ICMP Packet Too Big messages, respond to Explicit Congestion Notification,
+test Selective Acknowledgement behaviour, the
+Initial Congestion Window, and resilience to Blind Attacks.
 The following options are available for the
 .Nm
 tbit command:
@@ -798,7 +799,9 @@ the tbit test.
 specifies the IP time-to-live value that should be used in TCP packets sent
 by the tbit test.
 .It Fl u Ar url
-specifies a url for the http application.
+specifies a url to use when using the http application method.
+If the url starts with https, the tbit test begins with a TLS
+handshake.
 .It Fl U Ar userid
 specifies an unsigned integer to include with the data collected; the meaning
 of the user-id is entirely up to the user and has no effect on the behaviour
@@ -1290,6 +1293,7 @@ scamper -I "tracelb -P udp-sport -c 99 192.0.2.6"
 .Xr sc_speedtrap 1 ,
 .Xr sc_tbitblind 1 ,
 .Xr sc_tracediff 1 ,
+.Xr sc_uptime 1 ,
 .Xr sc_wartscat 1 ,
 .Xr sc_wartsdump 1 ,
 .Xr sc_warts2json 1 ,
@@ -1318,7 +1322,7 @@ scamper -I "tracelb -P udp-sport -c 99 192.0.2.6"
 .%A "M. Allman"
 .%A "S. Floyd"
 .%T "Measuring the evolution of transport protocols in the Internet"
-.%O "Proc. ACM/SIGCOMM Internet Measurement Conference 2004"
+.%O "ACM/SIGCOMM Computer Communication Review"
 .Re
 .Rs
 .%A "M. Luckie"
@@ -1407,6 +1411,12 @@ scamper -I "tracelb -P udp-sport -c 99 192.0.2.6"
 .%A "k. claffy"
 .%T "bdrmap: Inference of Borders Between IP Networks"
 .%O "Proc. ACM/SIGCOMM Internet Measurement Conference 2016"
+.Re
+.Rs
+.%A "M. Luckie"
+.%A "R. Beverly"
+.%T "The Impact of Router Outages on the AS-level Internet"
+.%O "Proc. ACM/SIGCOMM Conference 2017"
 .Re
 .\""""""""""""
 .Sh AUTHORS

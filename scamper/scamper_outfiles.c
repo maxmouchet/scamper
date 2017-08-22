@@ -1,7 +1,7 @@
 /*
  * scamper_outfiles: hold a collection of output targets together
  *
- * $Id: scamper_outfiles.c,v 1.45 2015/07/19 06:50:58 mjl Exp $
+ * $Id: scamper_outfiles.c,v 1.46 2017/07/09 09:16:21 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_outfiles.c,v 1.45 2015/07/19 06:50:58 mjl Exp $";
+  "$Id: scamper_outfiles.c,v 1.46 2017/07/09 09:16:21 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -332,12 +332,12 @@ scamper_outfile_t *scamper_outfile_openfd(char *name, int fd, char *type)
   return sof;
 }
 
-scamper_outfile_t *scamper_outfile_opennull(char *name)
+scamper_outfile_t *scamper_outfile_opennull(char *name, char *format)
 {
   scamper_outfile_t *sof;
   scamper_file_t *sf;
 
-  if((sf = scamper_file_opennull('w')) == NULL)
+  if((sf = scamper_file_opennull('w', format)) == NULL)
     {
       printerror(errno, strerror, __func__, "could not opennull");
       return NULL;

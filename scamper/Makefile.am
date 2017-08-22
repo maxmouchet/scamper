@@ -1,4 +1,4 @@
-# $Id: Makefile.am,v 1.26 2016/08/26 10:08:32 mjl Exp $
+# $Id: Makefile.am,v 1.27 2017/07/09 09:05:14 mjl Exp $
 
 AUTOMAKE_OPTIONS = subdir-objects
 
@@ -18,6 +18,7 @@ libscamperfile_la_SOURCES = \
 	scamper_file_arts.c \
 	scamper_file_warts.c \
 	scamper_file_text.c \
+	scamper_file_json.c \
 	scamper_addr.c \
 	scamper_list.c \
 	scamper_icmpext.c \
@@ -91,6 +92,7 @@ scamper_SOURCES = \
 	scamper_file_arts.c \
 	scamper_file_warts.c \
 	scamper_file_text.c \
+	scamper_file_json.c \
 	scamper_sources.c \
 	scamper_source_cmdline.c \
 	scamper_source_control.c \
@@ -155,6 +157,6 @@ man_MANS = \
 	libscamperfile.3 \
 	warts.5
 
-CLEANFILES = *~ *.core scamper.1.html \
+CLEANFILES = *~ *.core \
 	trace/*~ ping/*~ tracelb/*~ dealias/*~ sting/*~ \
 	neighbourdisc/*~ tbit/*~ sniff/*~

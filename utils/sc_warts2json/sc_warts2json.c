@@ -1,7 +1,7 @@
 /*
  * sc_warts2json
  *
- * $Id: sc_warts2json.c,v 1.6 2014/09/26 01:51:05 mjl Exp $
+ * $Id: sc_warts2json.c,v 1.7 2017/07/09 09:05:41 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_warts2json.c,v 1.6 2014/09/26 01:51:05 mjl Exp $";
+  "$Id: sc_warts2json.c,v 1.7 2017/07/09 09:05:41 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -47,6 +47,8 @@ static const char rcsid[] =
 int main(int argc, char *argv[])
 {
   uint16_t types[] = {
+    SCAMPER_FILE_OBJ_CYCLE_START,
+    SCAMPER_FILE_OBJ_CYCLE_STOP,
     SCAMPER_FILE_OBJ_PING,
     SCAMPER_FILE_OBJ_TRACE,
     SCAMPER_FILE_OBJ_DEALIAS,

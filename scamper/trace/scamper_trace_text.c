@@ -6,7 +6,7 @@
  * Copyright (C) 2014      The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_text.c,v 1.22.4.1 2017/06/22 08:21:29 mjl Exp $
+ * $Id: scamper_trace_text.c,v 1.24 2017/07/12 07:34:02 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_text.c,v 1.22.4.1 2017/06/22 08:21:29 mjl Exp $";
+  "$Id: scamper_trace_text.c,v 1.24 2017/07/12 07:34:02 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -260,7 +260,7 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
     {
       hop = trace->hops[h];
       scamper_addr_tostr(hop->hop_addr, str_addr, sizeof(str_addr));
-      timeval_tostr(&hop->hop_rtt, str_rtt, sizeof(str_rtt));
+      timeval_tostr_us(&hop->hop_rtt, str_rtt, sizeof(str_rtt));
       icmp_tostr(hop, str_icmp, sizeof(str_icmp));
 
       snprintf(str_hop, sizeof(str_hop),
@@ -301,7 +301,7 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
        * calculate the length of the rtt and icmp data for this hop probe,
        * and then generate and store the string
        */
-      timeval_tostr(&hop->hop_rtt, str_rtt, sizeof(str_rtt));
+      timeval_tostr_us(&hop->hop_rtt, str_rtt, sizeof(str_rtt));
       icmp_tostr(hop, str_icmp, sizeof(str_icmp));
       len = strlen(str_rtt) + 3 + strlen(str_icmp);
       if((str_rtts[i] = malloc_zero(len+1)) == NULL)

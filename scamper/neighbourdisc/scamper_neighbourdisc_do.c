@@ -1,7 +1,7 @@
 /*
  * scamper_do_neighbourdisc
  *
- * $Id: scamper_neighbourdisc_do.c,v 1.35.18.1 2017/06/22 08:44:30 mjl Exp $
+ * $Id: scamper_neighbourdisc_do.c,v 1.36 2017/06/22 07:08:07 mjl Exp $
  *
  * Copyright (C) 2009-2011 Matthew Luckie
  *
@@ -22,7 +22,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_neighbourdisc_do.c,v 1.35.18.1 2017/06/22 08:44:30 mjl Exp $";
+  "$Id: scamper_neighbourdisc_do.c,v 1.36 2017/06/22 07:08:07 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
