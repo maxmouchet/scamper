@@ -1,7 +1,7 @@
 /*
  * scamper_probe.c
  *
- * $Id: scamper_probe.c,v 1.73 2015/09/21 06:34:42 mjl Exp $
+ * $Id: scamper_probe.c,v 1.74 2017/12/03 09:38:27 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_probe.c,v 1.73 2015/09/21 06:34:42 mjl Exp $";
+  "$Id: scamper_probe.c,v 1.74 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -789,7 +789,7 @@ int scamper_probe_task(scamper_probe_t *pr, scamper_task_t *task)
   return 0;
 
  err:
-  printerror(pr->pr_errno, strerror, __func__, "could not probe");
+  printerror_msg(__func__, "could not probe: %s", strerror(pr->pr_errno));
   return -1;
 }
 
@@ -898,7 +898,7 @@ int scamper_probe(scamper_probe_t *probe)
       if((buf = realloc(pktbuf, len)) == NULL)
 	{
 	  probe->pr_errno = errno;
-	  printerror(errno, strerror, __func__, "could not realloc");
+	  printerror(__func__, "could not realloc");
 	  return -1;
 	}
       pktbuf     = buf;

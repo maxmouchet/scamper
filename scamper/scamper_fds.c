@@ -1,7 +1,7 @@
 /*
  * scamper_fds: manage events and file descriptors
  *
- * $Id: scamper_fds.c,v 1.95 2016/07/15 09:29:14 mjl Exp $
+ * $Id: scamper_fds.c,v 1.96 2017/12/03 09:38:26 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_fds.c,v 1.95 2016/07/15 09:29:14 mjl Exp $";
+  "$Id: scamper_fds.c,v 1.96 2017/12/03 09:38:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -590,7 +590,7 @@ static int fds_select(struct timeval *timeout)
 #endif
   if((count = select(nfds+1, rfdsp, wfdsp, NULL, timeout)) < 0)
     {
-      printerror(errno, strerror, __func__, "select failed");
+      printerror(__func__, "select failed");
       goto err;
     }
 
@@ -692,7 +692,7 @@ static int fds_poll(struct timeval *tv)
 	  size = (count+1) * sizeof(struct pollfd);
 	  if(realloc_wrap((void **)&poll_fds, size) != 0)
 	    {
-	      printerror(errno,strerror,__func__,"could not realloc poll_fds");
+	      printerror(__func__, "could not realloc poll_fds");
 	      return -1;
 	    }
 	  poll_fdc = count + 1;
@@ -729,7 +729,7 @@ static int fds_poll(struct timeval *tv)
 
   if((rc = poll(poll_fds, count, timeout)) < 0)
     {
-      printerror(errno, strerror, __func__, "could not poll");
+      printerror(__func__, "could not poll");
       return -1;
     }
 
@@ -754,7 +754,7 @@ static int fds_kqueue_init(void)
 {
   if((kq = kqueue()) == -1)
     {
-      printerror(errno, strerror, __func__, "could not create kqueue");
+      printerror(__func__, "could not create kqueue");
       return -1;
     }
   scamper_debug(__func__, "fd %d", kq);
@@ -767,7 +767,7 @@ static void fds_kqueue_set(scamper_fd_t *fd, short filter, u_short flags)
   EV_SET(&kev, fd->fd, filter, flags, 0, 0, fd);
   if(kevent(kq, &kev, 1, NULL, 0, NULL) != 0)
     {
-      printerror(errno, strerror, __func__, "fd %d %s %s", fd->fd,
+      printerror(__func__, "fd %d %s %s", fd->fd,
 		 filter == EVFILT_READ ? "EVFILT_READ" : "EVFILT_WRITE",
 		 flags == EV_ADD ? "EV_ADD" : "EV_DELETE");
     }
@@ -788,7 +788,7 @@ static int fds_kqueue(struct timeval *tv)
 	{
 	  if(kevlistlen == 0)
 	    {
-	      printerror(errno, strerror, __func__, "could not alloc kevlist");
+	      printerror(__func__, "could not alloc kevlist");
 	      return -1;
 	    }
 	}
@@ -807,7 +807,7 @@ static int fds_kqueue(struct timeval *tv)
 
   if((c = kevent(kq, NULL, 0, kevlist, kevlistlen, tsp)) == -1)
     {
-      printerror(errno, strerror, __func__, "kevent failed");
+      printerror(__func__, "kevent failed");
       return -1;
     }
 
@@ -840,7 +840,7 @@ static int fds_epoll_init(void)
 {
   if((ep = epoll_create(10)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not epoll_create");
+      printerror(__func__, "could not epoll_create");
       return -1;
     }
   scamper_debug(__func__, "fd %d", ep);
@@ -882,7 +882,7 @@ static void fds_epoll_ctl(scamper_fd_t *fd, uint32_t ev, int op)
   epev.events = ev;
 
   if(epoll_ctl(ep, op, fd->fd, &epev) != 0)
-    printerror(errno, strerror, __func__, "fd %d op %d ev %u", fd->fd, op, ev);
+    printerror(__func__, "fd %d op %d ev %u", fd->fd, op, ev);
 
   return;
 }
@@ -901,7 +901,7 @@ static int fds_epoll(struct timeval *tv)
 	{
 	  if(ep_event_c == 0)
 	    {
-	      printerror(errno, strerror, __func__, "could not alloc events");
+	      printerror(__func__, "could not alloc events");
 	      return -1;
 	    }
 	}
@@ -924,7 +924,7 @@ static int fds_epoll(struct timeval *tv)
 
   if((rc = epoll_wait(ep, ep_events, ep_event_c, timeout)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not epoll_wait");
+      printerror(__func__, "could not epoll_wait");
       return -1;
     }
 
@@ -1313,19 +1313,19 @@ static scamper_fd_t *fd_udp(int type, void *addr, uint16_t sport)
   if(fd == -1 || (fdn = fd_alloc(type, fd)) == NULL ||
      (addr != NULL && (fdn->fd_udp_addr = memdup(addr, len)) == NULL))
     {
-      printerror(errno, strerror, __func__, "could not open socket");
+      printerror(__func__, "could not open socket");
       goto err;
     }
   fdn->fd_udp_sport = sport;
 
   if((fdn->fd_tree_node = splaytree_insert(fd_tree, fdn)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not add socket to tree");
+      printerror(__func__, "could not add socket to tree");
       goto err;
     }
   if((fdn->fd_list_node = dlist_tail_push(fd_list, fdn)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not add socket to list");
+      printerror(__func__, "could not add socket to list");
       goto err;
     }
 
@@ -1855,7 +1855,7 @@ static dlist_t *alloc_list(char *name)
 {
   dlist_t *list;
   if((list = dlist_alloc()) == NULL)
-    printerror(errno, strerror, __func__, "alloc %s failed", name);
+    printerror(__func__, "alloc %s failed", name);
   return list;
 }
 
@@ -1908,7 +1908,7 @@ int scamper_fds_init()
 
   if((fd_tree = splaytree_alloc((splaytree_cmp_t)fd_cmp)) == NULL)
     {
-      printerror(errno, strerror, __func__, "alloc fd tree failed");
+      printerror(__func__, "alloc fd tree failed");
       return -1;
     }
 

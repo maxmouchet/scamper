@@ -1,7 +1,7 @@
 /*
  * scamper_outfiles: hold a collection of output targets together
  *
- * $Id: scamper_outfiles.c,v 1.46 2017/07/09 09:16:21 mjl Exp $
+ * $Id: scamper_outfiles.c,v 1.47 2017/12/03 09:38:27 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_outfiles.c,v 1.46 2017/07/09 09:16:21 mjl Exp $";
+  "$Id: scamper_outfiles.c,v 1.47 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -61,7 +61,7 @@ static scamper_outfile_t *outfile_alloc(char *name, scamper_file_t *sf)
 
   if((sof = malloc_zero(sizeof(scamper_outfile_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc sof");
+      printerror(__func__, "could not malloc sof");
       goto err;
     }
 
@@ -70,13 +70,13 @@ static scamper_outfile_t *outfile_alloc(char *name, scamper_file_t *sf)
 
   if((sof->name = strdup(name)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup");
+      printerror(__func__, "could not strdup");
       goto err;
     }
 
   if(splaytree_insert(outfiles, sof) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not insert");
+      printerror(__func__, "could not insert");
       goto err;
     }
 
@@ -238,15 +238,11 @@ scamper_outfile_t *scamper_outfile_open(char *name, char *file, char *mo)
 
   /* make sure the fd is valid, otherwise bail */
   if(fd == -1)
-    {
-      return NULL;
-    }
+    return NULL;
 
 #if defined(WITHOUT_PRIVSEP) && !defined(_WIN32)
   if((uid = getuid()) != geteuid() && fchown(fd, uid, -1) != 0)
-    {
-      printerror(errno, strerror, __func__, "could not fchown");
-    }
+    printerror(__func__, "could not fchown");
 #endif
 
   if((sf = scamper_file_openfd(fd, file, sf_mode, "warts")) == NULL)
@@ -339,7 +335,7 @@ scamper_outfile_t *scamper_outfile_opennull(char *name, char *format)
 
   if((sf = scamper_file_opennull('w', format)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not opennull");
+      printerror(__func__, "could not opennull");
       return NULL;
     }
 
@@ -363,7 +359,7 @@ int scamper_outfiles_init(char *def_filename, char *def_type)
 {
   if((outfiles = splaytree_alloc((splaytree_cmp_t)outfile_cmp)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc outfiles tree");
+      printerror(__func__, "could not alloc outfiles tree");
       return -1;
     }
 

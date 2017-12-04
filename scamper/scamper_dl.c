@@ -1,7 +1,7 @@
 /*
  * scamper_dl: manage BPF/PF_PACKET datalink instances for scamper
  *
- * $Id: scamper_dl.c,v 1.184 2016/08/08 08:42:07 mjl Exp $
+ * $Id: scamper_dl.c,v 1.186 2017/12/03 09:54:32 mjl Exp $
  *
  *          Matthew Luckie
  *          Ben Stasiewicz added fragmentation support.
@@ -35,7 +35,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dl.c,v 1.184 2016/08/08 08:42:07 mjl Exp $";
+  "$Id: scamper_dl.c,v 1.186 2017/12/03 09:54:32 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -710,7 +710,7 @@ static int dl_bpf_open_dev(char *dev, const size_t len)
 	    }
 	  else
 	    {
-	      printerror(errno, strerror, __func__, "could not open %s", dev);
+	      printerror(__func__, "could not open %s", dev);
 	      return -1;
 	    }
 	}
@@ -732,7 +732,7 @@ static int dl_bpf_open(const int ifindex)
   memset(&ifreq, 0, sizeof(ifreq));
   if(if_indextoname((unsigned int)ifindex, ifreq.ifr_name) == NULL)
     {
-      printerror(errno, strerror, __func__, "if_indextoname failed");
+      printerror(__func__, "if_indextoname failed");
       goto err;
     }
 
@@ -744,7 +744,7 @@ static int dl_bpf_open(const int ifindex)
   /* get the suggested read buffer size */
   if(ioctl(fd, BIOCGBLEN, &blen) == -1)
     {
-      printerror(errno, strerror, __func__, "BIOCGBLEN %s", ifreq.ifr_name);
+      printerror(__func__, "BIOCGBLEN %s", ifreq.ifr_name);
       goto err;
     }
 
@@ -757,8 +757,7 @@ static int dl_bpf_open(const int ifindex)
       blen = 65536;
       if(ioctl(fd, BIOCSBLEN, &blen) == -1)
 	{
-	  printerror(errno, strerror, __func__, "BIOCSBLEN %s: %d",
-		     ifreq.ifr_name, blen);
+	  printerror(__func__, "BIOCSBLEN %s: %d", ifreq.ifr_name, blen);
 	  goto err;
 	}
     }
@@ -766,8 +765,7 @@ static int dl_bpf_open(const int ifindex)
   /* set the interface that will be sniffed */
   if(ioctl(fd, BIOCSETIF, &ifreq) == -1)
     {
-      printerror(errno, strerror, __func__, "%s BIOCSETIF %s failed",
-		 dev, ifreq.ifr_name);
+      printerror(__func__, "%s BIOCSETIF %s failed", dev, ifreq.ifr_name);
       goto err;
     }
 
@@ -800,21 +798,21 @@ static int dl_bpf_node_init(const scamper_fd_t *fdn, scamper_dl_t *node)
   /* convert the interface index to a name */
   if(if_indextoname((unsigned int)ifindex, ifname) == NULL)
     {
-      printerror(errno, strerror, __func__,"if_indextoname %d failed",ifindex);
+      printerror(__func__,"if_indextoname %d failed", ifindex);
       goto err;
     }
 
   /* get the read buffer size */
   if(ioctl(fd, BIOCGBLEN, &node->readbuf_len) == -1)
     {
-      printerror(errno, strerror, __func__, "bpf BIOCGBLEN %s failed", ifname);
+      printerror(__func__, "bpf BIOCGBLEN %s failed", ifname);
       goto err;
     }
 
   /* get the DLT type for the interface */
   if(ioctl(fd, BIOCGDLT, &tmp) == -1)
     {
-      printerror(errno, strerror, __func__, "bpf BIOCGDLT %s failed", ifname);
+      printerror(__func__, "bpf BIOCGDLT %s failed", ifname);
       goto err;
     }
   node->type = tmp;
@@ -862,7 +860,7 @@ static int dl_bpf_node_init(const scamper_fd_t *fdn, scamper_dl_t *node)
   tmp = 1;
   if(ioctl(fd, BIOCIMMEDIATE, &tmp) == -1)
     {
-      printerror(errno, strerror, __func__, "bpf BIOCIMMEDIATE failed");
+      printerror(__func__, "bpf BIOCIMMEDIATE failed");
       goto err;
     }
 
@@ -870,7 +868,7 @@ static int dl_bpf_node_init(const scamper_fd_t *fdn, scamper_dl_t *node)
     {
       if((buf = realloc(readbuf, node->readbuf_len)) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not realloc");
+	  printerror(__func__, "could not realloc");
 	  return -1;
 	}
       readbuf     = buf;
@@ -903,16 +901,16 @@ static int dl_bpf_init(void)
   close(fd);
   if(err == -1)
     {
-      printerror(errno, strerror, __func__, "BIOCVERSION failed");
+      printerror(__func__, "BIOCVERSION failed");
       return -1;
     }
 
   scamper_debug(__func__, "bpf version %d.%d", bv.bv_major, bv.bv_minor);
   if(bv.bv_major != BPF_MAJOR_VERSION || bv.bv_minor < BPF_MINOR_VERSION)
     {
-      fprintf(stderr,
-	      "scamper_dl_init: bpf ver %d.%d is incompatible with %d.%d",
-	      bv.bv_major, bv.bv_minor, BPF_MAJOR_VERSION, BPF_MINOR_VERSION);
+      printerror_msg(__func__, "bpf ver %d.%d is incompatible with %d.%d",
+		     bv.bv_major, bv.bv_minor,
+		     BPF_MAJOR_VERSION, BPF_MINOR_VERSION);
       return -1;
     }
 
@@ -921,9 +919,9 @@ static int dl_bpf_init(void)
      osinfo->os_rel_dots >= 2 && osinfo->os_rel[0] == 4 &&
      (osinfo->os_rel[1] == 3 || osinfo->os_rel[1] == 4))
     {
-      printerror(0, NULL, __func__,
-		 "BPF file descriptors do not work with "
-		 "select in FreeBSD 4.3 or 4.4");
+      printerror_msg(__func__,
+		     "BPF file descriptors do not work with "
+		     "select in FreeBSD 4.3 or 4.4");
       return -1;
     }
 
@@ -941,7 +939,7 @@ static int dl_bpf_read(const int fd, scamper_dl_t *node)
     {
       if(errno == EINTR) continue;
       if(errno == EWOULDBLOCK) return 0;
-      printerror(errno, strerror, __func__, "read %d bytes from fd %d failed",
+      printerror(__func__, "read %d bytes from fd %d failed",
 		 node->readbuf_len, fd);
       return -1;
     }
@@ -984,14 +982,9 @@ static int dl_bpf_tx(const scamper_dl_t *node,
   if((wb = write(scamper_fd_fd_get(node->fdn), pkt, len)) < (ssize_t)len)
     {
       if(wb == -1)
-	{
-	  printerror(errno, strerror, __func__, "%d bytes failed", len);
-	}
+	printerror(__func__, "%d bytes failed", len);
       else
-	{
-	  scamper_debug(__func__, "%d bytes sent of %d total", wb, len);
-	}
-
+	scamper_debug(__func__, "%d bytes sent of %d total", wb, len);
       return -1;
     }
 
@@ -1007,7 +1000,7 @@ static int dl_bpf_filter(scamper_dl_t *node, struct bpf_insn *insns, int len)
 
   if(ioctl(scamper_fd_fd_get(node->fdn), BIOCSETF, (caddr_t)&prog) == -1)
     {
-      printerror(errno, strerror, __func__, "BIOCSETF failed");
+      printerror(__func__, "BIOCSETF failed");
       return -1;
     }
 
@@ -1024,7 +1017,7 @@ static int dl_linux_open(const int ifindex)
   /* open the socket in non cooked mode for now */
   if((fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open PF_PACKET");
+      printerror(__func__, "could not open PF_PACKET");
       return -1;
     }
 
@@ -1035,7 +1028,7 @@ static int dl_linux_open(const int ifindex)
   sll.sll_protocol = htons(ETH_P_ALL);
   if(bind(fd, (struct sockaddr *)&sll, sizeof(sll)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not bind to %d", ifindex);
+      printerror(__func__, "could not bind to %d", ifindex);
       close(fd);
       return -1;
     }
@@ -1061,7 +1054,7 @@ static int dl_linux_node_init(const scamper_fd_t *fdn, scamper_dl_t *node)
 
   if(if_indextoname(ifindex, ifname) == NULL)
     {
-      printerror(errno, strerror, __func__,"if_indextoname %d failed",ifindex);
+      printerror(__func__, "if_indextoname %d failed", ifindex);
       goto err;
     }
 
@@ -1069,7 +1062,7 @@ static int dl_linux_node_init(const scamper_fd_t *fdn, scamper_dl_t *node)
   memcpy(ifreq.ifr_name, ifname, sizeof(ifreq.ifr_name));
   if(ioctl(fd, SIOCGIFHWADDR, &ifreq) == -1)
     {
-      printerror(errno, strerror, __func__, "%s SIOCGIFHWADDR failed", ifname);
+      printerror(__func__, "%s SIOCGIFHWADDR failed", ifname);
       goto err;
     }
 
@@ -1140,10 +1133,7 @@ static int dl_linux_read(const int fd, scamper_dl_t *node)
 	{
 	  return 0;
 	}
-
-      printerror(errno, strerror, __func__, "read %d bytes from fd %d failed",
-		 readbuf_len, fd);
-
+      printerror(__func__, "read %d bytes from fd %d failed", readbuf_len, fd);
       return -1;
     }
 
@@ -1169,8 +1159,7 @@ static int dl_linux_read(const int fd, scamper_dl_t *node)
 	}
       else
 	{
-	  printerror(errno, strerror, __func__,
-		     "could not SIOCGSTAMP on fd %d", fd);
+	  printerror(__func__, "could not SIOCGSTAMP on fd %d", fd);
 	}
 
       scamper_task_handledl(&dl);
@@ -1197,27 +1186,18 @@ static int dl_linux_tx(const scamper_dl_t *node,
   sll.sll_ifindex = ifindex;
 
   if(node->type == ARPHRD_SIT)
-    {
-      sll.sll_protocol = htons(ETH_P_IPV6);
-    }
+    sll.sll_protocol = htons(ETH_P_IPV6);
   else
-    {
-      sll.sll_protocol = htons(ETH_P_ALL);
-    }
+    sll.sll_protocol = htons(ETH_P_ALL);
 
   fd = scamper_fd_fd_get(node->fdn);
 
   if((wb = sendto(fd, pkt, len, 0, sa, sizeof(sll))) < (ssize_t)len)
     {
       if(wb == -1)
-	{
-	  printerror(errno, strerror, __func__, "%d bytes failed", len);
-	}
+	printerror(__func__, "%d bytes failed", len);
       else
-	{
-	  scamper_debug(__func__, "%d bytes sent of %d total", wb, len);
-	}
-
+	scamper_debug(__func__, "%d bytes sent of %d total", wb, len);
       return -1;
     }
 
@@ -1244,7 +1224,7 @@ static int dl_linux_filter(scamper_dl_t *node,
   if(setsockopt(scamper_fd_fd_get(node->fdn), SOL_SOCKET, SO_ATTACH_FILTER,
 		(caddr_t)&prog, sizeof(prog)) == -1)
     {
-      printerror(errno, strerror, __func__, "SO_ATTACH_FILTER failed");
+      printerror(__func__, "SO_ATTACH_FILTER failed");
       return -1;
     }
 
@@ -1261,13 +1241,13 @@ static int dl_dlpi_open(const int ifindex)
   strncpy(ifname, "/dev/", sizeof(ifname));
   if(if_indextoname(ifindex, ifname+5) == NULL)
     {
-      printerror(errno, strerror, __func__,"if_indextoname %d failed",ifindex);
+      printerror(__func__, "if_indextoname %d failed", ifindex);
       return -1;
     }
 
   if((fd = open(ifname, O_RDWR)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open %s", ifname);
+      printerror(__func__, "could not open %s", ifname);
       return -1;
     }
 
@@ -1286,8 +1266,7 @@ static int dl_dlpi_req(const int fd, void *req, size_t len)
   if(putmsg(fd, &ctl, NULL, 0) == -1)
     {
       dlp = req;
-      printerror(errno, strerror, __func__,
-		 "could not putmsg %d", dlp->dl_primitive);
+      printerror(__func__, "could not putmsg %d", dlp->dl_primitive);
       return -1;
     }
 
@@ -1306,7 +1285,7 @@ static int dl_dlpi_ack(const int fd, void *ack, int primitive)
   ctl.buf = (char *)ack;
   if(getmsg(fd, &ctl, NULL, &flags) == -1)
     {
-      printerror(errno, strerror, __func__, "could not getmsg %d", primitive);
+      printerror(__func__, "could not getmsg %d", primitive);
       return -1;
     }
 
@@ -1461,14 +1440,14 @@ static int dl_dlpi_node_init(const scamper_fd_t *fdn, scamper_dl_t *node)
   /* get full link layer */
   if(strioctl(fd, DLIOCRAW, NULL, 0) == -1)
     {
-      printerror(errno, strerror, __func__, "could not DLIOCRAW");
+      printerror(__func__, "could not DLIOCRAW");
       return -1;
     }
 
   /* push bufmod */
   if(ioctl(fd, I_PUSH, "bufmod") == -1)
     {
-      printerror(errno, strerror, __func__, "could not push bufmod");
+      printerror(__func__, "could not push bufmod");
       return -1;
     }
 
@@ -1476,7 +1455,7 @@ static int dl_dlpi_node_init(const scamper_fd_t *fdn, scamper_dl_t *node)
   i = 1500;
   if(strioctl(fd, SBIOCSSNAP, &i, sizeof(i)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not SBIOCSSNAP %d", i);
+      printerror(__func__, "could not SBIOCSSNAP %d", i);
       return -1;
     }
 
@@ -1485,8 +1464,8 @@ static int dl_dlpi_node_init(const scamper_fd_t *fdn, scamper_dl_t *node)
   tv.tv_usec = 50000;
   if(strioctl(fd, SBIOCSTIME, &tv, sizeof(tv)) == -1)
     {
-      printerror(errno, strerror, __func__,
-		 "could not SBIOCSTIME %d.%06d", tv.tv_sec, tv.tv_usec);
+      printerror(__func__, "could not SBIOCSTIME %d.%06d",
+		 tv.tv_sec, tv.tv_usec);
       return -1;
     }
 
@@ -1494,13 +1473,13 @@ static int dl_dlpi_node_init(const scamper_fd_t *fdn, scamper_dl_t *node)
   i = 65535;
   if(strioctl(fd, SBIOCSCHUNK, &i, sizeof(i)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not SBIOCSCHUNK %d", i);
+      printerror(__func__, "could not SBIOCSCHUNK %d", i);
       return -1;
     }
 
   if(ioctl(fd, I_FLUSH, FLUSHR) == -1)
     {
-      printerror(errno, strerror, __func__, "could not flushr");
+      printerror(__func__, "could not flushr");
       return -1;
     }
 
@@ -1533,7 +1512,7 @@ static int dl_dlpi_read(const int fd, scamper_dl_t *node)
 
   if(getmsg(fd, NULL, &data, &flags) == -1)
     {
-      printerror(errno, strerror, __func__, "could not getmsg");
+      printerror(__func__, "could not getmsg");
       return -1;
     }
 
@@ -1572,7 +1551,7 @@ static int dl_dlpi_tx(const scamper_dl_t *node,
 
   if(putmsg(fd, NULL, &data, 0) != 0)
     {
-      printerror(errno, strerror, __func__, "could not putmsg");
+      printerror(__func__, "could not putmsg");
       return -1;
     }
 
@@ -2002,7 +1981,7 @@ scamper_dl_t *scamper_dl_state_alloc(scamper_fd_t *fdn)
 
   if((dl = malloc_zero(sizeof(scamper_dl_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "malloc node failed");
+      printerror(__func__, "malloc node failed");
       goto err;
     }
   dl->fdn = fdn;
@@ -2123,7 +2102,7 @@ int scamper_dl_init()
   readbuf_len = 128;
   if((readbuf = malloc_zero(readbuf_len)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc readbuf");
+      printerror(__func__, "could not malloc readbuf");
       readbuf_len = 0;
       return -1;
     }
@@ -2131,7 +2110,7 @@ int scamper_dl_init()
   readbuf_len = 65536; /* magic obtained from pcap-dlpi.c */
   if((readbuf = malloc_zero(readbuf_len)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc readbuf");
+      printerror(__func__, "could not malloc readbuf");
       readbuf_len = 0;
       return -1;
     }

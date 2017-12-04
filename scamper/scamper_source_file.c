@@ -1,7 +1,7 @@
 /*
  * scamper_source_file.c
  *
- * $Id: scamper_source_file.c,v 1.22 2017/06/17 03:28:53 mjl Exp $
+ * $Id: scamper_source_file.c,v 1.23 2017/12/03 09:38:27 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_source_file.c,v 1.22 2017/06/17 03:28:53 mjl Exp $";
+  "$Id: scamper_source_file.c,v 1.23 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -332,7 +332,7 @@ static void ssf_read(const int fd, void *param)
 
       if(errno != EAGAIN && errno != EINTR)
 	{
-	  printerror(errno, strerror, __func__, "read failed fd %d", fd);
+	  printerror(__func__, "read failed fd %d", fd);
 	  goto err;
 	}
     }

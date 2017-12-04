@@ -1,7 +1,7 @@
 /*
  * scamper_do_ping.c
  *
- * $Id: scamper_ping_do.c,v 1.149 2016/01/08 07:28:32 mjl Exp $
+ * $Id: scamper_ping_do.c,v 1.150 2017/12/03 09:38:27 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_do.c,v 1.149 2016/01/08 07:28:32 mjl Exp $";
+  "$Id: scamper_ping_do.c,v 1.150 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -223,7 +223,7 @@ static scamper_addr_t *ping_addr(scamper_ping_t *ping,
     }
   if((state->last_addr = scamper_addr_alloc(ping->dst->type, addr)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get reply addr");
+      printerror(__func__, "could not get reply addr");
       return NULL;
     }
   return scamper_addr_use(state->last_addr);
@@ -426,7 +426,7 @@ static void do_ping_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
   /* allocate a reply structure for the response */
   if((reply = scamper_ping_reply_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc ping reply");
+      printerror(__func__, "could not alloc ping reply");
       goto err;
     }
 
@@ -934,13 +934,13 @@ static int ping_state_alloc(scamper_task_t *task)
 
   if(scamper_ping_replies_alloc(ping, ping->probe_count) != 0)
     {
-      printerror(errno, strerror, __func__, "could not malloc replies");
+      printerror(__func__, "could not malloc replies");
       goto err;
     }
 
   if((state = malloc_zero(sizeof(ping_state_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc state");
+      printerror(__func__, "could not malloc state");
       goto err;
     }
   scamper_task_setstate(task, state);
@@ -948,7 +948,7 @@ static int ping_state_alloc(scamper_task_t *task)
   size = ping->probe_count * sizeof(ping_probe_t *);
   if((state->probes = malloc_zero(size)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc state->probes");
+      printerror(__func__, "could not malloc state->probes");
       goto err;
     }
 
@@ -1017,7 +1017,7 @@ static void do_ping_probe(scamper_task_t *task)
 	    {
 	      if(random_u16(&ipid) != 0)
 		{
-		  printerror(errno, strerror, __func__, "could not rand ipid");
+		  printerror(__func__, "could not rand ipid");
 		  goto err;
 		}
 	      if(ipid != 0)

@@ -1,12 +1,12 @@
 /*
  * scamper_control.c
  *
- * $Id: scamper_control.c,v 1.194 2017/07/12 07:23:15 mjl Exp $
+ * $Id: scamper_control.c,v 1.196 2017/12/03 09:38:26 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
- * Copyright (C) 2014-2016 Matthew Luckie
+ * Copyright (C) 2014-2017 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_control.c,v 1.194 2017/07/12 07:23:15 mjl Exp $";
+  "$Id: scamper_control.c,v 1.196 2017/12/03 09:38:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -712,7 +712,7 @@ static int client_data_send(void *param, const void *vdata, size_t len)
     {
       if(data[0] != 0x12 || data[1] != 0x05)
         {
-	  printerror(0, NULL, __func__,
+	  printerror_msg(__func__,
 		     "lost synchronisation: %02x%02x %02x%02x %02x%02x%02x%02x",
 		     data[0], data[1], data[2], data[3], data[4], data[5],
 		     data[6], data[7]);
@@ -727,7 +727,7 @@ static int client_data_send(void *param, const void *vdata, size_t len)
     {
       if(data[0] != '{')
 	{
-	  printerror(0, NULL, __func__, "lost synchronisation %c", data[0]);
+	  printerror_msg(__func__, "lost synchronisation %c", data[0]);
 	  goto err;
 	}
 
@@ -738,20 +738,20 @@ static int client_data_send(void *param, const void *vdata, size_t len)
 
   if((obj = malloc_zero(sizeof(client_obj_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc obj");
+      printerror(__func__, "could not alloc obj");
       goto err;
     }
 
   if((obj->data = memdup(vdata, len)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not memdup");
+      printerror(__func__, "could not memdup");
       goto err;
     }
   obj->len = len;
 
   if(slist_tail_push(client->sof_objs, obj) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not push obj onto list");
+      printerror(__func__, "could not push obj onto list");
       goto err;
     }
   obj = NULL;
@@ -861,13 +861,13 @@ static int command_attach(client_t *client, char *buf)
 
   if((client->sof_objs = slist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc objs list");
+      printerror(__func__, "could not alloc objs list");
       goto err;
     }
 
   if((client->sof = scamper_outfile_opennull(sab, format)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc outfile");
+      printerror(__func__, "could not alloc outfile");
       goto err;
     }
   sf = scamper_outfile_getfile(client->sof);
@@ -884,16 +884,14 @@ static int command_attach(client_t *client, char *buf)
 						    client_tostr,
 						    client)) == NULL)
     {
-      printerror(errno, strerror, __func__,
-		 "could not allocate source '%s'", sab);
+      printerror(__func__, "could not allocate source '%s'", sab);
       goto err;
     }
 
   /* put the source into rotation */
   if(scamper_sources_add(client->source) != 0)
     {
-      printerror(errno, strerror, __func__,
-		 "could not add source '%s' to rotation", sab);
+      printerror(__func__, "could not add source '%s' to rotation", sab);
       goto err;
     }
 
@@ -1131,7 +1129,7 @@ static int command_observe(client_t *client, char *buf)
   client->observe = scamper_sources_observe(command_observe_source_cb, client);
   if(client->observe == NULL)
     {
-      printerror(errno, strerror, __func__, "could not observe sources");
+      printerror(__func__, "could not observe sources");
       client_send(client, "ERR could not observe");
       return -1;
     }
@@ -2153,7 +2151,7 @@ static void client_read(const int fd, client_t *client)
     {
       if(errno == EAGAIN || errno == EINTR)
 	return;
-      printerror(errno, strerror, __func__, "could not read from %d", fd);
+      printerror(__func__, "could not read from %d", fd);
       client_free(client);
       return;
     }
@@ -2216,7 +2214,7 @@ static int client_write_do(client_t *client,
 	    len = snprintf(str, sizeof(str), "DATA %d\n", (int)o->len);
 	  if(sendfunc(client, str, len) < 0)
 	    {
-	      printerror(errno,strerror,__func__, "could not send DATA header");
+	      printerror(__func__, "could not send DATA header");
 	      return -1;
 	    }
 	}
@@ -2250,7 +2248,7 @@ static int client_write_do(client_t *client,
 
       if(sendfunc(client, data, len) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not send %d bytes", len);
+	  printerror(__func__, "could not send %d bytes", len);
 	  return -1;
 	}
     }
@@ -2273,7 +2271,7 @@ static void client_write(const int fd, client_t *client)
 
   if(scamper_writebuf_write(fd, client->un.sock.wb) != 0)
     {
-      printerror(errno, strerror, __func__, "fd %d", fd);
+      printerror(__func__, "fd %d", fd);
       goto err;
     }
 
@@ -2495,6 +2493,7 @@ static int remote_sock_ssl_init(control_remote_t *rm)
  * it is based on post_connection_check in "Network Security with
  * OpenSSL" by John Viega, Matt Messier, and Pravir Chandra.
  */
+#if !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
 static int remote_sock_is_valid_cert(control_remote_t *rm)
 {
   X509 *cert = NULL;
@@ -2562,6 +2561,7 @@ static int remote_sock_is_valid_cert(control_remote_t *rm)
   if(cert != NULL) X509_free(cert);
   return rc;
 }
+#endif /* OpenSSL version < 1.1.0 */
 #endif
 
 /*
@@ -2724,23 +2724,20 @@ static int remote_read_control_channel_new(const uint8_t *buf, size_t len)
 						    client_tostr,
 						    client)) == NULL)
     {
-      printerror(errno, strerror, __func__,
-		 "could not allocate source '%s'", listname);
+      printerror(__func__, "could not allocate source '%s'", listname);
       goto err;
     }
 
   /* put the source into rotation */
   if(scamper_sources_add(client->source) != 0)
     {
-      printerror(errno, strerror, __func__,
-		 "could not add source '%s' to rotation", listname);
+      printerror(__func__, "could not add source '%s' to rotation", listname);
       goto err;
     }
 
   if((client->un.chan.node = dlist_tail_push(ctrl_rem->list, client)) == NULL)
     {
-      printerror(errno, strerror, __func__,
-		 "could not add client to remote list");
+      printerror(__func__, "could not add client to remote list");
       goto err;
     }
   client->un.chan.rem = ctrl_rem;
@@ -2944,7 +2941,7 @@ static int remote_read_sock(control_remote_t *rm)
     {
       if(errno == EAGAIN || errno == EINTR)
 	return 1;
-      printerror(errno, strerror, __func__, "could not read from %d", fd);
+      printerror(__func__, "could not read from %d", fd);
       return -1;
     }
 
@@ -2963,8 +2960,10 @@ static int remote_read_sock(control_remote_t *rm)
 	  if(SSL_is_init_finished(rm->ssl) != 0 ||
 	     (rc = SSL_do_handshake(rm->ssl)) > 0)
 	    {
+#if !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
 	      if(remote_sock_is_valid_cert(rm) == 0)
 		return -1;
+#endif
 	      rm->mode = SSL_MODE_ESTABLISHED;
 	    }
 	  if(remote_sock_ssl_want_read(rm) < 0)
@@ -3154,8 +3153,8 @@ static int remote_connect(void)
 
   if((rc = getaddrinfo(ctrl_rem->server_name, port, &hints, &res0)) != 0)
     {
-      printerror(rc, gai_strerror, __func__,
-		 "could not getaddrinfo %s:%s", ctrl_rem->server_name, port);
+      printerror_gai(__func__, rc, "could not getaddrinfo %s:%s",
+		     ctrl_rem->server_name, port);
       remote_retry(0);
       goto done;
     }
@@ -3175,7 +3174,7 @@ static int remote_connect(void)
 
   if(fd < 0)
     {
-      printerror(errno, strerror, __func__, "could not connect to %s:%s",
+      printerror(__func__, "could not connect to %s:%s",
 		 ctrl_rem->server_name, port);
       remote_retry(0);
       goto done;
@@ -3184,7 +3183,7 @@ static int remote_connect(void)
   opt = 1;
   if(setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,(char *)&opt,sizeof(opt)) != 0)
     {
-      printerror(errno, strerror, __func__, "could not set TCP_NODELAY");
+      printerror(__func__, "could not set TCP_NODELAY");
       close(fd);
       goto err;
     }
@@ -3192,7 +3191,7 @@ static int remote_connect(void)
 #ifdef O_NONBLOCK
   if(fcntl_set(fd, O_NONBLOCK) != 0)
     {
-      printerror(errno, strerror, __func__, "could not set O_NONBLOCK");
+      printerror(__func__, "could not set O_NONBLOCK");
       close(fd);
       goto err;
     }
@@ -3200,13 +3199,13 @@ static int remote_connect(void)
 
   if((ctrl_rem->fd=scamper_fd_private(fd,NULL,remote_read,remote_write))==NULL)
     {
-      printerror(errno, strerror, __func__, "could not add fd");
+      printerror(__func__, "could not add fd");
       goto err;
     }
 
   if((ctrl_rem->wb = scamper_writebuf_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc wb");
+      printerror(__func__, "could not alloc wb");
       goto err;
     }
 
@@ -3255,7 +3254,7 @@ static void control_accept(const int fd, void *param)
   socklen = sizeof(ss);
   if((s = accept(fd, (struct sockaddr *)&ss, &socklen)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not accept");
+      printerror(__func__, "could not accept");
       return;
     }
 
@@ -3265,7 +3264,7 @@ static void control_accept(const int fd, void *param)
 #ifndef _WIN32
   if(fcntl_set(s, O_NONBLOCK) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set NONBLOCK");
+      printerror(__func__, "could not set NONBLOCK");
       goto err;
     }
 #endif
@@ -3278,7 +3277,7 @@ static void control_accept(const int fd, void *param)
 				  (scamper_fd_cb_t)client_read,
 				  (scamper_fd_cb_t)client_write)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc client");
+      printerror(__func__, "could not alloc client");
       goto err;
     }
 
@@ -3295,6 +3294,11 @@ static void control_accept(const int fd, void *param)
 int scamper_control_add_remote(const char *name, int port)
 {
   uint32_t u32;
+
+#if defined(HAVE_OPENSSL) && \
+  defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10100000L
+  X509_VERIFY_PARAM *param = NULL;
+#endif
 
   if((ctrl_rem = malloc_zero(sizeof(control_remote_t))) == NULL ||
      (ctrl_rem->list = dlist_alloc()) == NULL ||
@@ -3316,6 +3320,14 @@ int scamper_control_add_remote(const char *name, int port)
 	}
       SSL_CTX_set_options(tls_ctx,
 			  SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1);
+
+#if defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10100000L
+      param = SSL_CTX_get0_param(tls_ctx);
+      X509_VERIFY_PARAM_set_hostflags(param,
+				      X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+      X509_VERIFY_PARAM_set1_host(param, name, 0);
+#endif
+
       SSL_CTX_set_verify(tls_ctx, SSL_VERIFY_PEER, NULL);
 
       /* load the default set of certs into the SSL context */
@@ -3331,7 +3343,7 @@ int scamper_control_add_remote(const char *name, int port)
 
   if((ctrl_rem->server_name = strdup(name)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup name");
+      printerror(__func__, "could not strdup name");
       return -1;
     }
   ctrl_rem->server_port = port;
@@ -3350,37 +3362,37 @@ int scamper_control_add_unix(const char *file)
 
   if(sockaddr_compose_un((struct sockaddr *)&sn, file) != 0)
     {
-      printerror(errno, strerror, __func__, "could not compose socket");
+      printerror(__func__, "could not compose socket");
       goto err;
     }
 
   if((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not create socket");
+      printerror(__func__, "could not create socket");
       goto err;
     }
 
   if(bind(fd, (struct sockaddr *)&sn, sizeof(sn)) != 0)
     {
-      printerror(errno, strerror, __func__, "could not bind");
+      printerror(__func__, "could not bind");
       goto err;
     }
 
   if((uid = getuid()) != geteuid() && chown(file, uid, -1) != 0)
     {
-      printerror(errno, strerror, __func__, "could not chown");
+      printerror(__func__, "could not chown");
       goto err;
     }
 
   if(listen(fd, -1) != 0)
     {
-      printerror(errno, strerror, __func__, "could not listen");
+      printerror(__func__, "could not listen");
       goto err;
     }
 #else
   if((fd = scamper_privsep_open_unix(file)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open unix socket");
+      printerror(__func__, "could not open unix socket");
       goto err;
     }
 #endif
@@ -3389,7 +3401,7 @@ int scamper_control_add_unix(const char *file)
      (ctrl_unix->fd = scamper_fd_private(fd,NULL,control_accept,NULL))==NULL ||
      (ctrl_unix->name = strdup(file)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc ctrl_unix");
+      printerror(__func__, "could not alloc ctrl_unix");
       goto err;
     }
 
@@ -3414,8 +3426,8 @@ int scamper_control_add_inet(const char *ip, int port)
     {
       if(sockaddr_compose_str(sa, ip, port) != 0)
 	{
-	  printerror(errno, strerror, __func__,
-		     "could not compose sockaddr from %s:%d", ip, port);
+	  printerror(__func__, "could not compose sockaddr from %s:%d",
+		     ip, port);
 	  goto err;
 	}
       af = sa->sa_family;
@@ -3430,46 +3442,44 @@ int scamper_control_add_inet(const char *ip, int port)
   /* open the TCP socket we are going to listen on */
   if((fd = socket(af, SOCK_STREAM, IPPROTO_TCP)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not create socket");
+      printerror(__func__, "could not create socket");
       goto err;
     }
 
   opt = 1;
   if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt)) != 0)
     {
-      printerror(errno, strerror, __func__, "could not set SO_REUSEADDR");
+      printerror(__func__, "could not set SO_REUSEADDR");
       goto err;
     }
 
   opt = 1;
   if(setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char *)&opt, sizeof(opt)) != 0)
     {
-      printerror(errno, strerror, __func__, "could not set TCP_NODELAY");
+      printerror(__func__, "could not set TCP_NODELAY");
       goto err;
     }
 
   if(bind(fd, sa, sockaddr_len(sa)) != 0)
     {
       if(ip == NULL)
-	printerror(errno, strerror, __func__,
-		   "could not bind to port %d", port);
+	printerror(__func__, "could not bind to port %d", port);
       else
-	printerror(errno, strerror, __func__,
-		   "could not bind to %s:%d", ip, port);
+	printerror(__func__, "could not bind to %s:%d", ip, port);
       goto err;
     }
 
   /* tell the system we want to listen for new clients on this socket */
   if(listen(fd, -1) != 0)
     {
-      printerror(errno, strerror, __func__, "could not listen");
+      printerror(__func__, "could not listen");
       goto err;
     }
 
   if((ctrl_inet = malloc_zero(sizeof(control_inet_t))) == NULL ||
      (ctrl_inet->fd = scamper_fd_private(fd,NULL,control_accept,NULL)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc control_inet_t");
+      printerror(__func__, "could not malloc control_inet_t");
       return -1;
     }
 
@@ -3485,7 +3495,7 @@ int scamper_control_init(void)
 {
   if((client_list = dlist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc client_list");
+      printerror(__func__, "could not alloc client_list");
       return -1;
     }
   return 0;

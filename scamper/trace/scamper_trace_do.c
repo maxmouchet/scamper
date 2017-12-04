@@ -1,7 +1,7 @@
 /*
  * scamper_do_trace.c
  *
- * $Id: scamper_trace_do.c,v 1.303 2017/08/21 20:21:13 mjl Exp $
+ * $Id: scamper_trace_do.c,v 1.304 2017/12/03 09:38:27 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_do.c,v 1.303 2017/08/21 20:21:13 mjl Exp $";
+  "$Id: scamper_trace_do.c,v 1.304 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -510,7 +510,7 @@ static trace_lss_t *trace_lss_get(char *name)
   if(lsses == NULL &&
      (lsses = splaytree_alloc((splaytree_cmp_t)trace_lss_cmp)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not allocate lss");
+      printerror(__func__, "could not allocate lss");
       return NULL;
     }
 
@@ -649,7 +649,7 @@ static int pmtud_L2_init(trace_state_t *state)
 
   if((l2 = malloc_zero(sizeof(pmtud_L2_state_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc L2");
+      printerror(__func__, "could not malloc L2");
       return -1;
     }
   l2->idx   = idx;
@@ -754,7 +754,7 @@ static int pmtud_TTL_init(scamper_task_t *task)
 
   if((state->pmtud->TTL = malloc_zero(sizeof(pmtud_TTL_state_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc TTL");
+      printerror(__func__, "could not malloc TTL");
       return -1;
     }
 
@@ -1186,13 +1186,13 @@ static scamper_trace_hop_t *trace_hop(const trace_probe_t *probe,
 
   if((hop = scamper_trace_hop_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc hop");
+      printerror(__func__, "could not alloc hop");
       goto err;
     }
 
   if((hop->hop_addr = scamper_addrcache_get(addrcache, type, addr)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get addr");
+      printerror(__func__, "could not get addr");
       goto err;
     }
 
@@ -1601,8 +1601,7 @@ static int handleicmp_trace(scamper_task_t *task,
 	  len = (state->interfacec + 1) * sizeof(scamper_addr_t *);
 	  if(realloc_wrap((void **)&state->interfaces, len) != 0)
 	    {
-	      printerror(errno, strerror, __func__,
-			 "could not realloc interfaces");
+	      printerror(__func__, "could not realloc interfaces");
 	      trace_handleerror(task, errno);
 	      return -1;
 	    }
@@ -1911,7 +1910,7 @@ static int handleicmp_pmtud_default(scamper_task_t *task,
     {
       if((note = scamper_trace_pmtud_n_alloc()) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not alloc note");
+	  printerror(__func__, "could not alloc note");
 	  return -1;
 	}
       note->hop = hop;
@@ -2538,7 +2537,7 @@ static void timeout_pmtud_default(scamper_task_t *task)
 
   if((note = scamper_trace_pmtud_n_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc note");
+      printerror(__func__, "could not alloc note");
       trace_handleerror(task, errno);
       return;
     }
@@ -2742,8 +2741,7 @@ static int handletp_trace(scamper_task_t *task, scamper_dl_rec_t *dl,
 	  len = (state->interfacec + 1) * sizeof(scamper_addr_t *);
 	  if(realloc_wrap((void **)&state->interfaces, len) != 0)
 	    {
-	      printerror(errno, strerror, __func__,
-			 "could not realloc interfaces");
+	      printerror(__func__, "could not realloc interfaces");
 	      trace_handleerror(task, errno);
 	      return -1;
 	    }
@@ -3272,7 +3270,7 @@ static void trace_handle_rt(scamper_route_t *rt)
 
   if(rt->error != 0 || rt->ifindex < 0)
     {
-      printerror(errno, strerror, __func__, "could not get ifindex");
+      printerror(__func__, "could not get ifindex");
       trace_handleerror(task, errno);
       goto done;
     }
@@ -3416,7 +3414,7 @@ static int trace_state_alloc(scamper_task_t *task)
   /* allocate struct to keep state while processing the trace */
   if((state = malloc_zero(sizeof(trace_state_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc state");
+      printerror(__func__, "could not malloc state");
       goto err;
     }
 
@@ -3446,7 +3444,7 @@ static int trace_state_alloc(scamper_task_t *task)
 
   if(scamper_trace_hops_alloc(trace, state->alloc_hops) == -1)
     {
-      printerror(errno, strerror, __func__, "could not malloc hops");
+      printerror(__func__, "could not malloc hops");
       goto err;
     }
 
@@ -3456,7 +3454,7 @@ static int trace_state_alloc(scamper_task_t *task)
   /* allocate enough space to store state for each probe */
   if((state->probes = malloc_zero(sizeof(trace_probe_t *) * id_max)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc probes");
+      printerror(__func__, "could not malloc probes");
       goto err;
     }
 
@@ -3640,7 +3638,7 @@ static void do_trace_probe(scamper_task_t *task)
       /* allocate the new hops */
       if(scamper_trace_hops_alloc(trace, u16) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not realloc hops");
+	  printerror(__func__, "could not realloc hops");
 	  goto err;
 	}
 
@@ -3657,7 +3655,7 @@ static void do_trace_probe(scamper_task_t *task)
       size = sizeof(trace_probe_t *) * u16;
       if(realloc_wrap((void **)&state->probes, size) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not realloc");
+	  printerror(__func__, "could not realloc");
 	  goto err;
 	}
       state->id_max = u16;
@@ -3668,7 +3666,7 @@ static void do_trace_probe(scamper_task_t *task)
     {
       if(realloc_wrap((void **)&pktbuf, state->payload_size) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not realloc");
+	  printerror(__func__, "could not realloc");
 	  goto err;
 	}
       pktbuf_len = state->payload_size;
@@ -3838,7 +3836,7 @@ static void do_trace_probe(scamper_task_t *task)
    */
   if((tp = malloc_zero(sizeof(trace_probe_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc trace_probe_t");
+      printerror(__func__, "could not malloc trace_probe_t");
       goto err;
     }
 
@@ -4169,7 +4167,7 @@ void *scamper_do_trace_alloc(char *str)
 	  payload_len = len/2;
 	  if((payload = malloc_zero(payload_len)) == NULL)
 	    {
-	      printerror(errno,strerror,__func__, "could not malloc payload");
+	      printerror(__func__, "could not malloc payload");
 	      goto err;
 	    }
 	  for(i=0; i<len; i+=2)
@@ -4269,7 +4267,7 @@ void *scamper_do_trace_alloc(char *str)
 
   if((trace = scamper_trace_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc trace");
+      printerror(__func__, "could not alloc trace");
       goto err;
     }
   if((trace->dst= scamper_addrcache_resolve(addrcache,AF_UNSPEC,addr)) == NULL)

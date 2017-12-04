@@ -1,7 +1,7 @@
 /*
  * scamper_task.c
  *
- * $Id: scamper_task.c,v 1.63 2016/10/28 05:10:30 mjl Exp $
+ * $Id: scamper_task.c,v 1.64 2017/12/03 09:38:27 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_task.c,v 1.63 2016/10/28 05:10:30 mjl Exp $";
+  "$Id: scamper_task.c,v 1.64 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -603,7 +603,7 @@ scamper_task_t *scamper_task_alloc(void *data, scamper_task_funcs_t *funcs)
 
   if((task = malloc_zero(sizeof(scamper_task_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc task");
+      printerror(__func__, "could not malloc task");
       goto err;
     }
 

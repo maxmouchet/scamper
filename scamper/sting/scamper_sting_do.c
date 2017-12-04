@@ -1,7 +1,7 @@
 /*
  * scamper_do_sting.c
  *
- * $Id: scamper_sting_do.c,v 1.46 2012/05/04 20:16:06 mjl Exp $
+ * $Id: scamper_sting_do.c,v 1.47 2017/12/03 09:38:27 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012      The Regents of the University of California
@@ -31,7 +31,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sting_do.c,v 1.46 2012/05/04 20:16:06 mjl Exp $";
+  "$Id: scamper_sting_do.c,v 1.47 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -527,7 +527,7 @@ static void sting_handle_rt(scamper_route_t *rt)
 
   if(rt->error != 0 || rt->ifindex < 0)
     {
-      printerror(errno, strerror, __func__, "could not get ifindex");
+      printerror(__func__, "could not get ifindex");
       sting_handleerror(task, errno);
       goto done;
     }
@@ -604,7 +604,7 @@ static int sting_state_alloc(scamper_task_t *task)
 
   if((state = malloc_zero(sizeof(sting_state_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc state");
+      printerror(__func__, "could not malloc state");
       goto err;
     }
   scamper_task_setstate(task, state);
@@ -615,7 +615,7 @@ static int sting_state_alloc(scamper_task_t *task)
 
   if(random_u16(&u16) != 0)
     {
-      printerror(errno, strerror, __func__, "could not get random isn");
+      printerror(__func__, "could not get random isn");
       goto err;
     }
   state->isn = u16;
@@ -815,7 +815,7 @@ static void do_sting_probe(scamper_task_t *task)
   if(scamper_probe(&probe) == -1)
     {
       errno = probe.pr_errno;
-      printerror(errno, strerror, __func__, "could not send probe");
+      printerror(__func__, "could not send probe");
       goto err;
     }
 
@@ -824,7 +824,7 @@ static void do_sting_probe(scamper_task_t *task)
 				    &probe.pr_tx)) == NULL ||
      scamper_sting_pkt_record(sting, pkt) != 0)
     {
-      printerror(errno, strerror, __func__, "could not record packet");
+      printerror(__func__, "could not record packet");
       goto err;
     }
 
@@ -1013,12 +1013,12 @@ void *scamper_do_sting_alloc(char *str)
 
   if((sting = scamper_sting_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc sting");
+      printerror(__func__, "could not alloc sting");
       goto err;
     }
   if((sting->dst=scamper_addrcache_resolve(addrcache,AF_UNSPEC,addr)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not resolve %s", addr);
+      printerror(__func__, "could not resolve %s", addr);
       goto err;
     }
 

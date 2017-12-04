@@ -25,7 +25,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_list.h,v 1.39 2015/05/19 23:05:48 mjl Exp $
+ * $Id: mjl_list.h,v 1.40 2017/10/28 19:15:51 mjl Exp $
  *
  */
 
@@ -98,6 +98,7 @@ void slist_lock(slist_t *list);
 void slist_unlock(slist_t *list);
 int slist_islocked(slist_t *list);
 void slist_empty(slist_t *list);
+void slist_empty_cb(slist_t *list, slist_free_t func);
 void slist_free(slist_t *list);
 void slist_free_cb(slist_t *list, slist_free_t func);
 
@@ -144,6 +145,7 @@ void dlist_lock(dlist_t *list);
 void dlist_unlock(dlist_t *list);
 int dlist_islocked(dlist_t *list);
 void dlist_empty(dlist_t *list);
+void dlist_empty_cb(dlist_t *list, dlist_free_t func);
 void dlist_free(dlist_t *list);
 void dlist_free_cb(dlist_t *list, dlist_free_t func);
 

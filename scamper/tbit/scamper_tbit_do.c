@@ -1,13 +1,14 @@
 /*
  * scamper_do_tbit.c
  *
- * $Id: scamper_tbit_do.c,v 1.177 2017/08/21 20:41:53 mjl Exp $
+ * $Id: scamper_tbit_do.c,v 1.182 2017/12/03 09:38:27 mjl Exp $
  *
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2009-2010 Stephen Eichler
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2010-2011 University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
+ * Copyright (C) 2017      University of Waikato
  *
  * Authors: Matthew Luckie, Ben Stasiewicz, Stephen Eichler, Tiange Wu,
  *          Robert Beverly
@@ -37,7 +38,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_do.c,v 1.177 2017/08/21 20:41:53 mjl Exp $";
+  "$Id: scamper_tbit_do.c,v 1.182 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -220,6 +221,7 @@ typedef struct tbit_state
       uint16_t                part1;
       uint16_t                part2;
       uint16_t                part3;
+      uint32_t                ack;
     } blind;
 
   } un;
@@ -245,6 +247,7 @@ typedef struct tbit_state
 #define blind_part2           un.blind.part2
 #define blind_part3           un.blind.part3
 #define blind_step            un.blind.step
+#define blind_ack             un.blind.ack
 
 /* The callback functions registered with the tbit task */
 static scamper_task_funcs_t tbit_funcs;
@@ -587,7 +590,8 @@ static void tbit_classify(scamper_task_t *task)
       else
 	tbit_result(task, SCAMPER_TBIT_RESULT_NONE);
     }
-  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA ||
+	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN)
     {
       if(state->blind_flags & TBIT_STATE_BLIND_FLAG_ACCEPTED)
 	tbit_result(task, SCAMPER_TBIT_RESULT_BLIND_ACCEPTED);
@@ -771,7 +775,7 @@ static int tbit_reassemble(scamper_task_t *task, scamper_dl_rec_t **out,
     {
       if((frags = malloc_zero(sizeof(tbit_frags_t))) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not malloc frags");
+	  printerror(__func__, "could not malloc frags");
 	  goto err;
 	}
       frags->id = fmfs.id;
@@ -779,7 +783,7 @@ static int tbit_reassemble(scamper_task_t *task, scamper_dl_rec_t **out,
 		      (array_cmp_t)tbit_frags_cmp);
       if(rc != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not insert frags");
+	  printerror(__func__, "could not insert frags");
 	  goto err;
 	}
       pos = array_findpos((void **)state->frags, state->fragc, frags,
@@ -795,15 +799,14 @@ static int tbit_reassemble(scamper_task_t *task, scamper_dl_rec_t **out,
     {
       if((frag = malloc_zero(sizeof(tbit_frag_t))) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not malloc frag");
+	  printerror(__func__, "could not malloc frag");
 	  goto err;
 	}
       frag->off = fmf.off;
 
       if((frag->data = memdup(dl->dl_ip_data, dl->dl_ip_datalen)) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not dup %d",
-		     dl->dl_ip_datalen);
+	  printerror(__func__, "could not dup %d", dl->dl_ip_datalen);
 	  goto err;
 	}
       frag->datalen = dl->dl_ip_datalen;
@@ -811,7 +814,7 @@ static int tbit_reassemble(scamper_task_t *task, scamper_dl_rec_t **out,
       if(array_insert((void ***)&frags->frags, &frags->fragc, frag,
 		      (array_cmp_t)tbit_frag_cmp) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not add frag");
+	  printerror(__func__, "could not add frag");
 	  goto err;
 	}
 
@@ -839,7 +842,7 @@ static int tbit_reassemble(scamper_task_t *task, scamper_dl_rec_t **out,
   frag = frags->frags[frags->fragc-1];
   if((data = malloc_zero(frag->off + frag->datalen)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc data");
+      printerror(__func__, "could not malloc data");
       goto err;
     }
   for(i=0, off=0; i<frags->fragc; i++)
@@ -853,7 +856,7 @@ static int tbit_reassemble(scamper_task_t *task, scamper_dl_rec_t **out,
 
   if((newp = malloc_zero(sizeof(scamper_dl_rec_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc newp");
+      printerror(__func__, "could not malloc newp");
       goto err;
     }
 
@@ -916,12 +919,12 @@ static tbit_probe_t *tp_alloc(tbit_state_t *state, uint8_t type)
   tbit_probe_t *tp;
   if((tp = malloc_zero(sizeof(tbit_probe_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc tp");
+      printerror(__func__, "could not malloc tp");
       return NULL;
     }
   if(slist_tail_push(state->tx, tp) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not queue tp");
+      printerror(__func__, "could not queue tp");
       free(tp);
       return NULL;
     }
@@ -974,18 +977,18 @@ static int tbit_segment(tbit_state_t *state, const uint8_t *data, uint16_t len)
 
   if((seg = malloc_zero(sizeof(tbit_segment_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc seg");
+      printerror(__func__, "could not malloc seg");
       goto err;
     }
   if((seg->data = memdup(data, len)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc seg->data");
+      printerror(__func__, "could not malloc seg->data");
       goto err;
     }
   seg->len = len;
   if(slist_tail_push(state->segments, seg) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not add seg");
+      printerror(__func__, "could not add seg");
       goto err;
     }
 
@@ -1014,22 +1017,21 @@ static int tbit_rxq(tbit_state_t *state, const scamper_dl_rec_t *dl)
   if(state->rxq == NULL &&
      (state->rxq = scamper_tbit_tcpq_alloc(state->rcv_nxt)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc tcpq");
+      printerror(__func__, "could not alloc tcpq");
       goto err;
     }
 
   if(dl->dl_tcp_datalen > 0 &&
      (data = memdup(dl->dl_tcp_data, dl->dl_tcp_datalen)) == NULL)
     {
-      printerror(errno, strerror, __func__,
-		 "could not dup %d bytes", dl->dl_tcp_datalen);
+      printerror(__func__, "could not dup %d bytes", dl->dl_tcp_datalen);
       goto err;
     }
 
   if(scamper_tbit_tcpq_add(state->rxq, dl->dl_tcp_seq, dl->dl_tcp_flags,
 			   dl->dl_tcp_datalen, data) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add %u/%2x/%u",
+      printerror(__func__, "could not add %u/%2x/%u",
 		 dl->dl_tcp_seq, dl->dl_tcp_flags, dl->dl_tcp_datalen);
       goto err;
     }
@@ -1413,11 +1415,20 @@ static void dl_syn(scamper_task_t *task, scamper_dl_rec_t *dl)
 	  tp->tp_len = 1;
 	  tp->wait = TBIT_TIMEOUT_SACK;
 	}
-      else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+      else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA ||
+	      tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN)
 	{
-	  scamper_debug(__func__, "request %d", rc);
-	  state->blind_part1 = state->blind_part2 = rc / 3;
-	  state->blind_part3 = rc - state->blind_part1 - state->blind_part2;
+	  state->blind_part1 = rc / 3;
+	  if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+	    {
+	      state->blind_part2 = state->blind_part1;
+	      state->blind_part3 = rc - state->blind_part1 - state->blind_part2;
+	    }
+	  else
+	    {
+	      state->blind_part2 = rc - state->blind_part1;
+	      state->blind_ack = state->snd_nxt + rc;
+	    }
 	  tp->tp_len = state->blind_part1;
 	  tp->wait = TBIT_TIMEOUT_BLINDDATA;
 	}
@@ -1428,7 +1439,8 @@ static void dl_syn(scamper_task_t *task, scamper_dl_rec_t *dl)
 
       if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST ||
 	 tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN ||
-	 tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+	 tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA ||
+	 tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN)
 	mode = MODE_BLIND;
 
       state->attempt = 0;
@@ -1682,7 +1694,7 @@ static int dl_data_pmtud(scamper_task_t *task, scamper_dl_rec_t *dl)
   state->pmtud_ptb_data = memdup(dl->dl_net_raw, state->pmtud_ptb_datalen);
   if(state->pmtud_ptb_data == NULL)
     {
-      printerror(errno, strerror, __func__, "could not dup quote");
+      printerror(__func__, "could not dup quote");
       goto err;
     }
 
@@ -2057,7 +2069,7 @@ static int dl_data_icw(scamper_task_t *task, scamper_dl_rec_t *dl)
   /* if the packet contains data or is a fin, fail if we cannot queue it */
   if((dl->dl_tcp_datalen != 0 || fin) && tbit_rxq(state, dl) != 0)
     {
-      printerror(errno, strerror, __func__, "could not queue packet");
+      printerror(__func__, "could not queue packet");
       goto err;
     }
 
@@ -2208,10 +2220,7 @@ static int dl_data_blinddata(scamper_task_t *task, scamper_dl_rec_t *dl)
 
       /* in step 1, we send third segment with wrong ack */
       if((tp = tp_tcp(state)) == NULL)
-	{
-	  tbit_handleerror(task, errno);
-	  return -1;
-	}
+	goto err;
       tp->tp_seq += state->blind_part2;
       tp->tp_len = state->blind_part3;
       tp->tp_ack += blind->off;
@@ -2225,7 +2234,6 @@ static int dl_data_blinddata(scamper_task_t *task, scamper_dl_rec_t *dl)
 	  state->blind_step++;
 	  state->attempt = 0;
 	}
-      return 0;
     }
   else if(state->blind_step == 2)
     {
@@ -2237,15 +2245,153 @@ static int dl_data_blinddata(scamper_task_t *task, scamper_dl_rec_t *dl)
 
       /* in step 3, we send the third segment with correct ack */
       if((tp = tp_tcp(state)) == NULL)
-	{
-	  tbit_handleerror(task, errno);
-	  return -1;
-	}
+	goto err;
       tp->tp_len = seg->len;
       tp->wait = TBIT_TIMEOUT_BLINDDATA;
     }
 
   return 0;
+
+ err:
+  tbit_handleerror(task, errno);
+  return -1;
+}
+
+/*
+ * dl_data_blindfin
+ *
+ * step 0: send the first part
+ * step 1: send a fin, leaving a hole in receiver's window
+ * step 2: fill the hole
+ * step 3: wait to see if the server ack's the FIN beyond acking the data
+ */
+static int dl_data_blindfin(scamper_task_t *task, scamper_dl_rec_t *dl)
+{
+  scamper_tbit_t *tbit = tbit_getdata(task);
+  tbit_state_t *state = tbit_getstate(task);
+  scamper_tbit_blind_t *blind = tbit->data;
+  tbit_segment_t *seg;
+  tbit_probe_t *tp;
+
+  if(state->mode == MODE_DATA)
+    return dl_data_null(task, dl);
+  if(state->mode != MODE_BLIND)
+    return 0;
+
+  /*
+   * if the packet does not contain the expected sequence number, but we're in
+   * step 2, we need to check the ack incase it covers the data we've sent
+   */
+  if(slist_count(state->segments) == 0 && state->blind_step == 2 &&
+     dl->dl_tcp_seq != state->rcv_nxt)
+    {
+      /* got an ack covering the request without the FIN */
+      if(dl->dl_tcp_ack == state->blind_ack)
+	{
+	  state->blind_step = 3;
+	  return 0;
+	}
+
+      /* ack indicates the blind FIN was accepted */
+      if(dl->dl_tcp_ack == state->blind_ack + 1 &&
+	 (state->flags & TBIT_STATE_FLAG_FIN_ACKED) == 0)
+	{
+	  state->blind_flags |= TBIT_STATE_BLIND_FLAG_ACCEPTED;
+	  state->flags |= TBIT_STATE_FLAG_FIN_ACKED;
+	  state->snd_nxt++;
+	  state->mode = MODE_FIN;
+	  tp_flush(state, NULL);
+	}
+      return 0;
+    }
+
+  /* skip over unexpected data */
+  if(dl->dl_tcp_seq != state->rcv_nxt)
+    {
+      scamper_debug(__func__, "skip %u %u", dl->dl_tcp_seq, state->rcv_nxt);
+      return 0;
+    }
+
+  seg = slist_head_item(state->segments);
+
+  if(state->blind_step == 0)
+    {
+      if(seg->len != state->blind_part2)
+	return 0;
+      state->blind_step++;
+      state->attempt = 0;
+
+      /* in step 1, we send the FIN with wrong ack */
+      if((tp = tp_tcp(state)) == NULL)
+	goto err;
+      tp->tp_seq += state->blind_part2;
+      tp->tp_ack += blind->off;
+      tp->tp_flags |= TH_FIN;
+      tp->wait = TBIT_TIMEOUT_BLINDDATA;
+    }
+  else if(state->blind_step == 1)
+    {
+      /* if we get an ack in this stage, classify as a challenge ack */
+      if(dl->dl_tcp_datalen == 0 && (dl->dl_tcp_flags & TH_FIN) == 0)
+	state->blind_flags |= TBIT_STATE_BLIND_FLAG_CHALLENGE;
+      if(state->attempt >= blind->retx)
+	{
+	  state->blind_step++;
+	  state->attempt = 0;
+	}
+    }
+  else if(state->blind_step == 2 || state->blind_step == 3)
+    {
+      /* waiting for an ACK covering the data we sent */
+      if(dl->dl_tcp_ack < state->blind_ack)
+	{
+	  scamper_debug(__func__, "old ack %u %u", dl->dl_tcp_ack, state->blind_ack);
+	  return 0;
+	}
+      //if(state->blind_step == 2)
+      //{
+      //timeval_add_ms(&state->timeout, &dl->dl_tv, TBIT_TIMEOUT_BLINDDATA);
+      //state->flags |= TBIT_STATE_FLAG_NORESET;
+      //}
+      state->blind_step = 3;
+
+      /* make sure the ack is one of two possible values */
+      if(dl->dl_tcp_ack > state->blind_ack + 1)
+	{
+	  errno = 0;
+	  goto err;
+	}
+
+      /* pass data up to the application and send an ack for it */
+      if(dl->dl_tcp_datalen > 0)
+	{
+	  if(tbit_app_rx(task, dl->dl_tcp_data, dl->dl_tcp_datalen) < 0)
+	    goto err;
+	  state->rcv_nxt += dl->dl_tcp_datalen;
+	  if((tp = tp_tcp(state)) == NULL)
+	    goto err;
+	}
+
+      /*
+       * if the packet is an ack that indicates the blind fin was accepted,
+       * then we're done
+       */
+      if(dl->dl_tcp_ack == state->blind_ack + 1 &&
+	 (state->flags & TBIT_STATE_FLAG_FIN_ACKED) == 0)
+	{
+	  state->blind_flags |= TBIT_STATE_BLIND_FLAG_ACCEPTED;
+	  state->flags |= TBIT_STATE_FLAG_FIN_ACKED;
+	  state->snd_nxt++;
+	  state->mode = MODE_FIN;
+	  tp_flush(state, NULL);
+	}
+    }
+
+  return 0;
+
+ err:
+  tbit_handleerror(task, errno);
+  return -1;
 }
 
 /*
@@ -2390,6 +2536,7 @@ static void dl_data(scamper_task_t *task, scamper_dl_rec_t *dl)
       dl_data_blinddata,
       dl_data_blindrst,
       dl_data_blindrst,
+      dl_data_blindfin,
     };
   scamper_tbit_t *tbit = tbit_getdata(task);
   tbit_state_t *state = tbit_getstate(task);
@@ -2397,7 +2544,8 @@ static void dl_data(scamper_task_t *task, scamper_dl_rec_t *dl)
   uint32_t ab;
   int timeout = TBIT_TIMEOUT_LONG;
 
-  if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA &&
+  if((tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA ||
+      tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN) &&
      state->mode == MODE_BLIND)
     timeout = TBIT_TIMEOUT_BLINDDATA;
 
@@ -2456,6 +2604,7 @@ static void timeout_data(scamper_task_t *task)
       timeout_data_generic, /* blind-data */
       timeout_data_generic, /* blind-rst */
       timeout_data_generic, /* blind-syn */
+      timeout_data_generic, /* blind-fin */
     };
   scamper_tbit_t *tbit = tbit_getdata(task);
   tbit_state_t *state = tbit_getstate(task);
@@ -2682,7 +2831,8 @@ static void dl_zerowin(scamper_task_t *task, scamper_dl_rec_t *dl)
 
   if(tbit->type == SCAMPER_TBIT_TYPE_SACK_RCVR)
     tp->tp_len = 1;
-  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA ||
+	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN)
     tp->tp_len = state->blind_part1;
   else
     tp->tp_len = seg->len;
@@ -2692,7 +2842,8 @@ static void dl_zerowin(scamper_task_t *task, scamper_dl_rec_t *dl)
       tp->wait = TBIT_TIMEOUT_SACK;
       state->mode = MODE_DATA;
     }
-  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA ||
+	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN)
     {
       tp->wait = TBIT_TIMEOUT_BLINDDATA;
       state->mode = MODE_BLIND;
@@ -2765,7 +2916,7 @@ static void dl_moredata(scamper_task_t *task, scamper_dl_rec_t *dl)
   /* fail if we cannot queue packet */
   if(tbit_rxq(state, dl) != 0)
     {
-      printerror(errno, strerror, __func__, "could not queue packet");
+      printerror(__func__, "could not queue packet");
       goto err;
     }
 
@@ -2843,26 +2994,13 @@ static void dl_moredata(scamper_task_t *task, scamper_dl_rec_t *dl)
   return;
 }
 
-/*
- * timeout_blind
- *
- * a timeout has occured doing a blind-test.  figure out which blind
- * test this corresponds to and take the appropriate action
- */
-static void timeout_blind(scamper_task_t *task)
+static void timeout_blinddata(scamper_task_t *task)
 {
   scamper_tbit_t *tbit = tbit_getdata(task);
   tbit_state_t *state = tbit_getstate(task);
   scamper_tbit_blind_t *blind = tbit->data;
   tbit_segment_t *seg;
   tbit_probe_t *tp;
-
-  /* if the timeout is for the reset or syn tests, we're done */
-  if(tbit->type != SCAMPER_TBIT_TYPE_BLIND_DATA)
-    {
-      tbit_classify(task);
-      return;
-    }
 
   seg = slist_head_item(state->segments); assert(seg != NULL);
 
@@ -2927,6 +3065,115 @@ static void timeout_blind(scamper_task_t *task)
   return;
 }
 
+/*
+ * timeout_blindfin
+ *
+ * step 0: send the first part
+ * step 1: send a fin, leaving a hole in receiver's window
+ * step 2: fill the hole
+ * step 3: wait to see if the server ack's the FIN beyond acking the data
+ */
+static void timeout_blindfin(scamper_task_t *task)
+{
+  scamper_tbit_t *tbit = tbit_getdata(task);
+  tbit_state_t *state = tbit_getstate(task);
+  scamper_tbit_blind_t *blind = tbit->data;
+  tbit_segment_t *seg = slist_head_item(state->segments);
+  tbit_probe_t *tp;
+
+  if(state->blind_step == 0)
+    {
+      if(state->attempt >= blind->retx)
+	{
+	  tbit_result(task, SCAMPER_TBIT_RESULT_NONE);
+	  return;
+	}
+      if((tp = tp_tcp(state)) == NULL)
+	goto err;
+      tp->tp_len = state->blind_part1;
+      tp->wait = TBIT_TIMEOUT_BLINDDATA;
+    }
+  else if(state->blind_step == 3)
+    {
+      tp_flush(state, NULL);
+      state->flags &= (~TBIT_STATE_FLAG_NORESET);
+      state->mode = MODE_DATA;
+    }
+  else
+    {
+      if((tp = tp_tcp(state)) == NULL)
+	goto err;
+      tp->tp_len = seg->len;
+      tp->wait = TBIT_TIMEOUT_BLINDDATA;
+
+      if(state->attempt >= blind->retx)
+	{
+	  if(state->blind_step == 1)
+	    {
+	      /*
+	       * if we did not get a challenge ack during the process of
+	       * sending the first packet, then record silence.
+	       */
+	      if((state->blind_flags & TBIT_STATE_BLIND_FLAG_CHALLENGE) == 0)
+		state->blind_flags |= TBIT_STATE_BLIND_FLAG_SILENCE;
+	    }
+	  state->attempt = 0;
+	  state->blind_step++;
+	}
+
+      if(state->blind_step == 1)
+	{
+	  /*
+	   * if we are still in the process of re-trying packet
+	   * with offset ack field, keep trying
+	   */
+	  tp->tp_ack += blind->off;
+	  tp->tp_seq += state->blind_part2;
+	  tp->tp_len = 0;
+	  tp->tp_flags |= TH_FIN;
+	}
+      else
+	{
+	  tp->tp_len = state->blind_part2;
+	  state->flags |= TBIT_STATE_FLAG_NORESET;
+	}
+    }
+
+  tbit_queue(task);
+  return;
+
+ err:
+  tbit_handleerror(task, errno);
+  return;
+}
+
+/*
+ * timeout_blind
+ *
+ * a timeout has occured doing a blind-test.  figure out which blind
+ * test this corresponds to and take the appropriate action
+ */
+static void timeout_blind(scamper_task_t *task)
+{
+  scamper_tbit_t *tbit = tbit_getdata(task);
+
+  /* if the timeout is for the reset or syn tests, we're done */
+  if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST ||
+     tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN)
+    {
+      tbit_classify(task);
+    }
+  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+    {
+      timeout_blinddata(task);
+    }
+  else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN)
+    {
+      timeout_blindfin(task);
+    }
+  return;
+}
+
 static int blind_check_rst(const scamper_task_t *t, const scamper_dl_rec_t *dl)
 {
   scamper_tbit_t *tbit = tbit_getdata(t);
@@ -2934,6 +3181,8 @@ static int blind_check_rst(const scamper_task_t *t, const scamper_dl_rec_t *dl)
   scamper_tbit_blind_t *blind = tbit->data;
 
   if(((tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA &&
+       dl->dl_tcp_seq == state->rcv_nxt + blind->off) ||
+      (tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN &&
        dl->dl_tcp_seq == state->rcv_nxt + blind->off) ||
       (tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN &&
        dl->dl_tcp_ack == state->snd_nxt + blind->off + 1)))
@@ -3126,7 +3375,7 @@ static void tbit_handle_rt(scamper_route_t *rt)
 
   if(rt->error != 0 || rt->ifindex < 0)
     {
-      printerror(errno, strerror, __func__, "could not get ifindex");
+      printerror(__func__, "could not get ifindex");
       tbit_handleerror(task, errno);
       goto done;
     }
@@ -3275,7 +3524,7 @@ static int tbit_state_alloc(scamper_task_t *task)
 
   if((state = malloc_zero(sizeof(tbit_state_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc state");
+      printerror(__func__, "could not malloc state");
       goto err;
     }
   state->mode = MODE_RTSOCK;
@@ -3283,12 +3532,12 @@ static int tbit_state_alloc(scamper_task_t *task)
 
   if((state->segments = slist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not create segments list");
+      printerror(__func__, "could not create segments list");
       goto err;
     }
   if((state->tx = slist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not create tx list");
+      printerror(__func__, "could not create tx list");
       goto err;
     }
 
@@ -3298,7 +3547,7 @@ static int tbit_state_alloc(scamper_task_t *task)
    */
   if(random_u16(&seq) != 0)
     {
-      printerror(errno, strerror, __func__, "could not get random isn");
+      printerror(__func__, "could not get random isn");
       goto err;
     }
   state->snd_nxt = seq;
@@ -3309,7 +3558,7 @@ static int tbit_state_alloc(scamper_task_t *task)
 #ifndef _WIN32
   if((state->rtsock = scamper_fd_rtsock()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get rtsock");
+      printerror(__func__, "could not get rtsock");
       goto err;
     }
 #endif
@@ -3457,6 +3706,12 @@ static int tbit_tx_tcp(scamper_task_t *task, scamper_probe_t *pr,
 
 	  pr->pr_data = seg->data + (tp->tp_seq - state->snd_nxt);
 	  pr->pr_len  = tp->tp_len;
+	  state->attempt++;
+	}
+      else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN &&
+	      state->mode == MODE_BLIND && state->blind_step == 1 &&
+	      (tp->tp_flags & TH_FIN) != 0)
+	{
 	  state->attempt++;
 	}
       pr->pr_tcp_seq = tp->tp_seq;
@@ -3630,7 +3885,7 @@ static void do_tbit_probe(scamper_task_t *task)
   if(scamper_probe(&probe) != 0)
     {
       errno = probe.pr_errno;
-      printerror(errno, strerror, __func__, "could not send probe");
+      printerror(__func__, "could not send probe");
       goto err;
     }
 
@@ -3638,7 +3893,7 @@ static void do_tbit_probe(scamper_task_t *task)
 				   probe.pr_tx_rawlen, &probe.pr_tx))==NULL ||
      scamper_tbit_record_pkt(tbit, pkt) != 0)
     {
-      printerror(errno, strerror, __func__, "could not record packet");
+      printerror(__func__, "could not record packet");
       goto err;
     }
 
@@ -3676,6 +3931,8 @@ static int tbit_arg_param_validate(int optid, char *param, long *out)
 	tmp = SCAMPER_TBIT_TYPE_BLIND_RST;
       else if(strcasecmp(param, "blind-syn") == 0)
 	tmp = SCAMPER_TBIT_TYPE_BLIND_SYN;
+      else if(strcasecmp(param, "blind-fin") == 0)
+	tmp = SCAMPER_TBIT_TYPE_BLIND_FIN;
       else
 	goto err;
       break;
@@ -3943,7 +4200,8 @@ static int tbit_alloc_blind(scamper_tbit_t *tbit, tbit_options_t *o)
       if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN ||
 	 tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST)
 	blind->off = 10;
-      else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+      else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA ||
+	      tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN)
 	blind->off = -70000;
       else
 	return -1;
@@ -4021,6 +4279,7 @@ void *scamper_do_tbit_alloc(char *str)
     tbit_alloc_blind, /* blind-data */
     tbit_alloc_blind, /* blind-rst */
     tbit_alloc_blind, /* blind-syn */
+    tbit_alloc_blind, /* blind-fin */
   };
   static int (* const app_func[])(scamper_tbit_t *, tbit_options_t *) = {
     NULL,
@@ -4169,12 +4428,12 @@ void *scamper_do_tbit_alloc(char *str)
 
   if((tbit = scamper_tbit_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc tbit");
+      printerror(__func__, "could not alloc tbit");
       goto err;
     }
   if((tbit->dst = scamper_addrcache_resolve(addrcache,AF_UNSPEC,addr)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not resolve %s", addr);
+      printerror(__func__, "could not resolve %s", addr);
       goto err;
     }
   tbit->type       = type;

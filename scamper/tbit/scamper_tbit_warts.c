@@ -7,7 +7,7 @@
  * Copyright (C) 2016      Matthew Luckie
  * Authors: Matthew Luckie, Ben Stasiewicz
  *
- * $Id: scamper_tbit_warts.c,v 1.27 2017/08/21 20:41:53 mjl Exp $
+ * $Id: scamper_tbit_warts.c,v 1.28 2017/09/27 01:54:18 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_warts.c,v 1.27 2017/08/21 20:41:53 mjl Exp $";
+  "$Id: scamper_tbit_warts.c,v 1.28 2017/09/27 01:54:18 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -984,6 +984,7 @@ int scamper_file_warts_tbit_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     case SCAMPER_TBIT_TYPE_BLIND_RST:
     case SCAMPER_TBIT_TYPE_BLIND_SYN:
     case SCAMPER_TBIT_TYPE_BLIND_DATA:
+    case SCAMPER_TBIT_TYPE_BLIND_FIN:
       if((tbit->data = scamper_tbit_blind_alloc()) == NULL)
 	goto err;
       break;      
@@ -1037,6 +1038,7 @@ int scamper_file_warts_tbit_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 	    case SCAMPER_TBIT_TYPE_BLIND_RST:
 	    case SCAMPER_TBIT_TYPE_BLIND_SYN:
 	    case SCAMPER_TBIT_TYPE_BLIND_DATA:
+	    case SCAMPER_TBIT_TYPE_BLIND_FIN:
 	      if(warts_tbit_blind_read(tbit, buf, &i, hdr->len) != 0)
 		goto err;
 	      break;
@@ -1130,6 +1132,7 @@ int scamper_file_warts_tbit_write(const scamper_file_t *sf,
 	case SCAMPER_TBIT_TYPE_BLIND_RST:
 	case SCAMPER_TBIT_TYPE_BLIND_SYN:
 	case SCAMPER_TBIT_TYPE_BLIND_DATA:
+	case SCAMPER_TBIT_TYPE_BLIND_FIN:
 	  warts_tbit_blind_params(tbit, &blind);
 	  len += (2 + 4 + blind.len);
 	  break;
@@ -1201,6 +1204,7 @@ int scamper_file_warts_tbit_write(const scamper_file_t *sf,
 	case SCAMPER_TBIT_TYPE_BLIND_RST:
 	case SCAMPER_TBIT_TYPE_BLIND_SYN:
 	case SCAMPER_TBIT_TYPE_BLIND_DATA:
+	case SCAMPER_TBIT_TYPE_BLIND_FIN:
 	  insert_uint32(buf, &off, len, &blind.len, NULL);
 	  warts_tbit_blind_write(tbit, buf, &off, len, &blind);
 	  break;

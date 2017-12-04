@@ -1,7 +1,7 @@
 /*
  * scamper_do_tracelb.c
  *
- * $Id: scamper_tracelb_do.c,v 1.274 2016/08/08 08:37:59 mjl Exp $
+ * $Id: scamper_tracelb_do.c,v 1.275 2017/12/03 09:38:27 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012      The Regents of the University of California
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb_do.c,v 1.274 2016/08/08 08:37:59 mjl Exp $";
+  "$Id: scamper_tracelb_do.c,v 1.275 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -741,13 +741,13 @@ static scamper_addr_t *tracelb_addr(tracelb_state_t *state,int type,void *addr)
 
   if((a = scamper_addr_alloc(type, addr)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc addr");
+      printerror(__func__, "could not alloc addr");
       return NULL;
     }
 
   if(splaytree_insert(state->addrs, a) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not insert addr");
+      printerror(__func__, "could not insert addr");
       scamper_addr_free(a);
       return NULL;
     }
@@ -788,7 +788,7 @@ static int tracelb_bringfwd_add(tracelb_branch_t *br, tracelb_path_t *path)
   tracelb_bringfwd_t *bf;
   if((bf = malloc_zero(sizeof(tracelb_bringfwd_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc");
+      printerror(__func__, "could not malloc");
       return -1;
     }
   bf->path = path;
@@ -888,7 +888,7 @@ static int tracelb_flowids_list_add(slist_t *list, tracelb_probe_t *pr)
 
   if((tf = malloc_zero(sizeof(tracelb_flowid_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc flowid");
+      printerror(__func__, "could not malloc flowid");
       return -1;
     }
   tf->id  = pr->probe->flowid;
@@ -897,7 +897,7 @@ static int tracelb_flowids_list_add(slist_t *list, tracelb_probe_t *pr)
   if(slist_tail_push(list, tf) == NULL)
     {
       free(tf);
-      printerror(errno, strerror, __func__, "could not slist_tail_push");
+      printerror(__func__, "could not slist_tail_push");
       return -1;
     }
 
@@ -999,7 +999,7 @@ static int tracelb_newnode_add(tracelb_branch_t *br,
 
   if((newnode = malloc_zero(sizeof(tracelb_newnode_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc newnode");
+      printerror(__func__, "could not alloc newnode");
       goto err;
     }
   newnode->probe = probe;
@@ -1007,7 +1007,7 @@ static int tracelb_newnode_add(tracelb_branch_t *br,
   reply = probe->rxs[0];
   if((newnode->node = scamper_tracelb_node_alloc(reply->reply_from)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc node");
+      printerror(__func__, "could not alloc node");
       goto err;
     }
   if(SCAMPER_TRACELB_REPLY_IS_ICMP_TTL_EXP(reply) ||
@@ -1020,7 +1020,7 @@ static int tracelb_newnode_add(tracelb_branch_t *br,
   if(array_insert((void ***)&br->newnodes, &br->newnodec, newnode,
 		  (array_cmp_t)tracelb_newnode_cmp) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add node to branch");
+      printerror(__func__, "could not add node to branch");
       goto err;
     }
 
@@ -1049,7 +1049,7 @@ static tracelb_link_t *tracelb_link_alloc(tracelb_state_t *state,
 
   if((tlbl = malloc_zero(sizeof(tracelb_link_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc tlbl");
+      printerror(__func__, "could not alloc tlbl");
       return NULL;
     }
   tlbl->link = link;
@@ -1058,7 +1058,7 @@ static tracelb_link_t *tracelb_link_alloc(tracelb_state_t *state,
   if(array_insert((void ***)&state->links, &state->linkc, tlbl,
 		  (array_cmp_t)tracelb_link_cmp) != 0)
     {
-      printerror(errno, strerror, __func__, "could not insert tlbl");
+      printerror(__func__, "could not insert tlbl");
       free(tlbl);
       return NULL;;
     }
@@ -1104,13 +1104,13 @@ static int tracelb_link_flowid_add_tail(tracelb_link_t *link,
   /* allocate a list structure, if necessary, to store the flowids */
   if(link->flowids == NULL && (link->flowids = slist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc flowids list");
+      printerror(__func__, "could not alloc flowids list");
       return -1;
     }
 
   if((tf = malloc_zero(sizeof(tracelb_flowid_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc flowid");
+      printerror(__func__, "could not malloc flowid");
       return -1;
     }
   tf->id  = probe->flowid;
@@ -1119,7 +1119,7 @@ static int tracelb_link_flowid_add_tail(tracelb_link_t *link,
   if(slist_tail_push(link->flowids, tf) == NULL)
     {
       free(tf);
-      printerror(errno, strerror, __func__, "could not slist_tail_push");
+      printerror(__func__, "could not slist_tail_push");
       return -1;
     }
 
@@ -1176,7 +1176,7 @@ static int tracelb_probe_add(tracelb_state_t *state, tracelb_branch_t *br,
   size_t len = sizeof(tracelb_probe_t *) * (state->id_next + 1);
   if(realloc_wrap((void **)&state->probes, len) != 0)
     {
-      printerror(errno, strerror, __func__, "could not realloc %d bytes", len);
+      printerror(__func__, "could not realloc %d bytes", len);
       return -1;
     }
   pr->id = state->id_next;
@@ -1186,7 +1186,7 @@ static int tracelb_probe_add(tracelb_state_t *state, tracelb_branch_t *br,
 
   if(array_insert((void ***)&br->probes, &br->probec, pr, NULL) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add probe to branch");
+      printerror(__func__, "could not add probe to branch");
       return -1;
     }
   pr->branch = br;
@@ -1229,7 +1229,7 @@ static int tracelb_path_add_link(tracelb_path_t *path, tracelb_link_t *link)
 {
   if(array_insert((void ***)&path->links, &path->linkc, link, NULL) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add link");
+      printerror(__func__, "could not add link");
       return -1;
     }
   return 0;
@@ -1244,7 +1244,7 @@ static int tracelb_path_add_fwd(tracelb_path_t *path, tracelb_path_t *fwd)
 {
   if(array_insert((void ***)&path->fwd, &path->fwdc, fwd, NULL) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add fwd");
+      printerror(__func__, "could not add fwd");
       return -1;
     }
   return 0;
@@ -1259,7 +1259,7 @@ static int tracelb_path_add_back(tracelb_path_t *path, tracelb_path_t *back)
 {
   if(array_insert((void ***)&path->back, &path->backc, back, NULL) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add back");
+      printerror(__func__, "could not add back");
       return -1;
     }
 
@@ -1294,20 +1294,20 @@ static tracelb_path_t *tracelb_path_alloc(tracelb_state_t *state, int linkc)
 
   if((path = malloc_zero(sizeof(tracelb_path_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc path");
+      printerror(__func__, "could not malloc path");
       goto err;
     }
 
   len = sizeof(scamper_tracelb_link_t *) * linkc;
   if(linkc != 0 && (path->links = malloc_zero(len)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc path->links");
+      printerror(__func__, "could not malloc path->links");
       goto err;
     }
 
   if(array_insert((void ***)&state->paths, &state->pathc, path, NULL) != 0)
     {
-      printerror(errno, strerror, __func__, "could not insert path");
+      printerror(__func__, "could not insert path");
       goto err;
     }
 
@@ -1354,7 +1354,7 @@ static int tracelb_branch_active(tracelb_state_t *state, tracelb_branch_t *br)
     {
       return 0;
     }
-  printerror(errno, strerror, __func__, "could not insert branch on active");
+  printerror(__func__, "could not insert branch on active");
   return -1;
 }
 
@@ -1377,7 +1377,7 @@ static int tracelb_branch_waiting(tracelb_state_t *state, tracelb_branch_t *br)
     {
       return 0;
     }
-  printerror(errno, strerror, __func__, "could not insert branch on waiting");
+  printerror(__func__, "could not insert branch on waiting");
   return -1;
 }
 
@@ -1446,7 +1446,7 @@ static int tracelb_path_add(tracelb_state_t *state, tracelb_path_t *path)
 
   if((branch = malloc_zero(sizeof(tracelb_branch_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc branch");
+      printerror(__func__, "could not alloc branch");
       goto err;
     }
   branch->mode = MODE_HOPPROBE;
@@ -1889,14 +1889,14 @@ static int tracelb_process_hops(scamper_task_t *task, tracelb_branch_t *br)
       /* record the probeset with the link */
       if(scamper_tracelb_link_probeset(link, set) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not add probeset");
+	  printerror(__func__, "could not add probeset");
 	  goto err;
 	}
 
       /* record the link in the trace */
       if(link->hopc == 1 && scamper_tracelb_link_add(trace, link) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not add new link");
+	  printerror(__func__, "could not add new link");
 	  goto err;
 	}
 
@@ -2066,14 +2066,14 @@ static int tracelb_process_clump(scamper_task_t *task, tracelb_branch_t *br)
   /* allocate a list to store flowids in */
   if((flowids = slist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc list");
+      printerror(__func__, "could not alloc list");
       goto err;
     }
 
   /* allocate a probeset and add all probes sent in the round */
   if((set = scamper_tracelb_probeset_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc probeset");
+      printerror(__func__, "could not alloc probeset");
       goto err;
     }
 
@@ -2111,7 +2111,7 @@ static int tracelb_process_clump(scamper_task_t *task, tracelb_branch_t *br)
       probe = pr->probe;
       if(scamper_tracelb_probeset_add(set, probe) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not add probe %d", i);
+	  printerror(__func__, "could not add probe %d", i);
 	  goto err;
 	}
 
@@ -2136,7 +2136,7 @@ static int tracelb_process_clump(scamper_task_t *task, tracelb_branch_t *br)
     {
       if((link = scamper_tracelb_link_alloc()) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not alloc link");
+	  printerror(__func__, "could not alloc link");
 	  goto err;
 	}
 
@@ -2157,7 +2157,7 @@ static int tracelb_process_clump(scamper_task_t *task, tracelb_branch_t *br)
   /* add the probeset to the link */
   if(scamper_tracelb_link_probeset(link, set) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add probeset");
+      printerror(__func__, "could not add probeset");
       goto err;
     }
 
@@ -2166,7 +2166,7 @@ static int tracelb_process_clump(scamper_task_t *task, tracelb_branch_t *br)
     {
       if(scamper_tracelb_link_add(trace, link) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not add new link");
+	  printerror(__func__, "could not add new link");
 	  goto err;
 	}
 
@@ -2486,7 +2486,7 @@ static int tracelb_probe_vals(scamper_task_t *task, tracelb_branch_t *branch,
       len = sizeof(tracelb_bringfwd_t *) * state->pathc;
       if((branch->bringfwd = malloc_zero(len)) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not malloc set");
+	  printerror(__func__, "could not malloc set");
 	  return -1;
 	}
 
@@ -2608,7 +2608,7 @@ static scamper_tracelb_reply_t *handleicmp_reply(const scamper_icmp_resp_t *ir,
 
   if((reply = scamper_tracelb_reply_alloc(from)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not allocate reply");
+      printerror(__func__, "could not allocate reply");
       return NULL;
     }
 
@@ -2644,7 +2644,7 @@ static scamper_tracelb_reply_t *handletcp_reply(const scamper_dl_rec_t *dl,
 
   if((reply = scamper_tracelb_reply_alloc(from)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not allocate reply");
+      printerror(__func__, "could not allocate reply");
       return NULL;
     }
 
@@ -2679,7 +2679,7 @@ static void handleicmp_firstaddr(scamper_task_t *task, scamper_icmp_resp_t *ir,
   /* record the details of the first hop */
   if((node = scamper_tracelb_node_alloc(from)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc node");
+      printerror(__func__, "could not alloc node");
       goto err;
     }
   if(SCAMPER_ICMP_RESP_IS_TTL_EXP(ir) || SCAMPER_ICMP_RESP_IS_UNREACH(ir))
@@ -2690,7 +2690,7 @@ static void handleicmp_firstaddr(scamper_task_t *task, scamper_icmp_resp_t *ir,
 
   if(scamper_tracelb_node_add(trace, node) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add node");
+      printerror(__func__, "could not add node");
       goto err;
     }
   node = NULL;
@@ -2730,7 +2730,7 @@ static int hopprobe_handlereply(scamper_task_t *task, tracelb_probe_t *pr,
 
   if(scamper_tracelb_probe_reply(pr->probe, reply) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add reply to probe");
+      printerror(__func__, "could not add reply to probe");
       scamper_tracelb_reply_free(reply);
       return -1;
     }
@@ -3222,13 +3222,13 @@ static void handletimeout_firstaddr(scamper_task_t *task, tracelb_branch_t *br)
 
   if((node = scamper_tracelb_node_alloc(NULL)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc node");
+      printerror(__func__, "could not alloc node");
       goto err;
     }
 
   if(scamper_tracelb_node_add(trace, node) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add node");
+      printerror(__func__, "could not add node");
       goto err;
     }
   node = NULL;
@@ -3423,7 +3423,7 @@ static void handletcp_firstaddr(scamper_task_t *task, scamper_dl_rec_t *dl,
   if((node = scamper_tracelb_node_alloc(from)) == NULL ||
      scamper_tracelb_node_add(trace, node) != 0)
     {
-      printerror(errno, strerror, __func__, "could not alloc node");
+      printerror(__func__, "could not alloc node");
       goto err;
     }
 
@@ -3621,7 +3621,7 @@ static void tracelb_handle_rt(scamper_route_t *rt)
   /* if there was a problem getting the ifindex, handle that */
   if(rt->error != 0 || rt->ifindex < 0)
     {
-      printerror(errno, strerror, __func__, "could not get ifindex");
+      printerror(__func__, "could not get ifindex");
       tracelb_handleerror(task, errno);
       goto done;
     }
@@ -3816,7 +3816,7 @@ static int tracelb_state_alloc(scamper_task_t *task)
 
   if((state = malloc_zero(sizeof(tracelb_state_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc state");
+      printerror(__func__, "could not malloc state");
       goto err;
     }
 
@@ -3836,26 +3836,26 @@ static int tracelb_state_alloc(scamper_task_t *task)
 
   if((state->addrs = splaytree_alloc((splaytree_cmp_t)scamper_addr_cmp))==NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc addr tree");
+      printerror(__func__, "could not alloc addr tree");
       goto err;
     }
 
   if((state->active = heap_alloc((heap_cmp_t)tracelb_branch_active_cmp))==NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc active heap");
+      printerror(__func__, "could not alloc active heap");
       goto err;
     }
   heap_onremove(state->active, tracelb_branch_onremove);
   if((state->waiting=heap_alloc((heap_cmp_t)tracelb_branch_waiting_cmp))==NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc waiting heap");
+      printerror(__func__, "could not alloc waiting heap");
       goto err;
     }
   heap_onremove(state->waiting, tracelb_branch_onremove);
 
   if((branch = malloc_zero(sizeof(tracelb_branch_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc branch");
+      printerror(__func__, "could not alloc branch");
       goto err;
     }
 
@@ -3930,7 +3930,7 @@ static int tracelb_state_alloc(scamper_task_t *task)
     {
       if(realloc_wrap((void **)&pktbuf, state->payload_size) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not realloc");
+	  printerror(__func__, "could not realloc");
 	  goto err;
 	}
       pktbuf_len = state->payload_size;
@@ -4047,7 +4047,7 @@ static void do_tracelb_probe(scamper_task_t *task)
   if((tp = malloc_zero(sizeof(tracelb_probe_t))) == NULL ||
      (tp->probe = scamper_tracelb_probe_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc probe");
+      printerror(__func__, "could not alloc probe");
       goto err;
     }
 

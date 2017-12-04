@@ -7,7 +7,7 @@
  * Copyright (C) 2012,2015 The Regents of the University of California
  * Authors: Ben Stasiewicz, Matthew Luckie
  *
- * $Id: scamper_tbit.c,v 1.47 2017/08/21 20:41:53 mjl Exp $
+ * $Id: scamper_tbit.c,v 1.48 2017/09/27 01:54:17 mjl Exp $
  *
  * This file implements algorithms described in the tbit-1.0 source code,
  * as well as the papers:
@@ -34,7 +34,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit.c,v 1.47 2017/08/21 20:41:53 mjl Exp $";
+  "$Id: scamper_tbit.c,v 1.48 2017/09/27 01:54:17 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -645,6 +645,7 @@ char *scamper_tbit_type2str(const scamper_tbit_t *tbit, char *buf, size_t len)
     "blind-data",
     "blind-rst",
     "blind-syn",
+    "blind-fin",
   };
 
   if(tbit->type > sizeof(t) / sizeof(char *) || t[tbit->type] == NULL)
@@ -943,7 +944,8 @@ void scamper_tbit_free(scamper_tbit_t *tbit)
 	scamper_tbit_icw_free(tbit->data);
       else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST ||
 	      tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN ||
-	      tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+	      tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA ||
+	      tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN)
 	scamper_tbit_blind_free(tbit->data);
     }
 

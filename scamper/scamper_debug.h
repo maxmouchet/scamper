@@ -1,11 +1,11 @@
 /*
  * scamper_debug.h
  *
- * $Id: scamper_debug.h,v 1.18 2015/09/28 07:44:26 mjl Exp $
+ * $Id: scamper_debug.h,v 1.19 2017/12/03 09:38:26 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2009 The University of Waikato
- * Copyright (C) 2015      Matthew Luckie
+ * Copyright (C) 2015,2017 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,8 +26,9 @@
 #ifndef __SCAMPER_DEBUG_H
 #define __SCAMPER_DEBUG_H
 
-void printerror(const int ecode, char *(*error_itoa)(int),
-		const char *func, const char *format, ...);
+void printerror(const char *func, const char *format, ...);
+void printerror_gai(const char *func, int ecode, const char *format, ...);
+void printerror_msg(const char *func, const char *format, ...);
 
 #ifdef NDEBUG
 #define scamper_assert(expr, task) ((void)0)

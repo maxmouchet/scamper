@@ -6,7 +6,7 @@
  *
  * Author: Matthew Luckie
  *
- * $Id: scamper_tbit_json.c,v 1.24 2017/08/21 20:41:53 mjl Exp $
+ * $Id: scamper_tbit_json.c,v 1.25 2017/09/27 01:54:18 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_json.c,v 1.24 2017/08/21 20:41:53 mjl Exp $";
+  "$Id: scamper_tbit_json.c,v 1.25 2017/09/27 01:54:18 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -175,7 +175,8 @@ static char *tbit_header_tostr(const scamper_tbit_t *tbit,
     }
   else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST ||
 	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN ||
-	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA ||
+	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN)
     {
       blind = tbit->data;
       string_concat(buf, sizeof(buf), &off,

@@ -1,13 +1,13 @@
 /*
  * scamper_debug.c
  *
- * $Id: scamper_debug.c,v 1.35 2015/09/28 07:44:26 mjl Exp $
+ * $Id: scamper_debug.c,v 1.36 2017/12/03 09:38:26 mjl Exp $
  *
  * routines to reduce the impact of debugging cruft in scamper's code.
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
- * Copyright (C) 2012,2015 Matthew Luckie
+ * Copyright (C) 2012,2015,2017 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_debug.c,v 1.35 2015/09/28 07:44:26 mjl Exp $";
+  "$Id: scamper_debug.c,v 1.36 2017/12/03 09:38:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -61,7 +61,7 @@ static char *timestamp_str(char *buf, const size_t len)
   if((tm = localtime(&t)) == NULL) return buf;
 
   ms = tv.tv_usec / 1000;
-  snprintf(buf, len, "[%02d:%02d:%02d:%03d] ",
+  snprintf(buf, len, "[%02d:%02d:%02d:%03d]",
 	   tm->tm_hour, tm->tm_min, tm->tm_sec, ms);
 
   return buf;
@@ -74,7 +74,6 @@ void __scamper_assert(const char *file, int line, const char *func,
   char ts[16];
 
   timestamp_str(ts, sizeof(ts));
-
   fprintf(stderr, "%s assertion failed: %s:%d %s `%s'\n",
 	  ts, file, line, func, expr);
   fflush(stderr);
@@ -93,34 +92,18 @@ void __scamper_assert(const char *file, int line, const char *func,
 }
 #endif
 
-static char *error_str(int e, char *(*error_itoa)(int), char *buf, size_t len)
-{
-  char *str;
-
-  if(error_itoa == NULL || (str = error_itoa(e)) == NULL)
-    {
-      buf[0] = '\0';
-      return buf;
-    }
-
-  snprintf(buf, len, ": %s", str);
-  return buf;
-}
-
 /*
  * printerror
  *
- * format a nice and consistent error string using the errno to string
- * conversion utilities and the arguments supplied
+ * format a nice and consistent error string using strerror and the
+ * arguments supplied
  */
-void printerror(const int ecode, char *(*error_itoa)(int),
-		const char *func, const char *format, ...)
+void printerror(const char *func, const char *format, ...)
 {
   char     message[512];
-  char     err[128];
   char     ts[16];
-  char     fs[64];
   va_list  ap;
+  int      ecode = errno;
 
   if(isdaemon != 0)
     {
@@ -136,19 +119,82 @@ void printerror(const int ecode, char *(*error_itoa)(int),
   vsnprintf(message, sizeof(message), format, ap);
   va_end(ap);
 
-  error_str(ecode, error_itoa, err, sizeof(err));
   timestamp_str(ts, sizeof(ts));
-
-  if(func != NULL) snprintf(fs, sizeof(fs), "%s: ", func);
-  else             fs[0] = '\0';
-
-  fprintf(stderr, "%s%s%s%s\n", ts, fs, message, err);
+  fprintf(stderr, "%s %s: %s: %s\n", ts, func, message, strerror(ecode));
   fflush(stderr);
 
 #ifndef WITHOUT_DEBUGFILE
   if(debugfile != NULL)
     {
-      fprintf(debugfile, "%s%s%s%s\n", ts, fs, message, err);
+      fprintf(debugfile, "%s %s: %s: %s\n", ts, func, message, strerror(ecode));
+      fflush(debugfile);
+    }
+#endif
+
+  return;
+}
+
+void printerror_gai(const char *func, int ecode, const char *format, ...)
+{
+  char msg[512], ts[16];
+  va_list ap;
+
+  if(isdaemon != 0)
+    {
+#ifndef WITHOUT_DEBUGFILE
+      if(debugfile == NULL)
+	return;
+#else
+      return;
+#endif
+    }
+
+  va_start(ap, format);
+  vsnprintf(msg, sizeof(msg), format, ap);
+  va_end(ap);
+
+  timestamp_str(ts, sizeof(ts));
+  fprintf(stderr, "%s %s: %s: %s\n", ts, func, msg, gai_strerror(ecode));
+  fflush(stderr);
+
+#ifndef WITHOUT_DEBUGFILE
+  if(debugfile != NULL)
+    {
+      fprintf(debugfile, "%s %s: %s: %s\n", ts, func, msg, gai_strerror(ecode));
+      fflush(debugfile);
+    }
+#endif
+
+  return;
+}
+
+void printerror_msg(const char *func, const char *format, ...)
+{
+  char msg[512], ts[16];
+  va_list ap;
+
+  if(isdaemon != 0)
+    {
+#ifndef WITHOUT_DEBUGFILE
+      if(debugfile == NULL)
+	return;
+#else
+      return;
+#endif
+    }
+
+  va_start(ap, format);
+  vsnprintf(msg, sizeof(msg), format, ap);
+  va_end(ap);
+
+  timestamp_str(ts, sizeof(ts));
+  fprintf(stderr, "%s %s: %s\n", ts, func, msg);
+  fflush(stderr);
+
+#ifndef WITHOUT_DEBUGFILE
+  if(debugfile != NULL)
+    {
+      fprintf(debugfile, "%s %s: %s\n", ts, func, msg);
       fflush(debugfile);
     }
 #endif
@@ -193,14 +239,14 @@ void scamper_debug(const char *func, const char *format, ...)
   else             fs[0] = '\0';
 
 #ifndef NDEBUG
-  fprintf(stderr, "%s%s%s\n", ts, fs, message);
+  fprintf(stderr, "%s %s%s\n", ts, fs, message);
   fflush(stderr);
 #endif
 
 #ifndef WITHOUT_DEBUGFILE
   if(debugfile != NULL)
     {
-      fprintf(debugfile, "%s%s%s\n", ts, fs, message);
+      fprintf(debugfile, "%s %s%s\n", ts, fs, message);
       fflush(debugfile);
     }
 #endif
@@ -238,22 +284,20 @@ int scamper_debug_open(const char *file)
 
   if(fd == -1)
     {
-      printerror(errno, strerror, __func__,
-		 "could not open debugfile %s", file);
+      printerror(__func__, "could not open debugfile %s", file);
       return -1;
     }
 
   if((debugfile = fdopen(fd, "a")) == NULL)
     {
-      printerror(errno, strerror, __func__,
-		 "could not fdopen debugfile %s", file);
+      printerror(__func__, "could not fdopen debugfile %s", file);
       return -1;
     }
 
 #if defined(WITHOUT_PRIVSEP) && !defined(_WIN32)
   if(uid != geteuid() && fchown(fd, uid, -1) != 0)
     {
-      printerror(errno, strerror, __func__, "could not fchown");
+      printerror(__func__, "could not fchown");
     }
 #endif
 

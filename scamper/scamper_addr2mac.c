@@ -1,7 +1,7 @@
 /*
  * scamper_addr2mac.c: handle a cache of IP to MAC address mappings
  *
- * $Id: scamper_addr2mac.c,v 1.40 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_addr2mac.c,v 1.41 2017/12/03 09:38:26 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_addr2mac.c,v 1.40 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_addr2mac.c,v 1.41 2017/12/03 09:38:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -166,7 +166,7 @@ static addr2mac_t *addr2mac_alloc(const int ifindex, scamper_addr_t *ip,
 
   if((addr2mac = malloc_zero(sizeof(addr2mac_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc addr2mac");
+      printerror(__func__, "could not malloc addr2mac");
       return NULL;
     }
 
@@ -188,13 +188,13 @@ static int addr2mac_add(const int ifindex, const int type, const void *ipraw,
 
   if((ip = scamper_addrcache_get(addrcache, type, ipraw)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get ip");
+      printerror(__func__, "could not get ip");
       goto err;
     }
 
   if((mac = scamper_addrcache_get(addrcache, mt, macraw)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get mac");
+      printerror(__func__, "could not get mac");
       goto err;
     }
 
@@ -208,7 +208,7 @@ static int addr2mac_add(const int ifindex, const int type, const void *ipraw,
 
   if(splaytree_insert(tree, addr2mac) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not add %s:%s to tree",
+      printerror(__func__, "could not add %s:%s to tree",
 		 scamper_addr_tostr(addr2mac->ip, ipstr, sizeof(ipstr)),
 		 scamper_addr_tostr(addr2mac->mac, macstr, sizeof(macstr)));
       goto err;
@@ -240,7 +240,7 @@ int scamper_addr2mac_add(int ifindex, scamper_addr_t *ip, scamper_addr_t *mac)
 
   if(splaytree_insert(tree, a2m) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not add %s:%s to tree",
+      printerror(__func__, "could not add %s:%s to tree",
 		 scamper_addr_tostr(a2m->ip, ipstr, sizeof(ipstr)),
 		 scamper_addr_tostr(a2m->mac, macstr, sizeof(macstr)));
       addr2mac_free(a2m);
@@ -308,7 +308,7 @@ static int addr2mac_init_linux()
 
   if((fd = socket(PF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open netlink");
+      printerror(__func__, "could not open netlink");
       goto err;
     }
 
@@ -317,7 +317,7 @@ static int addr2mac_init_linux()
     {
       if(ssize == -1)
 	{
-	  printerror(errno, strerror, __func__, "could not send netlink");
+	  printerror(__func__, "could not send netlink");
 	}
       goto err;
     }
@@ -338,7 +338,7 @@ static int addr2mac_init_linux()
       if((len = recvmsg(fd, &msg, 0)) == -1)
 	{
 	  if(errno == EINTR) continue;
-	  printerror(errno, strerror, __func__, "could not recvmsg");
+	  printerror(__func__, "could not recvmsg");
 	  goto err;
 	}
 
@@ -468,7 +468,7 @@ static int addr2mac_init_bsd(void)
   addr2mac_mib_make(mib, AF_INET);
   if(sysctl_wrap(mib, 6, &vbuf, &size) == -1)
     {
-      printerror(errno, strerror, __func__, "sysctl arp cache");
+      printerror(__func__, "sysctl arp cache");
       goto err;
     }
 
@@ -512,7 +512,7 @@ static int addr2mac_init_bsd(void)
       if(errno == EINVAL || errno == EAFNOSUPPORT)
 	return 0;
 
-      printerror(errno, strerror, __func__, "sysctl ndp cache");
+      printerror(__func__, "sysctl ndp cache");
       goto err;
     }
 
@@ -614,7 +614,7 @@ int scamper_addr2mac_init()
 {
   if((tree = splaytree_alloc((splaytree_cmp_t)addr2mac_cmp)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc tree");
+      printerror(__func__, "could not alloc tree");
       return -1;
     }
 

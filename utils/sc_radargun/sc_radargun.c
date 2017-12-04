@@ -1,7 +1,7 @@
 /*
  * sc_radargun : scamper driver to do radargun-style probing.
  *
- * $Id: sc_radargun.c,v 1.7 2016/10/19 06:46:51 mjl Exp $
+ * $Id: sc_radargun.c,v 1.8 2017/11/22 04:55:20 mjl Exp $
  *
  * Copyright (C) 2014 The Regents of the University of California
  * Copyright (C) 2016 The University of Waikato
@@ -32,7 +32,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_radargun.c,v 1.7 2016/10/19 06:46:51 mjl Exp $";
+  "$Id: sc_radargun.c,v 1.8 2017/11/22 04:55:20 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -83,6 +83,7 @@ typedef struct sc_ping
 {
   scamper_addr_t   *addr;
   uint8_t           method;
+  uint8_t           class;
 } sc_ping_t;
 
 typedef struct sc_test
@@ -124,11 +125,16 @@ typedef struct sc_radargun
 typedef struct sc_dump
 {
   char  *descr;
+  int  (*init)(void);
+  int  (*proc_ping)(scamper_ping_t *ping);
   int  (*proc_dealias)(scamper_dealias_t *dealias);
   void (*finish)(void);
 } sc_dump_t;
 
 static int process_dealias_1(scamper_dealias_t *);
+static int init_2(void);
+static int process_ping_2(scamper_ping_t *);
+static void finish_2(void);
 
 static uint32_t               options       = 0;
 static uint32_t               flags         = 0;
@@ -165,7 +171,8 @@ static int                    dump_id       = 0;
 static char                  *dump_file     = NULL;
 static const sc_dump_t        dump_funcs[]  = {
   {NULL, NULL, NULL},
-  {"dump inferred aliases", process_dealias_1, NULL},
+  {"dump inferred aliases", NULL, NULL, process_dealias_1, NULL},
+  {"dump interface classifications", init_2, process_ping_2, NULL, finish_2},
 };
 static int dump_funcc = sizeof(dump_funcs) / sizeof(sc_dump_t);
 
@@ -197,6 +204,9 @@ static int dump_funcc = sizeof(dump_funcs) / sizeof(sc_dump_t);
 #define IPID_CONST  4
 #define IPID_UNRESP 5
 
+static const char *ipid_classes[] = {"none", "incr", "rand", "echo",
+				     "const", "unresp"};
+
 #define METHOD_ICMP     0
 #define METHOD_TCP      1
 #define METHOD_UDP      2
@@ -208,20 +218,22 @@ static int dump_funcc = sizeof(dump_funcs) / sizeof(sc_dump_t);
 
 static void usage(uint32_t opt_mask)
 {
+  int i;
+
   fprintf(stderr,
 	  "usage:\n"
-	  "   sc_radargun [-D?]\n"
+	  "   sc_radargun [-D]\n"
           "     [-a addrfile] [-o outfile] [-p port] [-U unix]\n"
 	  "     [-f fudge] [-O options] [-P pps] [-q attempts]\n"
           "     [-r wait-round] [-R round-count] [-t log]\n"
 	  "\n"
 	  "   sc_radargun [-d dump] file.warts\n"
+	  "\n"
+	  "   sc_radargun -?\n"
 	  "\n");
 
   if(opt_mask == 0)
     return;
-
-  fprintf(stderr, "\n");
 
   if(opt_mask & OPT_HELP)
     fprintf(stderr, "     -?: give an overview of the usage of sc_radargun\n");
@@ -230,7 +242,11 @@ static void usage(uint32_t opt_mask)
     fprintf(stderr, "     -a: input addressfile\n");
 
   if(opt_mask & OPT_DUMP)
-    fprintf(stderr, "     -d: dump id\n");
+    {
+      fprintf(stderr, "     -d: dump id\n");
+      for(i=1; i<dump_funcc; i++)
+	fprintf(stderr, "         %d: %s\n", i, dump_funcs[i].descr);
+    }
 
   if(opt_mask & OPT_DAEMON)
     fprintf(stderr, "     -D: start as daemon\n");
@@ -245,9 +261,9 @@ static void usage(uint32_t opt_mask)
     {
       fprintf(stderr, "     -O: options\n");
       fprintf(stderr, "         nobs: do not consider byteswapped ipids\n");
+      fprintf(stderr, "         nobudget: skip budget check\n");
       fprintf(stderr, "         noradargun: skip radargun step\n");
       fprintf(stderr, "         noreserved: skip reserved addresses\n");
-      fprintf(stderr, "         nobudget: skip budget check\n");
       fprintf(stderr, "         rows: input file consists of sets to test\n");
       fprintf(stderr, "         tc: dump transitive closure\n");
     }
@@ -490,6 +506,13 @@ static int tree_to_dlist(void *ptr, void *entry)
   return -1;
 }
 
+static int tree_to_slist(void *ptr, void *entry)
+{
+  if(slist_tail_push((slist_t *)ptr, entry) != NULL)
+    return 0;
+  return -1;
+}
+
 static void print(char *format, ...)
 {
   va_list ap;
@@ -678,6 +701,11 @@ static void sc_ping_free(sc_ping_t *ping)
   if(ping->addr != NULL) scamper_addr_free(ping->addr);
   free(ping);
   return;
+}
+
+static int sc_ping_human_cmp(const sc_ping_t *a, const sc_ping_t *b)
+{
+  return scamper_addr_human_cmp(a->addr, b->addr);
 }
 
 static int sc_ping_cmp(const sc_ping_t *a, const sc_ping_t *b)
@@ -1888,19 +1916,86 @@ static int process_dealias_1(scamper_dealias_t *dealias)
   return -1;
 }
 
+static int init_2(void)
+{
+  if((pingtree = splaytree_alloc((splaytree_cmp_t)sc_ping_cmp)) == NULL)
+    return -1;
+  return 0;
+}
+
+static int process_ping_2(scamper_ping_t *ping)
+{
+  sc_ping_t *scp = NULL;
+  int class;
+
+  if((scp = sc_ping_find(ping->dst)) == NULL)
+    {
+      if((scp = malloc_zero(sizeof(sc_ping_t))) == NULL)
+	goto err;
+      scp->addr = scamper_addr_use(ping->dst);
+      scp->class = ping_classify(ping);
+      if(splaytree_insert(pingtree, scp) == NULL)
+	goto err;
+    }
+  else
+    {
+      if((class = ping_classify(ping)) < 0)
+	return -1;
+      if(class < scp->class)
+	scp->class = class;
+    }
+
+  return 0;
+
+ err:
+  if(scp != NULL) sc_ping_free(scp);
+  return -1;
+}
+
+static void finish_2(void)
+{
+  slist_t *list = NULL;
+  slist_node_t *sn;
+  sc_ping_t *scp;
+  char buf[64];
+
+  if((list = slist_alloc()) == NULL)
+    goto done;
+  splaytree_inorder(pingtree, (splaytree_inorder_t)tree_to_slist, list);
+  slist_qsort(list, (slist_cmp_t)sc_ping_human_cmp);
+  for(sn=slist_head_node(list); sn != NULL; sn=slist_node_next(sn))
+    {
+      scp = slist_node_item(sn);
+      printf("%s %s\n", scamper_addr_tostr(scp->addr, buf, sizeof(buf)),
+	     ipid_classes[scp->class]);
+    }
+
+ done:
+  if(list != NULL) slist_free(list);
+  return;
+}
+
 static int do_dump(void)
 {
   scamper_file_t *in = NULL;
   uint16_t type;
   void *data;
 
-  type = SCAMPER_FILE_OBJ_DEALIAS;
+  if(dump_id == 1)
+    type = SCAMPER_FILE_OBJ_DEALIAS;
+  else
+    type = SCAMPER_FILE_OBJ_PING;
   if((ffilter = scamper_file_filter_alloc(&type, 1)) == NULL)
     return -1;
 
   if((in = scamper_file_open(dump_file, 'r', NULL)) == NULL)
     {
-      fprintf(stderr,"could not open %s: %s\n", dump_file, strerror(errno));
+      fprintf(stderr, "could not open %s: %s\n", dump_file, strerror(errno));
+      return -1;
+    }
+  if(dump_funcs[dump_id].init != NULL && dump_funcs[dump_id].init() != 0)
+    {
+      fprintf(stderr,"could not init dump %d: %s\n", dump_id, strerror(errno));
       return -1;
     }
 
@@ -1908,9 +2003,18 @@ static int do_dump(void)
     {
       if(data == NULL)
 	break;
-      assert(type == SCAMPER_FILE_OBJ_DEALIAS);
-      dump_funcs[dump_id].proc_dealias(data);
-      scamper_dealias_free(data);
+      if(type == SCAMPER_FILE_OBJ_DEALIAS)
+	{
+	  if(dump_funcs[dump_id].proc_dealias != NULL)
+	    dump_funcs[dump_id].proc_dealias(data);
+	  scamper_dealias_free(data);
+	}
+      else
+	{
+	  if(dump_funcs[dump_id].proc_ping != NULL)
+	    dump_funcs[dump_id].proc_ping(data);
+	  scamper_ping_free(data);
+	}
     }
 
   scamper_file_close(in); in = NULL;

@@ -1,7 +1,7 @@
 /*
  * scamper_sniff_do.c
  *
- * $Id: scamper_sniff_do.c,v 1.13 2016/09/17 05:39:10 mjl Exp $
+ * $Id: scamper_sniff_do.c,v 1.14 2017/12/03 09:38:27 mjl Exp $
  *
  * Copyright (C) 2011 The University of Waikato
  * Author: Matthew Luckie
@@ -23,7 +23,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sniff_do.c,v 1.13 2016/09/17 05:39:10 mjl Exp $";
+  "$Id: scamper_sniff_do.c,v 1.14 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -141,13 +141,13 @@ static void do_sniff_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
   pkt = scamper_sniff_pkt_alloc(dl->dl_net_raw, dl->dl_ip_size, &dl->dl_tv);
   if(pkt == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc pkt");
+      printerror(__func__, "could not alloc pkt");
       goto err;
     }
 
   if(slist_tail_push(state->list, pkt) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not push pkt");
+      printerror(__func__, "could not push pkt");
       goto err;
     }
 
@@ -205,13 +205,13 @@ static int sniff_state_alloc(scamper_task_t *task)
 
   if((state->list = slist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc list");
+      printerror(__func__, "could not alloc list");
       goto err;
     }
 
   if((state->fd = scamper_fd_dl(ifindex)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get dl");
+      printerror(__func__, "could not get dl");
       goto err;
     }
 
@@ -351,7 +351,7 @@ void *scamper_do_sniff_alloc(char *str)
 
   if(src == NULL)
     {
-      printerror(errno, strerror, __func__, "missing -S parameter");
+      printerror(__func__, "missing -S parameter");
       goto err;
     }
 
@@ -360,7 +360,7 @@ void *scamper_do_sniff_alloc(char *str)
 
   if((sniff->src = scamper_addrcache_resolve(addrcache,AF_UNSPEC,src)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not resolve %s", src);
+      printerror(__func__, "could not resolve %s", src);
       goto err;
     }
 

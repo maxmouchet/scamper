@@ -1,7 +1,7 @@
 /*
  * scamper_udp6.c
  *
- * $Id: scamper_udp6.c,v 1.54 2015/05/09 01:56:31 mjl Exp $
+ * $Id: scamper_udp6.c,v 1.55 2017/12/03 09:38:27 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_udp6.c,v 1.54 2015/05/09 01:56:31 mjl Exp $";
+  "$Id: scamper_udp6.c,v 1.55 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -150,7 +150,7 @@ int scamper_udp6_probe(scamper_probe_t *probe)
   if(setsockopt(probe->pr_fd,
 		IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)&i, sizeof(i)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set hlim to %d", i);
+      printerror(__func__, "could not set hlim to %d", i);
       return -1;
     }
 
@@ -175,18 +175,16 @@ int scamper_udp6_probe(scamper_probe_t *probe)
   /* error condition, could not send the packet at all */
   if(i == -1)
     {
-      printerror(probe->pr_errno, strerror, __func__,
-		 "could not send to %s (%d hlim, %d dport, %d len)",
+      printerror(__func__, "could not send to %s (%d hlim, %d dport, %d len)",
 		 scamper_addr_tostr(probe->pr_ip_dst, addr, sizeof(addr)),
 		 probe->pr_ip_ttl, probe->pr_udp_dport, probe->pr_len);
     }
   /* error condition, sent a portion of the probe */
   else
     {
-      fprintf(stderr,
-	      "scamper_udp6_probe: sent %d bytes of %d byte packet to %s",
-	      i, (int)probe->pr_len,
-	      scamper_addr_tostr(probe->pr_ip_dst, addr, sizeof(addr)));
+      printerror_msg(__func__, "sent %d bytes of %d byte packet to %s",
+		     i, (int)probe->pr_len,
+		     scamper_addr_tostr(probe->pr_ip_dst, addr, sizeof(addr)));
     }
 
   return -1;
@@ -210,7 +208,7 @@ int scamper_udp6_open(const void *addr, int sport)
 
   if((fd = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open socket");
+      printerror(__func__, "could not open socket");
       goto err;
     }
 
@@ -218,7 +216,7 @@ int scamper_udp6_open(const void *addr, int sport)
   opt = 1;
   if(setsockopt(fd,IPPROTO_IPV6,IPV6_V6ONLY, (char *)&opt,sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set IPV6_V6ONLY");
+      printerror(__func__, "could not set IPV6_V6ONLY");
       goto err;
     }
 #endif
@@ -227,16 +225,16 @@ int scamper_udp6_open(const void *addr, int sport)
   if(bind(fd, (struct sockaddr *)&sin6, sizeof(sin6)) == -1)
     {
       if(addr == NULL || addr_tostr(AF_INET6, addr, buf, sizeof(buf)) == NULL)
-	printerror(errno,strerror,__func__, "could not bind port %d", sport);
+	printerror(__func__, "could not bind port %d", sport);
       else
-	printerror(errno,strerror,__func__, "could not bind %s:%d", buf, sport);
+	printerror(__func__, "could not bind %s:%d", buf, sport);
       goto err;
     }
 
   opt = 65535 + 128;
   if(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (char *)&opt, sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set SO_SNDBUF");
+      printerror(__func__, "could not set SO_SNDBUF");
       return -1;
     }
 
@@ -245,7 +243,7 @@ int scamper_udp6_open(const void *addr, int sport)
   if(setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG,
 		(char *)&opt, sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set IPV6_DONTFRAG");
+      printerror(__func__, "could not set IPV6_DONTFRAG");
       goto err;
     }
 #endif

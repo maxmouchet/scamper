@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_list.c,v 1.74 2016/01/18 04:46:07 mjl Exp $";
+  "$Id: mjl_list.c,v 1.75 2017/10/28 19:15:51 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -406,6 +406,13 @@ static void slist_flush(slist_t *list, slist_free_t free_func)
 void slist_empty(slist_t *list)
 {
   slist_flush(list, NULL);
+  slist_init(list);
+  return;
+}
+
+void slist_empty_cb(slist_t *list, slist_free_t func)
+{
+  slist_flush(list, func);
   slist_init(list);
   return;
 }
@@ -886,6 +893,13 @@ static void dlist_flush(dlist_t *list, dlist_free_t free_func)
 void dlist_empty(dlist_t *list)
 {
   dlist_flush(list, NULL);
+  dlist_init(list);
+  return;
+}
+
+void dlist_empty_cb(dlist_t *list, dlist_free_t func)
+{
+  dlist_flush(list, func);
   dlist_init(list);
   return;
 }

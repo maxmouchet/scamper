@@ -1,7 +1,7 @@
 /*
  * scamper_rtsock: code to deal with a route socket or equivalent
  *
- * $Id: scamper_rtsock.c,v 1.81 2016/08/08 08:42:08 mjl Exp $
+ * $Id: scamper_rtsock.c,v 1.82 2017/12/03 09:38:27 mjl Exp $
  *
  *          Matthew Luckie
  *
@@ -42,7 +42,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_rtsock.c,v 1.81 2016/08/08 08:42:08 mjl Exp $";
+  "$Id: scamper_rtsock.c,v 1.82 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -212,7 +212,7 @@ static void rtmsg_dump(const uint8_t *buf, size_t len)
     {
       if(k == 20)
 	{
-	  printerror(0, NULL, __func__, "%s", str);
+	  printerror_msg(__func__, "%s", str);
 	  k = 0;
 	  off = 0;
 	}
@@ -224,7 +224,7 @@ static void rtmsg_dump(const uint8_t *buf, size_t len)
     }
 
   if(k != 0)
-    printerror(0, NULL, __func__, "%s", str);
+    printerror_msg(__func__, "%s", str);
   return;
 }
 #endif
@@ -308,7 +308,7 @@ static int scamper_rtsock_getifindex(int fd, scamper_addr_t *dst)
 
   if((ss = write(fd, buf, len)) < 0 || (size_t)ss != len)
     {
-      printerror(errno, strerror, __func__, "could not write routing socket");
+      printerror(__func__, "could not write routing socket");
       return -1;
     }
 
@@ -386,7 +386,7 @@ static int scamper_rtsock_getifindex(int fd, scamper_addr_t *dst)
   /* send the request */
   if((error = send(fd, buf, nlmsg->nlmsg_len, 0)) != nlmsg->nlmsg_len)
     {
-      printerror(errno, strerror, __func__, "could not send");
+      printerror(__func__, "could not send");
       return -1;
     }
 
@@ -602,7 +602,7 @@ static void rtsock_parsemsg(uint8_t *buf, size_t len)
 	      addrs[i] = sa = (struct sockaddr *)(buf + x + off);
 	      if((tmp = sockaddr_len(sa)) == -1)
 		{
-		  printerror(0,NULL,__func__,"unhandled af %d",sa->sa_family);
+		  printerror_msg(__func__, "unhandled af %d", sa->sa_family);
 		  route->error = EINVAL;
 		  goto done;
 		}
@@ -614,7 +614,7 @@ static void rtsock_parsemsg(uint8_t *buf, size_t len)
 	{
 	  if(sdl->sdl_family != AF_LINK)
 	    {
-	      printerror(0, NULL, __func__, "sdl_family %d", sdl->sdl_family);
+	      printerror_msg(__func__, "sdl_family %d", sdl->sdl_family);
 	      route->error = EINVAL;
 	      goto done;
 	    }
@@ -696,7 +696,7 @@ void scamper_rtsock_read_cb(const int fd, void *param)
 
   if((len = recv(fd, buf, sizeof(buf), 0)) < 0)
     {
-      printerror(errno, strerror, __func__, "recv failed");
+      printerror(__func__, "recv failed");
       return;
     }
 
@@ -733,7 +733,7 @@ int scamper_rtsock_open()
   if((fd = scamper_privsep_open_rtsock()) == -1)
 #endif
     {
-      printerror(errno, strerror, __func__, "could not open route socket");
+      printerror(__func__, "could not open route socket");
       return -1;
     }
 
@@ -815,7 +815,7 @@ int scamper_rtsock_init()
 #ifndef _WIN32
   if((pairs = dlist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not allocate pair list");
+      printerror(__func__, "could not allocate pair list");
       return -1;
     }
   pid = getpid();

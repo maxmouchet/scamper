@@ -1,7 +1,7 @@
 /*
  * scamper_firewall.c
  *
- * $Id: scamper_firewall.c,v 1.52 2016/08/08 08:43:04 mjl Exp $
+ * $Id: scamper_firewall.c,v 1.53 2017/12/03 09:42:27 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2016      Matthew Luckie
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_firewall.c,v 1.52 2016/08/08 08:43:04 mjl Exp $";
+  "$Id: scamper_firewall.c,v 1.53 2017/12/03 09:42:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -171,7 +171,7 @@ static int firewall_freeslots_alloc(long start, long end)
 
   if((freeslots = heap_alloc((heap_cmp_t)firewall_entry_slot_cmp)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not create freeslots heap");
+      printerror(__func__, "could not create freeslots heap");
       return -1;
     }
 
@@ -179,13 +179,13 @@ static int firewall_freeslots_alloc(long start, long end)
     {
       if((entry = malloc_zero(sizeof(scamper_firewall_entry_t))) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not alloc entry %d", i);
+	  printerror(__func__, "could not alloc entry %d", i);
 	  return -1;
 	}
       entry->slot = i;
       if(heap_insert(freeslots, entry) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not add entry %d", i);
+	  printerror(__func__, "could not add entry %d", i);
 	  return -1;
 	}
     }
@@ -197,7 +197,7 @@ static int firewall_entries_alloc(void)
 {
   if((entries = splaytree_alloc((splaytree_cmp_t)firewall_entry_cmp)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not create entries tree");
+      printerror(__func__, "could not create entries tree");
       return -1;
     }
   return 0;
@@ -222,7 +222,7 @@ static int ipfw_sysctl_check(void)
   name = "net.inet.ip.fw.enable";
   if(sysctlbyname(name, &i, &len, NULL, 0) != 0)
     {
-      printerror(errno, strerror, __func__, "could not sysctl %s", name);
+      printerror(__func__, "could not sysctl %s", name);
       return -1;
     }
   else
@@ -237,7 +237,7 @@ static int ipfw_sysctl_check(void)
   name = "net.inet6.ip6.fw.enable";
   if(sysctlbyname(name, &i, &len, NULL, 0) != 0)
     {
-      printerror(errno, strerror, __func__, "could not sysctl %s", name);
+      printerror(__func__, "could not sysctl %s", name);
       if(errno != ENOENT)
 	return -1;
 
@@ -281,7 +281,7 @@ int scamper_firewall_ipfw_init(void)
 
   if((fws = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) < 0)
     {
-      printerror(errno, strerror, __func__, "could not open socket for ipfw");
+      printerror(__func__, "could not open socket for ipfw");
       return -1;
     }
 
@@ -319,7 +319,7 @@ static int ipfw_deny_ip6_ext6hdr_frag(int n, void *s, void *d)
 
   if((fw = malloc_zero(sl)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc ip_fw");
+      printerror(__func__, "could not malloc ip_fw");
       goto err;
     }
 
@@ -362,7 +362,7 @@ static int ipfw_deny_ip6_ext6hdr_frag(int n, void *s, void *d)
 
   if(getsockopt(fws, IPPROTO_IP, IP_FW_ADD, fw, &sl) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add rule");
+      printerror(__func__, "could not add rule");
       goto err;
     }
 
@@ -414,7 +414,7 @@ int scamper_firewall_ipfw_add(int n,int af,int p,void *s,void *d,int sp,int dp)
 
   if((fw = malloc_zero(sizeof(struct ip_fw) + (len * 4))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc ip_fw");
+      printerror(__func__, "could not malloc ip_fw");
       goto err;
     }
   sl = sizeof(struct ip_fw) + (len * 4);
@@ -511,7 +511,7 @@ int scamper_firewall_ipfw_add(int n,int af,int p,void *s,void *d,int sp,int dp)
 
   if(getsockopt(fws, IPPROTO_IP, IP_FW_ADD, fw, &sl) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add rule");
+      printerror(__func__, "could not add rule");
       goto err;
     }
 
@@ -535,7 +535,7 @@ int scamper_firewall_ipfw_del(int n, int af)
 
   if(setsockopt(fws, IPPROTO_IP, IP_FW_DEL, &rule, sizeof(rule)) != 0)
     {
-      printerror(errno, strerror, __func__, "could not delete rule %d", n);
+      printerror(__func__, "could not delete rule %d", n);
       return -1;
     }
 
@@ -554,12 +554,12 @@ int scamper_firewall_ipfw_init(void)
 
   if(ipfw_have_ipv4 != 0 && (fw4s = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) < 0)
     {
-      printerror(errno, strerror, __func__, "could not open socket for ipfw");
+      printerror(__func__, "could not open socket for ipfw");
       return -1;
     }
   if(ipfw_have_ipv6 != 0 && (fw6s = socket(AF_INET6, SOCK_RAW, IPPROTO_RAW)) < 0)
     {
-      printerror(errno, strerror, __func__, "could not open socket for ip6fw");
+      printerror(__func__, "could not open socket for ip6fw");
       return -1;
     }
 
@@ -647,7 +647,7 @@ int scamper_firewall_ipfw_add(int n,int af,int p,void *s,void *d,int sp,int dp)
 
   if(setsockopt(fd, level, optname, optval, optlen) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add fw rule");
+      printerror(__func__, "could not add fw rule");
       return -1;
     }
 
@@ -698,7 +698,7 @@ int scamper_firewall_ipfw_del(int n, int af)
 
   if(setsockopt(fd, level, optname, optval, optlen) != 0)
     {
-      printerror(errno, strerror, __func__, "could not delete rule %d", n);
+      printerror(__func__, "could not delete rule %d", n);
       return -1;
     }
 
@@ -843,19 +843,19 @@ int scamper_firewall_pf_init(const char *name)
 
   if((pf_name = strdup(name)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not dup name");
+      printerror(__func__, "could not dup name");
       return -1;
     }
 
   if((pf_fd = open("/dev/pf", O_RDWR)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open socket");
+      printerror(__func__, "could not open socket");
       return -1;
     }
 
   if(ioctl(pf_fd, DIOCGETSTATUS, &status) == -1)
     {
-      printerror(errno, strerror, __func__, "could not get status");
+      printerror(__func__, "could not get status");
       return -1;
     }
   if(status.running == 0)
@@ -912,7 +912,7 @@ int scamper_firewall_pf_add(int n,int af,int p,void *s,void *d,int sp,int dp)
 
   if(ioctl(pf_fd, DIOCXBEGIN, &pft) == -1)
     {
-      printerror(errno, strerror, __func__, "could not begin transaction");
+      printerror(__func__, "could not begin transaction");
       return -1;
     }
 
@@ -956,13 +956,13 @@ int scamper_firewall_pf_add(int n,int af,int p,void *s,void *d,int sp,int dp)
 
   if(ioctl(pf_fd, DIOCADDRULE, &pfr) == -1)
     {
-      printerror(errno, strerror, __func__, "could not add rule");
+      printerror(__func__, "could not add rule");
       return -1;
     }
 
   if(ioctl(pf_fd, DIOCXCOMMIT, &pft) == -1)
     {
-      printerror(errno, strerror, __func__, "could not commit rule");
+      printerror(__func__, "could not commit rule");
       return -1;
     }
 
@@ -994,13 +994,13 @@ int scamper_firewall_pf_del(int ruleno)
 
   if(ioctl(pf_fd, DIOCXBEGIN, &pft) == -1)
     {
-      printerror(errno, strerror, __func__, "could not begin transaction");
+      printerror(__func__, "could not begin transaction");
       return -1;
     }
 
   if(ioctl(pf_fd, DIOCXCOMMIT, &pft) == -1)
     {
-      printerror(errno, strerror, __func__, "could not commit rule");
+      printerror(__func__, "could not commit rule");
       return -1;
     }
 
@@ -1178,8 +1178,7 @@ static int firewall_rule_delete(scamper_firewall_entry_t *entry)
   /* put the rule back into the freeslots heap */
   if(heap_insert(freeslots, entry) == NULL)
     {
-      printerror(errno, strerror, __func__,
-		 "could not add entry %d", entry->slot);
+      printerror(__func__, "could not add entry %d", entry->slot);
       return -1;
     }
 
@@ -1280,7 +1279,7 @@ int scamper_firewall_init(const char *opt)
 
   if((dup = strdup(opt)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not dup opt");
+      printerror(__func__, "could not dup opt");
       return -1;
     }
   string_nullterm_char(dup, ':', &ptr);

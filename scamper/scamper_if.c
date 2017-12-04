@@ -1,7 +1,7 @@
 /*
  * scamper_if.c
  *
- * $Id: scamper_if.c,v 1.24 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_if.c,v 1.25 2017/12/03 09:38:27 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2014      The Regents of the University of California
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_if.c,v 1.24 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_if.c,v 1.25 2017/12/03 09:38:27 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -45,8 +45,7 @@ int scamper_if_getifindex(const char *ifname, int *ifindex)
 
   if((i = if_nametoindex(ifname)) == 0)
     {
-      printerror(errno, strerror, __func__,
-		 "could not get index for %s", ifname);
+      printerror(__func__, "could not get index for %s", ifname);
       return -1;
     }
 
@@ -69,7 +68,7 @@ int scamper_if_getifname(char *str, size_t len, int ifindex)
   row.dwIndex = ifindex;
   if(GetIfEntry(&row) != NO_ERROR)
     {
-      printerror(errno,strerror,__func__, "could not GetIfEntry %d", ifindex);
+      printerror(__func__, "could not GetIfEntry %d", ifindex);
       return -1;
     }
 
@@ -86,8 +85,7 @@ int scamper_if_getifname(char *str, size_t len, int ifindex)
 
   if(if_indextoname(ifindex, ifname) == NULL)
     {
-      printerror(errno, strerror, __func__,
-		 "could not get name for %d", ifindex);
+      printerror(__func__, "could not get name for %d", ifindex);
       return -1;
     }
 
@@ -120,19 +118,19 @@ int scamper_if_getmtu(const int ifindex, uint16_t *ifmtu)
   /* given the index, return the interface name to query */
   if(if_indextoname((unsigned int)ifindex, ifr.ifr_name) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not if_indextoname");
+      printerror(__func__, "could not if_indextoname");
       return -1;
     }
 
   if((fd = scamper_fd_ifsock()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get ifsock");
+      printerror(__func__, "could not get ifsock");
       return -1;
     }
 
   if(ioctl(scamper_fd_fd_get(fd), SIOCGIFMTU, &ifr) == -1)
     {
-      printerror(errno, strerror, __func__, "could not SIOCGIFMTU");
+      printerror(__func__, "could not SIOCGIFMTU");
       scamper_fd_free(fd);
       return -1;
     }
@@ -161,7 +159,7 @@ int scamper_if_getmtu(const int ifindex, uint16_t *ifmtu)
   row.dwIndex = ifindex;
   if(GetIfEntry(&row) != NO_ERROR)
     {
-      printerror(errno,strerror,__func__, "could not GetIfEntry %d", ifindex);
+      printerror(__func__, "could not GetIfEntry %d", ifindex);
       return -1;
     }
   *ifmtu = (uint16_t)row.dwMtu;
@@ -177,19 +175,19 @@ int scamper_if_getmac(const int ifindex, uint8_t *mac)
 
   if(if_indextoname(ifindex, ifr.ifr_name) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not if_indextoname");
+      printerror(__func__, "could not if_indextoname");
       goto err;
     }
 
   if((fd = scamper_fd_ifsock()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get ifsock");
+      printerror(__func__, "could not get ifsock");
       goto err;
     }
 
   if(ioctl(scamper_fd_fd_get(fd), SIOCGIFHWADDR, &ifr) == -1)
     {
-      printerror(errno, strerror, __func__, "could not SIOCGIFHWADDR");
+      printerror(__func__, "could not SIOCGIFHWADDR");
       goto err;
     }
   memcpy(mac, ifr.ifr_hwaddr.sa_data, 6);
@@ -208,7 +206,7 @@ int scamper_if_getmac(const int ifindex, uint8_t *mac)
   row.dwIndex = ifindex;
   if(GetIfEntry(&row) != NO_ERROR)
     {
-      printerror(errno,strerror,__func__, "could not GetIfEntry %d", ifindex);
+      printerror(__func__, "could not GetIfEntry %d", ifindex);
       return -1;
     }
   memcpy(mac, row.bPhysAddr, 6);
@@ -230,18 +228,18 @@ int scamper_if_getmac(const int ifindex, uint8_t *mac)
   strncpy(ifname, "/dev/", sizeof(ifname));
   if(if_indextoname(ifindex, ifname+5) == NULL)
     {
-      printerror(errno, strerror, __func__, "if_indextoname %d", ifindex);
+      printerror(__func__, "if_indextoname %d", ifindex);
       goto err;
     }
   if((fd = open(ifname, O_RDWR)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open %s", ifname);
+      printerror(__func__, "could not open %s", ifname);
       goto err;
     }
 #else
   if((fd = scamper_privsep_open_datalink(ifindex)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open %d", ifindex);
+      printerror(__func__, "could not open %d", ifindex);
       goto err;
     }
 #endif
@@ -254,7 +252,7 @@ int scamper_if_getmac(const int ifindex, uint8_t *mac)
   ctl.buf = (char *)req;
   if(putmsg(fd, &ctl, NULL, 0) == -1)
     {
-      printerror(errno, strerror, __func__, "could not putmsg");
+      printerror(__func__, "could not putmsg");
       goto err;
     }
 
@@ -264,7 +262,7 @@ int scamper_if_getmac(const int ifindex, uint8_t *mac)
   ctl.buf = (char *)ack;
   if(getmsg(fd, &ctl, NULL, &flags) == -1)
     {
-      printerror(errno, strerror, __func__, "could not getmsg");
+      printerror(__func__, "could not getmsg");
       goto err;
     }
   close(fd); fd = -1;
@@ -299,19 +297,19 @@ int scamper_if_getmac(const int ifindex, uint8_t *mac)
 
   if(sysctl(mib, 6, NULL, &len, NULL, 0) == -1)
     {
-      printerror(errno, strerror, __func__, "could not sysctl buflen");
+      printerror(__func__, "could not sysctl buflen");
       return -1;
     }
 
   if((buf = malloc_zero(len)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc buf");
+      printerror(__func__, "could not malloc buf");
       return -1;
     }
 
   if(sysctl(mib, 6, buf, &len, NULL, 0) < 0)
     {
-      printerror(errno, strerror, __func__, "could not sysctl data");
+      printerror(__func__, "could not sysctl data");
       free(buf);
       return -1;
     }

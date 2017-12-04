@@ -1,7 +1,7 @@
 /*
  * scamper_icmp4.c
  *
- * $Id: scamper_icmp4.c,v 1.114 2016/08/09 08:18:34 mjl Exp $
+ * $Id: scamper_icmp4.c,v 1.115 2017/12/03 09:38:26 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmp4.c,v 1.114 2016/08/09 08:18:34 mjl Exp $";
+  "$Id: scamper_icmp4.c,v 1.115 2017/12/03 09:38:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -183,7 +183,7 @@ int scamper_icmp4_probe(scamper_probe_t *probe)
     {
       if(realloc_wrap((void **)&txbuf, len) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not realloc");
+	  printerror(__func__, "could not realloc");
 	  return -1;
 	}
       txbuf_len = len;
@@ -215,8 +215,7 @@ int scamper_icmp4_probe(scamper_probe_t *probe)
     {
       /* error condition, could not send the packet at all */
       probe->pr_errno = errno;
-      printerror(probe->pr_errno, strerror, __func__,
-		 "could not send to %s (%d ttl, %d seq, %d len)",
+      printerror(__func__, "could not send to %s (%d ttl, %d seq, %d len)",
 		 scamper_addr_tostr(probe->pr_ip_dst, addr, sizeof(addr)),
 		 probe->pr_ip_ttl, probe->pr_icmp_seq, len);
       return -1;
@@ -224,10 +223,9 @@ int scamper_icmp4_probe(scamper_probe_t *probe)
   else if((size_t)i != len)
     {
       /* error condition, sent a portion of the probe */
-      fprintf(stderr,
-	      "scamper_icmp4_probe: sent %d bytes of %d byte packet to %s",
-	      i, (int)len,
-	      scamper_addr_tostr(probe->pr_ip_dst, addr, sizeof(addr)));
+      printerror_msg(__func__, "sent %d bytes of %d byte packet to %s",
+		     i, (int)len,
+		     scamper_addr_tostr(probe->pr_ip_dst, addr, sizeof(addr)));
       return -1;
     }
 
@@ -599,7 +597,7 @@ int scamper_icmp4_recv(int fd, scamper_icmp_resp_t *resp)
 
   if((pbuflen = recvmsg(fd, &msg, 0)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not recvmsg");
+      printerror(__func__, "could not recvmsg");
       return -1;
     }
 
@@ -607,7 +605,7 @@ int scamper_icmp4_recv(int fd, scamper_icmp_resp_t *resp)
 
   if((pbuflen = recv(fd, rxbuf, sizeof(rxbuf), 0)) == SOCKET_ERROR)
     {
-      printerror(errno, strerror, __func__, "could not recv");
+      printerror(__func__, "could not recv");
       return -1;
     }
 
@@ -821,12 +819,12 @@ int scamper_icmp4_open_fd(void)
 
   if((fd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open ICMP socket");
+      printerror(__func__, "could not open ICMP socket");
       goto err;
     }
   if(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, (void *)&opt, sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set IP_HDRINCL");
+      printerror(__func__, "could not set IP_HDRINCL");
       goto err;
     }
   return fd;
@@ -857,14 +855,14 @@ int scamper_icmp4_open(const void *addr)
   opt = 65535 + 128;
   if(setsockopt(fd, SOL_SOCKET, SO_RCVBUF, (void *)&opt, sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set SO_RCVBUF");
+      printerror(__func__, "could not set SO_RCVBUF");
       goto err;
     }
 
   opt = 65535 + 128;
   if(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (void *)&opt, sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set SO_SNDBUF");
+      printerror(__func__, "could not set SO_SNDBUF");
       goto err;
     }      
 
@@ -872,7 +870,7 @@ int scamper_icmp4_open(const void *addr)
   opt = 1;
   if(setsockopt(fd, SOL_SOCKET, SO_TIMESTAMP, &opt, sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set SO_TIMESTAMP");
+      printerror(__func__, "could not set SO_TIMESTAMP");
       goto err;
     }
 #endif
@@ -890,7 +888,7 @@ int scamper_icmp4_open(const void *addr)
 		  );
   if(setsockopt(fd, SOL_RAW, ICMP_FILTER, &filter, sizeof(filter)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set ICMP_FILTER");
+      printerror(__func__, "could not set ICMP_FILTER");
       goto err;
     }
 #endif
@@ -900,7 +898,7 @@ int scamper_icmp4_open(const void *addr)
       sockaddr_compose((struct sockaddr *)&sin, AF_INET, addr, 0);
       if(bind(fd, (struct sockaddr *)&sin, sizeof(sin)) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not bind %s",
+	  printerror(__func__, "could not bind %s",
 		     sockaddr_tostr((struct sockaddr *)&sin,tmp,sizeof(tmp)));
 	  goto err;
 	}

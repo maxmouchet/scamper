@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.261 2016/09/17 11:58:01 mjl Exp $
+ * $Id: scamper.c,v 1.262 2017/12/03 09:38:26 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper.c,v 1.261 2016/09/17 11:58:01 mjl Exp $";
+  "$Id: scamper.c,v 1.262 2017/12/03 09:38:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -366,8 +366,7 @@ static int multicall_do(const scamper_multicall_t *mc, int argc, char *argv[])
     }
   if((str = malloc_zero(len)) == NULL)
     {
-      printerror(errno, strerror, __func__,
-		 "could not assemble %s command", mc->cmd);
+      printerror(__func__, "could not assemble %s command", mc->cmd);
       return -1;
     }
   off = strlen(mc->cmd);
@@ -658,8 +657,7 @@ static int check_options(int argc, char *argv[])
 	  return -1;
 
 	default:
-	  printerror(errno, strerror, __func__,
-		     "could not parse command line options");
+	  printerror(__func__, "could not parse command line options");
 	  return -1;
 	}
     }
@@ -702,20 +700,20 @@ static int check_options(int argc, char *argv[])
 
   if(options & OPT_FIREWALL && (firewall = strdup(opt_firewall)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup firewall");
+      printerror(__func__, "could not strdup firewall");
       return -1;
     }
 
   if(options & OPT_MONITORNAME &&
      (monitorname = strdup(opt_monitorname)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup monitorname");
+      printerror(__func__, "could not strdup monitorname");
       return -1;
     }
 
   if(options & OPT_LISTNAME && (listname = strdup(opt_listname)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup listname");
+      printerror(__func__, "could not strdup listname");
       return -1;
     }
 
@@ -735,14 +733,14 @@ static int check_options(int argc, char *argv[])
 #ifndef WITHOUT_DEBUGFILE
   if(options & OPT_DEBUGFILE && (debugfile = strdup(opt_debugfile)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup debugfile");
+      printerror(__func__, "could not strdup debugfile");
       return -1;
     }
 #endif
 
   if(options & OPT_PIDFILE && (pidfile = strdup(opt_pidfile)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup pidfile");
+      printerror(__func__, "could not strdup pidfile");
       return -1;
     }
 
@@ -877,7 +875,7 @@ int scamper_command_set(const char *command_in)
 
   if((d = strdup(command_in)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup command");
+      printerror(__func__, "could not strdup command");
       return -1;
     }
 
@@ -1034,7 +1032,7 @@ static int scamper_pidfile(void)
 
   if(fd == -1)
     {
-      printerror(errno, strerror, __func__, "could not open %s", pidfile);
+      printerror(__func__, "could not open %s", pidfile);
       goto err;
     }
 
@@ -1042,7 +1040,7 @@ static int scamper_pidfile(void)
   len = strlen(buf);
   if(write_wrap(fd, buf, NULL, len) != 0)
     {
-      printerror(errno, strerror, __func__, "could not write pid");
+      printerror(__func__, "could not write pid");
       goto err;
     }
   close(fd);
@@ -1184,7 +1182,7 @@ static int scamper(int argc, char *argv[])
 #ifdef HAVE_DAEMON
   if((options & OPT_DAEMON) != 0 && daemon(1, 0) != 0)
     {
-      printerror(errno, strerror, __func__, "could not daemon");
+      printerror(__func__, "could not daemon");
       return -1;
     }
 #endif
@@ -1648,7 +1646,7 @@ int main(int argc, char *argv[])
 #ifndef _WIN32
   if(signal(SIGPIPE, SIG_IGN) == SIG_ERR)
     {
-      printerror(errno, strerror, __func__, "could not ignore SIGPIPE");
+      printerror(__func__, "could not ignore SIGPIPE");
       return -1;
     }
 
@@ -1657,8 +1655,7 @@ int main(int argc, char *argv[])
   si_sa.sa_handler = scamper_chld;
   if(sigaction(SIGCHLD, &si_sa, 0) == -1)
     {
-      printerror(errno, strerror, __func__,
-		 "could not set sigaction for SIGCHLD");
+      printerror(__func__, "could not set sigaction for SIGCHLD");
       return -1;
     }
 #endif

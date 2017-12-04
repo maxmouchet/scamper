@@ -1,7 +1,7 @@
 /*
  * scamper_addr.c
  *
- * $Id: scamper_addr.c,v 1.67 2016/08/26 11:22:35 mjl Exp $
+ * $Id: scamper_addr.c,v 1.68 2017/12/03 09:55:14 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_addr.c,v 1.67 2016/08/26 11:22:35 mjl Exp $";
+  "$Id: scamper_addr.c,v 1.68 2017/12/03 09:55:14 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -202,19 +202,6 @@ struct scamper_addrcache
 {
   patricia_t *trie[sizeof(handlers)/sizeof(struct handler)];
 };
-
-#ifndef NDEBUG
-#if 0
-static void scamper_addr_debug(const scamper_addr_t *sa)
-{
-  char buf[128];
-  fprintf(stderr, "scamper_addr_t: %s %d\n",
-	  scamper_addr_tostr(sa,buf,sizeof(buf)), sa->refcnt);
-  return;
-}
-#endif
-#endif
-#define scamper_addr_debug(sa) ((void)0)
 
 static int ipv4_cmp(const scamper_addr_t *sa, const scamper_addr_t *sb)
 {
@@ -1065,7 +1052,6 @@ scamper_addr_t *scamper_addrcache_get(scamper_addrcache_t *ac,
     {
       assert(sa->internal == ac);
       sa->refcnt++;
-      scamper_addr_debug(sa);
       return sa;
     }
 
@@ -1075,8 +1061,6 @@ scamper_addr_t *scamper_addrcache_get(scamper_addrcache_t *ac,
 	goto err;
       sa->internal = ac;
     }
-
-  scamper_addr_debug(sa);
 
   return sa;
 
@@ -1133,10 +1117,7 @@ scamper_addr_t *scamper_addrcache_resolve(scamper_addrcache_t *addrcache,
 scamper_addr_t *scamper_addr_use(scamper_addr_t *sa)
 {
   if(sa != NULL)
-    {
-      sa->refcnt++;
-      scamper_addr_debug(sa);
-    }
+    sa->refcnt++;
   return sa;
 }
 
@@ -1152,15 +1133,10 @@ void scamper_addr_free(scamper_addr_t *sa)
   assert(sa->refcnt > 0);
 
   if(--sa->refcnt > 0)
-    {
-      scamper_addr_debug(sa);
-      return;
-    }
+    return;
 
   if((ac = sa->internal) != NULL)
     patricia_remove_item(ac->trie[sa->type-1], sa);
-
-  scamper_addr_debug(sa);
 
   free(sa->addr);
   free(sa);
