@@ -2,7 +2,7 @@
  * sc_ally : scamper driver to collect data on candidate aliases using the
  *           Ally method.
  *
- * $Id: sc_ally.c,v 1.34 2016/12/22 09:15:52 mjl Exp $
+ * $Id: sc_ally.c,v 1.35 2018/01/26 07:11:48 mjl Exp $
  *
  * Copyright (C) 2009-2011 The University of Waikato
  * Copyright (C) 2013-2015 The Regents of the University of California
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_ally.c,v 1.34 2016/12/22 09:15:52 mjl Exp $";
+  "$Id: sc_ally.c,v 1.35 2018/01/26 07:11:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1041,7 +1041,7 @@ static int addressfile_line(char *buf, void *param)
   char *a, *b;
   int last = 0, rc;
 
-  if(buf[0] == '#')
+  if(buf[0] == '\0' || buf[0] == '#')
     return 0;
 
   if((list = slist_alloc()) == NULL)

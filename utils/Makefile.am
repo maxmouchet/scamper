@@ -10,7 +10,9 @@ SUBDIRS = \
 	sc_remoted \
 	sc_speedtrap \
 	sc_tbitblind \
-	sc_tracediff
+	sc_tbitpmtud \
+	sc_tracediff \
+	sc_ttlexp
 
 if WITH_SC_UPTIME
 SUBDIRS+= sc_uptime

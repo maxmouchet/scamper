@@ -1,7 +1,7 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.185 2017/07/12 07:34:02 mjl Exp $
+ * $Id: utils.c,v 1.186 2018/01/26 07:12:52 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.185 2017/07/12 07:34:02 mjl Exp $";
+  "$Id: utils.c,v 1.186 2018/01/26 07:12:52 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -2128,61 +2128,64 @@ uint32_t byteswap32(const uint32_t word)
 /* process a text file, line by line */
 int file_lines(const char *filename, int (*func)(char *, void *), void *param)
 {
-  struct stat sb;
-  off_t off, start;
   char *readbuf = NULL;
-  int fd = -1;
+  size_t readbuf_len, readbuf_off;
+  size_t start, end, off;
+  int rc = -1, fd = -1;
+  ssize_t ss;
 
   if((fd = open(filename, O_RDONLY)) < 0)
-    goto err;
+    goto done;
 
-  if(fstat(fd, &sb) != 0)
-    goto err;
+  readbuf_len = 8192; readbuf_off = 0;
+  if((readbuf = malloc(readbuf_len)) == NULL)
+    goto done;
 
-  /* don't process a zero length file */
-  if(sb.st_size == 0)
+  while((ss = read(fd, readbuf+readbuf_off, readbuf_len-readbuf_off-1)) >= 0)
     {
-      close(fd);
-      return 0;
-    }
+      start = 0; off = 0;
+      end = readbuf_off + ss;
 
-  if((readbuf = malloc(sb.st_size+1)) == NULL)
-    goto err;
-  if(read_wrap(fd, readbuf, NULL, sb.st_size) != 0)
-    goto err;
-  readbuf[sb.st_size] = '\0';
-  close(fd); fd = -1;
-
-  /* parse the contents of the file */
-  start = 0; off = 0;
-  while(off < sb.st_size+1)
-    {
-      if(readbuf[off] == '\n' || readbuf[off] == '\0')
+      while(off <= end)
 	{
-	  if(start == off)
+	  if(off == end && ss != 0)
+	    break;
+	  if(readbuf[off] == '\n' || (off == end && start < off))
 	    {
+	      readbuf[off] = '\0';
+	      if(func(readbuf+start, param) != 0)
+		goto done;
 	      start = ++off;
-	      continue;
 	    }
+	  else
+	    {
+	      ++off;
+	    }
+	}
 
-	  readbuf[off] = '\0';
-	  if(func(readbuf+start, param) != 0)
-	    goto err;
-	  start = ++off;
+      if(ss == 0)
+	{
+	  rc = 0;
+	  break;
+	}
+      else if(start == 0)
+	{
+	  readbuf_len += 8192;
+	  readbuf_off = off;
+	  if(realloc_wrap((void **)&readbuf, readbuf_len) != 0)
+	    goto done;
 	}
       else
 	{
-	  ++off;
+	  memmove(readbuf, readbuf+start, end - start);
+	  readbuf_off = end - start;
 	}
     }
 
-  free(readbuf);
-  return 0;
-
- err:
-  if(readbuf != NULL) free(readbuf);
+ done:
   if(fd != -1) close(fd);
-  return -1;
+  if(readbuf != NULL) free(readbuf);
+  return rc;
 }
 
 char *offt_tostr(char *buf, size_t len, off_t off, int lz, char c)

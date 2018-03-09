@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([scamper], [20171204], [mjl@luckie.org.nz])
+AC_INIT([scamper], [20180309], [mjl@luckie.org.nz])
 
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([scamper/scamper.c])
@@ -324,7 +324,9 @@ AC_CONFIG_FILES([
 	utils/sc_remoted/Makefile
 	utils/sc_speedtrap/Makefile
 	utils/sc_tbitblind/Makefile
+	utils/sc_tbitpmtud/Makefile
 	utils/sc_tracediff/Makefile
+	utils/sc_ttlexp/Makefile
 ])
 
 if test "x$with_sc_uptime" != xno; then

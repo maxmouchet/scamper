@@ -1,7 +1,7 @@
 /*
  * sc_wartsdump
  *
- * $Id: sc_wartsdump.c,v 1.215 2017/08/21 20:41:53 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.216 2018/01/24 19:07:47 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartsdump.c,v 1.215 2017/08/21 20:41:53 mjl Exp $";
+  "$Id: sc_wartsdump.c,v 1.216 2018/01/24 19:07:47 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -51,7 +51,7 @@ static const char rcsid[] =
 
 static void usage()
 {
-  fprintf(stderr, "usage: warts-dump <file>\n");
+  fprintf(stderr, "usage: sc_wartsdump <file>\n");
   return;
 }
 

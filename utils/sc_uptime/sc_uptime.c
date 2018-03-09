@@ -1,7 +1,7 @@
 /*
  * sc_uptime: system to probe routers to identify reboot events
  *
- * $Id: sc_uptime.c,v 1.17 2017/08/21 20:18:00 mjl Exp $
+ * $Id: sc_uptime.c,v 1.18 2018/01/26 07:11:48 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_uptime.c,v 1.17 2017/08/21 20:18:00 mjl Exp $";
+  "$Id: sc_uptime.c,v 1.18 2018/01/26 07:11:48 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -868,7 +868,7 @@ static int addrfile_line(char *line, void *param)
   sc_dst_t *dst;
   char buf[256];
 
-  if(line[0] == '#')
+  if(line[0] == '\0' || line[0] == '#')
     return 0;
 
   if((sa = scamper_addr_resolve(AF_INET6, line)) == NULL)
