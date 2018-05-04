@@ -8,7 +8,7 @@
  * Copyright (C) 2015-2016 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_warts.c,v 1.22 2016/12/02 09:13:42 mjl Exp $
+ * $Id: scamper_trace_warts.c,v 1.23 2018/05/03 19:17:08 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_warts.c,v 1.22 2016/12/02 09:13:42 mjl Exp $";
+  "$Id: scamper_trace_warts.c,v 1.23 2018/05/03 19:17:08 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -354,6 +354,8 @@ static int warts_trace_params_read(scamper_trace_t *trace,warts_state_t *state,
     return rc;
   if(trace->dst == NULL)
     return -1;
+  if(trace->firsthop == 0)
+    trace->firsthop = 1;
 
   return 0;
 }

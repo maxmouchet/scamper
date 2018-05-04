@@ -1,13 +1,15 @@
 /*
  * sc_bdrmap: driver to map first hop border routers of networks
  *
- * $Id: sc_bdrmap.c,v 1.10 2018/03/08 08:54:22 mjl Exp $
+ * $Id: sc_bdrmap.c,v 1.12 2018/03/16 05:45:28 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@caida.org / mjl@wand.net.nz
  *
  * Copyright (C) 2014-2015 The Regents of the University of California
  * Copyright (C) 2015-2016 The University of Waikato
+ * Copyright (C) 2017      The Regents of the University of California
+ * Copyright (C) 2018      The University of Waikato
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_bdrmap.c,v 1.10 2018/03/08 08:54:22 mjl Exp $";
+  "$Id: sc_bdrmap.c,v 1.12 2018/03/16 05:45:28 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -529,6 +531,7 @@ static uint32_t               options       = 0;
 static char                  *unix_name     = NULL;
 static unsigned int           port          = 0;
 static uint8_t                firsthop      = 1;
+static uint16_t               csum          = 0x420;
 static prefixtree_t          *ip2as_pt      = NULL;
 static char                  *ip2as_fn      = NULL;
 static splaytree_t           *ip2name_tree  = NULL;
@@ -560,7 +563,6 @@ static uint32_t              *vpas          = NULL;
 static int                    vpasc         = 0;
 static uint32_t              *targetas      = NULL;
 static int                    targetasc     = 0;
-static char                  *vpas_str      = NULL;
 static char                 **opt_args      = NULL;
 static int                    opt_argc      = 0;
 static int                    scamper_fd    = -1;
@@ -621,6 +623,7 @@ typedef void (*sc_stree_free_t)(void *ptr);
 #define OPT_REMOTE      0x020000
 #define OPT_ALLYCONF    0x040000
 #define OPT_DELEGATED   0x080000
+#define OPT_CSUM        0x100000
 
 #define TEST_TRACE      0x00
 #define TEST_LINK       0x01
@@ -670,12 +673,14 @@ static void usage(uint32_t opts)
   int i;
 
   fprintf(stderr,
-    "usage: sc_bdrmap [-6ADi] [-a ip2as] [-c allyconf] [-f firsthop]\n"
-    "                 [-l log] [-o warts] [-O option] [-p port] [-U unix]\n"
-    "                 [-R unix] [-v vpases] [-x ixps]\n"
+    "usage: sc_bdrmap [-6Di] [-a ip2as] [-A targetases] [-c allyconf]\n"
+    "                 [-C csum] [-f firsthop] [-l log] [-o warts]\n"
+    "                 [-O option] [-p port] [-U unix] [-R unix] [-v vpases]\n"
+    "                 [-x ixps]\n"
     "\n"
-    "       sc_bdrmap [-6] [-a ip2as] [-d dump] [-g delegated] [-n names]\n"
-    "                 [-r rels] [-v vpases] [-x ixps] file1 .. fileN\n");
+    "       sc_bdrmap [-6] [-a ip2as] [-A targetases] [-d dump]\n"
+    "                 [-g delegated] [-n names] [-r rels] [-v vpases]\n"
+    "                 [-x ixps] file1 .. fileN\n");
 
   if(opts == 0)
     {
@@ -694,6 +699,8 @@ static void usage(uint32_t opts)
     fprintf(stderr, "       -A: map interconnections towards specified ASes\n");
   if(opts & OPT_ALLYCONF)
     fprintf(stderr, "       -c: how many times to confirm alias inference\n");
+  if(opts & OPT_CSUM)
+    fprintf(stderr, "       -C: ICMP csum for Paris traceroute\n");
   if(opts & OPT_DUMP)
     {
       fprintf(stderr, "       -d: dump id\n");
@@ -746,6 +753,41 @@ static void usage(uint32_t opts)
   return;
 }
 
+static int uint32_find(const uint32_t *ptr, int c, uint32_t x)
+{
+  int i;
+  for(i=0; i<c; i++)
+    if(ptr[i] == x)
+      return i;
+  return -1;
+}
+
+static int uint32_add(uint32_t **ptr, int *c, uint32_t x)
+{
+  uint32_t *a = *ptr;
+
+  if(uint32_find(a, *c, x) >= 0)
+    return 0;
+
+  if(realloc_wrap((void **)&a, sizeof(uint32_t) * (*c + 1)) != 0)
+    return -1;
+
+  a[*c] = x;
+  *ptr = a;
+  *c = *c + 1;
+
+  return 0;
+}
+
+static int uint32_cmp(const void *va, const void *vb)
+{
+  const uint32_t a = *((const uint32_t *)va);
+  const uint32_t b = *((const uint32_t *)vb);
+  if(a < b) return -1;
+  if(a > b) return  1;
+  return 0;
+}
+
 static int check_options_once(char ch, uint32_t flag)
 {
   if((options & flag) == 0)
@@ -756,12 +798,97 @@ static int check_options_once(char ch, uint32_t flag)
   return -1;
 }
 
+static int vpas_line(char *line, void *param)
+{
+  long lo;
+  if(line[0] == '\0' || line[0] == '#')
+    return 0;
+  if(string_tolong(line, &lo) != 0 || lo < 1 ||
+     uint32_add(&vpas, &vpasc, lo) != 0)
+    return -1;
+  return 0;
+}
+
+static int check_options_vpas(const char *vpas_str)
+{
+  struct stat sb;
+  char *vp = NULL, *cur, *next;
+  long lo;
+
+  if(stat(vpas_str, &sb) == 0)
+    {
+      if(file_lines(vpas_str, vpas_line, NULL) != 0)
+	{
+	  fprintf(stderr, "could not read file %s\n", vpas_str);
+	  goto err;
+	}
+    }
+  else
+    {
+      if((vp = strdup(vpas_str)) == NULL)
+	{
+	  fprintf(stderr, "could not dup vpas_str: %s\n", strerror(errno));
+	  goto err;
+	}
+      cur = vp;
+      while(cur != NULL)
+	{
+	  string_nullterm_char(cur, ',', &next);
+	  if(string_tolong(cur, &lo) != 0 || lo < 1 ||
+	     uint32_add(&vpas, &vpasc, lo) != 0)
+	    {
+	      fprintf(stderr, "malformed -v %s: not a file or set of ASes\n",
+		      vpas_str);
+	      goto err;
+	    }
+	  cur = next;
+	}
+      free(vp); vp = NULL;
+    }
+
+  return 0;
+
+ err:
+  if(vp != NULL) free(vp);
+  return -1;
+}
+
+static int check_options_targetases(slist_t *list)
+{
+  char *opt;
+  long lo;
+
+  while((opt = slist_head_pop(list)) != NULL)
+    {
+      if(string_tolong(opt, &lo) != 0 || lo < 1)
+	{
+	  fprintf(stderr, "%s is not a valid ASN\n", opt);
+	  return -1;
+	}
+      if(uint32_find(vpas, vpasc, lo) >= 0)
+	{
+	  fprintf(stderr, "%ld is also a VP ASN\n", lo);
+	  return -1;
+	}
+      if(uint32_add(&targetas, &targetasc, lo) != 0)
+	{
+	  fprintf(stderr, "could not add %ld to targetas set\n", lo);
+	  return -1;
+	}
+    }
+
+  qsort(targetas, targetasc, sizeof(uint32_t), uint32_cmp);
+  return 0;
+}
+
 static int check_options(int argc, char *argv[])
 {
-  int x = 0, ch; long lo;
-  char *opts = "?6a:Ac:d:Df:g:il:n:o:O:p:r:R:U:v:x:";
+  int rc = -1, x = 0, ch; long lo;
+  char *opts = "?6a:A:c:C:d:Df:g:il:n:o:O:p:r:R:U:v:x:";
   char *opt_port = NULL, *opt_firsthop = NULL, *opt_dumpid = NULL;
-  char *opt_unix = NULL, *opt_allyconf = NULL;
+  char *opt_unix = NULL, *opt_allyconf = NULL, *opt_vpases = NULL;
+  char *opt_csum = NULL;
+  slist_t *opt_targetases = NULL;
 
   while((ch = getopt(argc, argv, opts)) != -1)
     {
@@ -771,78 +898,88 @@ static int check_options(int argc, char *argv[])
 	case '?':
 	  options |= OPT_HELP;
 	  usage(0xffffffff);
-	  return 0;
+	  rc = 0;
+	  goto done;
 
 	case '6':
 	  if(check_options_once(ch, OPT_IPV6) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_IPV6;
 	  af = AF_INET6;
 	  break;
 
 	case 'a':
 	  if(check_options_once(ch, OPT_IP2AS) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_IP2AS;
 	  ip2as_fn = optarg;
 	  break;
 
+	case 'C':
+	  if(check_options_once(ch, OPT_CSUM) != 0)
+	    goto done;
+	  options |= OPT_CSUM;
+	  opt_csum = optarg;
+	  break;
+
 	case 'A':
-	  if(check_options_once(ch, OPT_TARGETASES) != 0)
-	    return -1;
 	  options |= OPT_TARGETASES;
+	  if(opt_targetases == NULL && (opt_targetases=slist_alloc()) == NULL)
+	    goto done;
+	  if(slist_tail_push(opt_targetases, optarg) == NULL)
+	    goto done;
 	  break;
 
 	case 'c':
 	  if(check_options_once(ch, OPT_ALLYCONF) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_ALLYCONF;
 	  opt_allyconf = optarg;
 	  break;
 
 	case 'd':
 	  if(check_options_once(ch, OPT_DUMP) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_DUMP;
 	  opt_dumpid = optarg;
 	  break;
 
 	case 'D':
 	  if(check_options_once(ch, OPT_DAEMON) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_DAEMON;
 	  break;
 
 	case 'f':
 	  if(check_options_once(ch, OPT_FIRSTHOP) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_FIRSTHOP;
 	  opt_firsthop = optarg;
 	  break;
 
 	case 'g':
 	  if(check_options_once(ch, OPT_DELEGATED) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_DELEGATED;
 	  delegated_fn = optarg;
 	  break;
 
 	case 'i':
 	  if(check_options_once(ch, OPT_TARGETIPS) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_TARGETIPS;
 	  break;
 
 	case 'l':
 	  if(check_options_once(ch, OPT_LOGFILE) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_LOGFILE;
 	  logfile_fn = optarg;
 	  break;
 
 	case 'o':
 	  if(check_options_once(ch, OPT_OUTFILE) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_OUTFILE;
 	  outfile_fn = optarg;
 	  break;
@@ -870,57 +1007,57 @@ static int check_options(int argc, char *argv[])
 	  else
 	    {
 	      fprintf(stderr, "unknown option %s\n", optarg);
-	      return -1;
+	      goto done;
 	    }
 	  break;
 
 	case 'n':
 	  if(check_options_once(ch, OPT_NAMEFILE) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_NAMEFILE;
 	  ip2name_fn = optarg;
 	  break;
 
 	case 'p':
 	  if(check_options_once(ch, OPT_PORT) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_PORT;
 	  opt_port = optarg;
 	  break;
 
 	case 'r':
 	  if(check_options_once(ch, OPT_RELFILE) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_RELFILE;
 	  relfile_fn = optarg;
 	  break;
 
 	case 'R':
 	  if(check_options_once(ch, OPT_REMOTE) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_REMOTE;
 	  opt_unix = optarg;
 	  break;
 
 	case 'U':
 	  if(check_options_once(ch, OPT_UNIX) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_UNIX;
 	  opt_unix = optarg;
 	  break;
 
 	case 'x':
 	  if(check_options_once(ch, OPT_IXPFILE) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_IXPFILE;
 	  ixp_fn = optarg;
 	  break;
 
 	case 'v':
 	  if(check_options_once(ch, OPT_VPASES) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_VPASES;
-	  vpas_str = optarg;
+	  opt_vpases = optarg;
 	  break;
 	}
     }
@@ -928,7 +1065,7 @@ static int check_options(int argc, char *argv[])
   if(x == 0)
     {
       usage(0);
-      return -1;
+      goto done;
     }
 
   opt_args = argv + optind;
@@ -937,13 +1074,24 @@ static int check_options(int argc, char *argv[])
   if((options & OPT_VPASES) == 0)
     {
       usage(OPT_VPASES);
-      return -1;
+      goto done;
     }
   if((options & OPT_IP2AS) == 0)
     {
       usage(OPT_IP2AS);
-      return -1;
+      goto done;
     }
+
+  if(check_options_vpas(opt_vpases) != 0)
+    goto done;
+
+  if((options & (OPT_TARGETIPS|OPT_TARGETASES))==(OPT_TARGETIPS|OPT_TARGETASES))
+    {
+      usage(OPT_TARGETIPS|OPT_TARGETASES);
+      goto done;
+    }
+  if(options & OPT_TARGETASES && check_options_targetases(opt_targetases) != 0)
+    goto done;
 
   if(options & OPT_DUMP)
     {
@@ -952,7 +1100,7 @@ static int check_options(int argc, char *argv[])
 	  if(string_tolong(opt_dumpid, &lo) != 0 || lo < 1 || lo > dump_funcc)
 	    {
 	      usage(OPT_DUMP);
-	      return -1;
+	      goto done;
 	    }
 	  dump_id = lo;
 	}
@@ -968,7 +1116,7 @@ static int check_options(int argc, char *argv[])
 	  if(x == dump_funcc)
 	    {
 	      usage(OPT_DUMP);
-	      return -1;
+	      goto done;
 	    }
 	  dump_id = x;
 	}
@@ -976,9 +1124,10 @@ static int check_options(int argc, char *argv[])
       if(opt_argc < 1)
 	{
 	  usage(0);
-	  return -1;
+	  goto done;
 	}
-      return 0;
+      rc = 0;
+      goto done;
     }
 
   if(options & OPT_ALLYCONF)
@@ -986,7 +1135,7 @@ static int check_options(int argc, char *argv[])
       if(string_tolong(opt_allyconf, &lo) != 0 || lo < 0 || lo > 10)
 	{
 	  usage(OPT_ALLYCONF);
-	  return -1;
+	  goto done;
 	}
       allyconf = lo;
     }
@@ -996,37 +1145,34 @@ static int check_options(int argc, char *argv[])
       if(string_tolong(opt_firsthop, &lo) != 0 || lo < 1 || lo > 4)
 	{
 	  usage(OPT_FIRSTHOP);
-	  return -1;
+	  goto done;
 	}
       firsthop = lo;
     }
 
-  if((options & (OPT_TARGETIPS|OPT_TARGETASES))==(OPT_TARGETIPS|OPT_TARGETASES))
+  if(options & OPT_CSUM)
     {
-      usage(OPT_TARGETIPS|OPT_TARGETASES);
-      return -1;
+      if(string_tolong(opt_csum, &lo) != 0 || lo < 1 || lo > 65535)
+	{
+	  usage(OPT_CSUM);
+	  return -1;
+	}
+      csum = lo;
     }
+
   if(options & OPT_TARGETIPS)
     {
       if(opt_argc < 1)
 	{
 	  usage(OPT_TARGETIPS);
-	  return -1;
-	}
-    }
-  if(options & OPT_TARGETASES)
-    {
-      if(opt_argc < 1)
-	{
-	  usage(OPT_TARGETASES);
-	  return -1;
+	  goto done;
 	}
     }
 
   if((options & OPT_OUTFILE) == 0)
     {
       usage(OPT_OUTFILE);
-      return -1;
+      goto done;
     }
   if((options & (OPT_PORT|OPT_REMOTE|OPT_UNIX)) == 0 ||
      ((options & (OPT_PORT|OPT_REMOTE|OPT_UNIX)) != OPT_PORT &&
@@ -1034,7 +1180,7 @@ static int check_options(int argc, char *argv[])
       (options & (OPT_PORT|OPT_REMOTE|OPT_UNIX)) != OPT_UNIX))
     {
       usage(OPT_PORT|OPT_REMOTE|OPT_UNIX);
-      return -1;
+      goto done;
     }
 
   if(options & OPT_PORT)
@@ -1042,7 +1188,7 @@ static int check_options(int argc, char *argv[])
       if(string_tolong(opt_port, &lo) != 0 || lo < 1 || lo > 65535)
 	{
 	  usage(OPT_PORT);
-	  return -1;
+	  goto done;
 	}
       port = lo;
     }
@@ -1055,10 +1201,14 @@ static int check_options(int argc, char *argv[])
     {
       usage(OPT_LOGFILE);
       fprintf(stderr, "could not open %s\n", logfile_fn);
-      return -1;
+      goto done;
     }
 
-  return 0;
+  rc = 0;
+
+ done:
+  if(opt_targetases != NULL) slist_free(opt_targetases);
+  return rc;
 }
 
 static int tree_to_slist(void *ptr, void *entry)
@@ -1135,41 +1285,6 @@ static char *class_tostr(char *str, size_t len, uint8_t class)
 
   snprintf(str, len, "%s", ptr);
   return str;
-}
-
-static int uint32_find(const uint32_t *ptr, int c, uint32_t x)
-{
-  int i;
-  for(i=0; i<c; i++)
-    if(ptr[i] == x)
-      return i;
-  return -1;
-}
-
-static int uint32_add(uint32_t **ptr, int *c, uint32_t x)
-{
-  uint32_t *a = *ptr;
-
-  if(uint32_find(a, *c, x) >= 0)
-    return 0;
-
-  if(realloc_wrap((void **)&a, sizeof(uint32_t) * (*c + 1)) != 0)
-    return -1;
-
-  a[*c] = x;
-  *ptr = a;
-  *c = *c + 1;
-
-  return 0;
-}
-
-static int uint32_cmp(const void *va, const void *vb)
-{
-  const uint32_t a = *((const uint32_t *)va);
-  const uint32_t b = *((const uint32_t *)vb);
-  if(a < b) return -1;
-  if(a > b) return  1;
-  return 0;
 }
 
 static void *pt_find(prefixtree_t *pt, scamper_addr_t *addr)
@@ -3644,7 +3759,7 @@ static int do_method_trace(sc_test_t *test, char *cmd, size_t len)
 	return -1;
     }
 
-  string_concat(cmd, len, &off, "trace -w 1 -P icmp-paris");
+  string_concat(cmd, len, &off, "trace -w 1 -P icmp-paris -d %u", csum);
   if(firsthop > 1)
     string_concat(cmd, len, &off, " -f %u", firsthop);
   if(no_gss == 0 && tt->astraces->gss != NULL)
@@ -5322,17 +5437,6 @@ static int relfile_line(char *line, void *param)
   return 0;
 }
 
-static int vpas_line(char *line, void *param)
-{
-  long lo;
-  if(line[0] == '\0' || line[0] == '#')
-    return 0;
-  if(string_tolong(line, &lo) != 0 || lo < 1 ||
-     uint32_add(&vpas, &vpasc, lo) != 0)
-    return -1;
-  return 0;
-}
-
 static int do_targetips(void)
 {
   splaytree_t *astraces = NULL;
@@ -5393,74 +5497,9 @@ static int do_targetips(void)
 
 static int do_targetases(void)
 {
-  long lo;
-  int i;
 
-  for(i=0; i<opt_argc; i++)
-    {
-      if(string_tolong(opt_args[i], &lo) != 0 || lo < 1)
-	{
-	  fprintf(stderr, "%s is not a valid ASN\n", opt_args[i]);
-	  return -1;
-	}
-      if(uint32_find(vpas, vpasc, lo) >= 0)
-	{
-	  fprintf(stderr, "%ld is also a VP ASN\n", lo);
-	  return -1;
-	}
-      if(uint32_add(&targetas, &targetasc, lo) != 0)
-	{
-	  fprintf(stderr, "could not add %ld to targetas set\n", lo);
-	  return -1;
-	}
-    }
-  qsort(targetas, targetasc, sizeof(uint32_t), uint32_cmp);
 
   return 0;
-}
-
-static int do_vpas(void)
-{
-  struct stat sb;
-  char *vp = NULL, *cur, *next;
-  long lo;
-
-  if(stat(vpas_str, &sb) == 0)
-    {
-      if(file_lines(vpas_str, vpas_line, NULL) != 0)
-	{
-	  fprintf(stderr, "could not read file %s\n", vpas_str);
-	  goto err;
-	}
-    }
-  else
-    {
-      if((vp = strdup(vpas_str)) == NULL)
-	{
-	  fprintf(stderr, "could not dup vpas_str: %s\n", strerror(errno));
-	  goto err;
-	}
-      cur = vp;
-      while(cur != NULL)
-	{
-	  string_nullterm_char(cur, ',', &next);
-	  if(string_tolong(cur, &lo) != 0 || lo < 1 ||
-	     uint32_add(&vpas, &vpasc, lo) != 0)
-	    {
-	      fprintf(stderr, "malformed -v %s: not a file or set of ASes\n",
-		      vpas_str);
-	      goto err;
-	    }
-	  cur = next;
-	}
-      free(vp); vp = NULL;
-    }
-
-  return 0;
-
- err:
-  if(vp != NULL) free(vp);
-  return -1;
 }
 
 static int rec_target_4(sc_prefix_nest_t *nest, struct in_addr *in)
@@ -8053,6 +8092,29 @@ static void finish_1(void)
 
 static int process_2_trace(scamper_trace_t *trace)
 {
+  sc_prefix_t *pfx;
+  int i, j;
+
+  /*
+   * if ASes are specified on the command line, filter the traceroutes
+   * so that only traceroutes towards a specific AS are dumped
+   */
+  if(targetasc > 0)
+    {
+      if((pfx = sc_prefix_find(trace->dst)) == NULL)
+	return 0;
+      for(i=0; i<pfx->asmap->asc; i++)
+	{
+	  for(j=0; j<targetasc; j++)
+	    if(pfx->asmap->ases[i] == targetas[j])
+	      break;
+	  if(j != targetasc)
+	    break;
+	}
+      if(i == pfx->asmap->asc)
+	return 0;
+    }
+
   trace_dump(trace, NULL);
   printf("\n");
   scamper_trace_free(trace);
@@ -8167,9 +8229,6 @@ static int bdrmap_init(void)
       fprintf(stderr, "could not alloc file filter\n");
       return -1;
     }
-
-  if(vpas_str != NULL && do_vpas() != 0)
-    return -1;
 
   if(ip2as_fn != NULL && do_ip2as() != 0)
     return -1;

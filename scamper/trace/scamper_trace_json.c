@@ -10,7 +10,7 @@
  *
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_trace_json.c,v 1.14 2017/07/12 07:34:02 mjl Exp $
+ * $Id: scamper_trace_json.c,v 1.16.2.1 2018/05/03 20:47:28 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_json.c,v 1.14 2017/07/12 07:34:02 mjl Exp $";
+  "$Id: scamper_trace_json.c,v 1.16.2.1 2018/05/03 20:47:28 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -48,7 +48,7 @@ static const char rcsid[] =
 
 static char *hop_tostr(scamper_trace_hop_t *hop)
 {
-  char buf[512], tmp[128];
+  char buf[1024], tmp[128];
   scamper_icmpext_t *ie;
   size_t off = 0;
   uint32_t u32;
@@ -166,8 +166,9 @@ static char *header_tostr(const scamper_trace_t *trace)
   string_concat(buf, sizeof(buf), &off,
 		", \"firsthop\":%u, \"wait\":%u, \"wait_probe\":%u",
 		trace->firsthop, trace->wait, trace->wait_probe);
-  string_concat(buf, sizeof(buf), &off,	", \"tos\":%u, \"probe_size\":%u",
-		trace->tos, trace->probe_size);
+  string_concat(buf, sizeof(buf), &off,
+		", \"tos\":%u, \"probe_size\":%u, \"probe_count\":%u",
+		trace->tos, trace->probe_size, trace->probec);
 
   return strdup(buf);
 }
