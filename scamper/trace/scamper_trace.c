@@ -1,15 +1,17 @@
 /*
  * scamper_trace.c
  *
- * $Id: scamper_trace.c,v 1.95 2015/07/23 03:53:20 mjl Exp $
+ * $Id: scamper_trace.c,v 1.98 2018/05/23 13:41:25 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2003-2011 The University of Waikato
  * Copyright (C) 2008      Alistair King
  * Copyright (C) 2012-2015 The Regents of the University of California
+ * Copyright (C) 2017-2018 Yves Vanaubel
  *
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
+ *          TNT implementation by Yves Vanaubel
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +30,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace.c,v 1.95 2015/07/23 03:53:20 mjl Exp $";
+  "$Id: scamper_trace.c,v 1.98 2018/05/23 13:41:25 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -217,7 +219,7 @@ void scamper_trace_hop_free(scamper_trace_hop_t *hop)
 {
   if(hop == NULL)
     return;
-
+  
   scamper_icmpext_free(hop->hop_icmpext);
   scamper_addr_free(hop->hop_addr);
   free(hop);
@@ -240,6 +242,49 @@ int scamper_trace_hop_count(const scamper_trace_t *trace)
       hops++;
 
   return hops;
+}
+
+scamper_trace_hop_t *scamper_trace_hop_copy(const scamper_trace_hop_t *hop)
+{
+  scamper_trace_hop_t *hop_copy;
+  if (hop == NULL || (hop_copy = scamper_trace_hop_alloc()) == NULL)
+    return NULL;
+  
+  hop_copy->hop_addr = scamper_addr_use(hop->hop_addr);
+  hop_copy->hop_flags = hop->hop_flags;
+  hop_copy->hop_probe_id = hop->hop_probe_id;
+  hop_copy->hop_probe_ttl = hop->hop_probe_ttl;
+  hop_copy->hop_probe_size = hop->hop_probe_size;
+  hop_copy->hop_reply_ttl = hop->hop_reply_ttl;
+  hop_copy->hop_reply_tos = hop->hop_reply_tos;
+  hop_copy->hop_reply_size = hop->hop_reply_size;
+  hop_copy->hop_reply_ipid = hop->hop_reply_ipid;
+  hop_copy->hop_ping_rttl = hop->hop_ping_rttl;
+  
+  hop_copy->hop_icmp_type = hop->hop_icmp_type;
+  hop_copy->hop_icmp_code = hop->hop_icmp_code;
+  hop_copy->hop_icmp_q_ttl = hop->hop_icmp_q_ttl;
+  hop_copy->hop_icmp_q_tos = hop->hop_icmp_q_tos;
+  hop_copy->hop_icmp_q_ipl = hop->hop_icmp_q_ipl;
+  hop_copy->hop_icmp_nhmtu = hop->hop_icmp_nhmtu;
+  
+  hop_copy->hop_tcp_flags = hop->hop_tcp_flags;
+  
+  timeval_cpy(&hop_copy->hop_tx, &hop->hop_tx);
+  timeval_cpy(&hop_copy->hop_rtt, &hop->hop_rtt);
+  
+  hop_copy->hop_icmpext = scamper_icmpext_copy(hop->hop_icmpext);
+  
+  hop_copy->hop_types_mflags = hop->hop_types_mflags;
+  hop_copy->hop_fail_mflags = hop->hop_fail_mflags;
+  hop_copy->hop_disc_mflags = hop->hop_disc_mflags;
+  hop_copy->hop_mpls_iteration = hop->hop_mpls_iteration;
+  
+  hop_copy->hop_tnt_probe_ttl = hop->hop_tnt_probe_ttl;
+  
+  hop_copy->hop_next = scamper_trace_hop_copy(hop->hop_next);
+  
+  return hop_copy;
 }
 
 int scamper_trace_hop_addr_cmp(const scamper_trace_hop_t *a,

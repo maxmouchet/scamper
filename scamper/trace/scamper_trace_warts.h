@@ -1,11 +1,13 @@
 /*
  * scamper_trace_warts.h
  *
- * $Id: scamper_trace_warts.h,v 1.3 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_trace_warts.h,v 1.5 2018/05/23 11:20:31 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
+ * Copyright (C) 2017-2018 Yves Vanaubel
  * Author: Matthew Luckie
+ * TNT implementation by Yves Vanaubel
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

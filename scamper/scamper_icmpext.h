@@ -1,11 +1,13 @@
 /*
  * scamper_icmpext.h
  *
- * $Id: scamper_icmpext.h,v 1.2 2012/11/26 20:54:46 mjl Exp $
+ * $Id: scamper_icmpext.h,v 1.3 2017/08/19 23:11:10 mjl Exp $
  *
  * Copyright (C) 2008 The University of Waikato
  * Copyright (C) 2012 Matthew Luckie
+ * Copyright (C) 2017 The University of Liege
  * Author: Matthew Luckie
+ *         Yves Vanaubel
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -108,5 +110,7 @@ scamper_icmpext_t *scamper_icmpext_alloc(uint8_t cn, uint8_t ct, uint16_t dl,
 					 const void *data);
 int scamper_icmpext_parse(scamper_icmpext_t **ext, void *data, uint16_t len);
 void scamper_icmpext_free(scamper_icmpext_t *exts);
+
+scamper_icmpext_t *scamper_icmpext_copy(const scamper_icmpext_t *ie);
 
 #endif /* __SCAMPER_ICMPEXT_H */

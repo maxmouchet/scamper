@@ -307,6 +307,7 @@ AC_CONFIG_FILES([
 	utils/sc_speedtrap/Makefile
 	utils/sc_tbitblind/Makefile
 	utils/sc_tracediff/Makefile
+	utils/sc_tnt/Makefile
 	utils/sc_warts2csv/Makefile
 	utils/sc_warts2json/Makefile
 	utils/sc_warts2pcap/Makefile

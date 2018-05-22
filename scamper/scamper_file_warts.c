@@ -2081,8 +2081,10 @@ int scamper_file_warts_read(scamper_file_t *sf, scamper_file_filter_t *filter,
 	  if(hdr.type >= sizeof(objread)/sizeof(warts_obj_read_t) ||
 	     objread[hdr.type] == NULL ||
 	     objread[hdr.type](sf, &hdr, data) != 0)
+    {
 	    goto err;
-
+    }
+    
 	  if(*data != NULL)
 	    memset(&state->hdr, 0, sizeof(state->hdr));
 	  else

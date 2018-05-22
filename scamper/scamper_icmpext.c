@@ -1,12 +1,14 @@
 /*
  * scamper_icmpext.c
  *
- * $Id: scamper_icmpext.c,v 1.9 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_icmpext.c,v 1.10 2017/08/19 23:13:40 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2014      The Regents of the University of California
+ * Copyright (C) 2017 The University of Liege
  * Author: Matthew Luckie
+ *         Yves Vanaubel
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_icmpext.c,v 1.9 2014/06/12 19:59:48 mjl Exp $";
+  "$Id: scamper_icmpext.c,v 1.10 2017/08/19 23:13:40 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -71,6 +73,19 @@ void scamper_icmpext_free(scamper_icmpext_t *ie)
     }
 
   return;
+}
+
+scamper_icmpext_t *scamper_icmpext_copy(const scamper_icmpext_t *ie)
+{
+  scamper_icmpext_t *ie_copy;
+  if (ie == NULL ||
+      (ie_copy=scamper_icmpext_alloc(ie->ie_cn, ie->ie_ct,
+                                     ie->ie_dl, ie->ie_data)) == NULL)
+  {
+    return NULL;
+  }
+  ie_copy->ie_next = scamper_icmpext_copy(ie->ie_next);
+  return ie_copy;
 }
 
 int scamper_icmpext_parse(scamper_icmpext_t **exts, void *data, uint16_t len)
