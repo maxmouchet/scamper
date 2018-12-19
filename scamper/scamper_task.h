@@ -1,7 +1,7 @@
 /*
  * scamper_task.h
  *
- * $Id: scamper_task.h,v 1.40 2013/04/01 23:16:38 mjl Exp $
+ * $Id: scamper_task.h,v 1.41 2018/07/01 04:22:15 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -38,6 +38,7 @@ struct scamper_sourcetask;
 #define SCAMPER_TASK_SIG_TYPE_TX_IP 1
 #define SCAMPER_TASK_SIG_TYPE_TX_ND 2
 #define SCAMPER_TASK_SIG_TYPE_SNIFF 3
+#define SCAMPER_TASK_SIG_TYPE_HOST  4
 
 typedef struct scamper_task scamper_task_t;
 typedef struct scamper_task_anc scamper_task_anc_t;

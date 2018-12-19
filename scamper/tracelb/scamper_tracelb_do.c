@@ -1,7 +1,7 @@
 /*
  * scamper_do_tracelb.c
  *
- * $Id: scamper_tracelb_do.c,v 1.275 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_tracelb_do.c,v 1.276 2018/05/26 21:00:30 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012      The Regents of the University of California
@@ -9,7 +9,7 @@
  * Author: Matthew Luckie
  *
  * MDA traceroute technique authored by
- * Ben Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
+ * Brice Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
  *  Paths in the Internet", in Proc. Internet Measurement Conference 2007.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb_do.c,v 1.275 2017/12/03 09:38:27 mjl Exp $";
+  "$Id: scamper_tracelb_do.c,v 1.276 2018/05/26 21:00:30 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

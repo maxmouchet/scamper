@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([scamper], [20180504], [mjl@luckie.org.nz])
+AC_INIT([scamper], [20181219], [mjl@luckie.org.nz])
 
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([scamper/scamper.c])
@@ -283,7 +283,6 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <sys/types.h>]],
                     ],
                     [
                       AC_MSG_RESULT([no])
-                      #AC_DEFINE_UNQUOTED([HAVE_STRUCT_IP6_EXT], 0, [Define to 1 if you have the `ip6_ext' struct.])
                     ]
                  )
 
@@ -296,7 +295,38 @@ AC_SEARCH_LIBS(sqrt, m, [], [], [])
 
 AX_CHECK_OPENSSL(
 	[AC_DEFINE([HAVE_OPENSSL], [1], [Define to 1 if you have OpenSSL])]
-	[CFLAGS="$CFLAGS $OPENSSL_INCLUDES"])
+	[CFLAGS="$CFLAGS $OPENSSL_INCLUDES"]
+	[have_openssl=yes])
+
+if test "x$have_openssl" = xyes; then
+   AC_MSG_CHECKING([for X509_VERIFY_PARAM_set1_host])
+   save_LIBS="$LIBS"
+   save_LDFLAGS="$LDFLAGS"
+   LDFLAGS="$LDFLAGS $OPENSSL_LDFLAGS"
+   LIBS="$LIBS $OPENSSL_LIBS"
+   AC_LINK_IFELSE([
+     AC_LANG_PROGRAM([
+	[#include <openssl/bio.h>]
+	[#include <openssl/ssl.h>]
+	[#include <openssl/err.h>]
+	[#include <openssl/x509v3.h>]],
+        [
+	 [X509_VERIFY_PARAM *p = X509_VERIFY_PARAM_new();]
+	 [X509_VERIFY_PARAM_set_hostflags(p, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);]
+	 [X509_VERIFY_PARAM_set1_host(p, "localhost", 0);]
+        ])
+   ],
+   [
+	AC_MSG_RESULT([yes])
+	AC_DEFINE_UNQUOTED([HAVE_X509_VERIFY_PARAM_SET1_HOST], 1,
+		[Define to 1 if you have the X509_VERIFY_PARAM_set1_host function])
+   ],
+   [
+	AC_MSG_RESULT([no])
+   ])
+   LDFLAGS="$save_LDFLAGS"
+   LIBS="$save_LIBS"
+fi
 
 AX_GCC_BUILTIN(__builtin_clz)
 

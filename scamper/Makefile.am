@@ -1,4 +1,4 @@
-# $Id: Makefile.am,v 1.27 2017/07/09 09:05:14 mjl Exp $
+# $Id: Makefile.am,v 1.31 2018/10/24 00:21:25 mjl Exp $
 
 AUTOMAKE_OPTIONS = subdir-objects
 
@@ -12,7 +12,6 @@ libscamperfile_la_LDFLAGS = -version-info 0:0:0
 
 libscamperfile_la_SOURCES = \
 	../mjl_splaytree.c \
-	../mjl_patricia.c \
 	../utils.c \
 	scamper_file.c \
 	scamper_file_arts.c \
@@ -33,6 +32,7 @@ libscamperfile_la_SOURCES = \
 	tracelb/scamper_tracelb.c \
 	tracelb/scamper_tracelb_warts.c \
 	tracelb/scamper_tracelb_text.c \
+	tracelb/scamper_tracelb_json.c \
 	dealias/scamper_dealias.c \
 	dealias/scamper_dealias_warts.c \
 	dealias/scamper_dealias_text.c \
@@ -53,7 +53,6 @@ scamper_SOURCES = \
 	../mjl_list.c \
 	../mjl_heap.c \
 	../mjl_splaytree.c \
-	../mjl_patricia.c \
 	../utils.c \
 	scamper.c \
 	scamper_osinfo.c \
@@ -111,6 +110,7 @@ scamper_SOURCES = \
 	tracelb/scamper_tracelb.c \
 	tracelb/scamper_tracelb_warts.c \
 	tracelb/scamper_tracelb_text.c \
+	tracelb/scamper_tracelb_json.c \
 	tracelb/scamper_tracelb_do.c \
 	dealias/scamper_dealias.c \
 	dealias/scamper_dealias_warts.c \
@@ -159,4 +159,4 @@ man_MANS = \
 
 CLEANFILES = *~ *.core \
 	trace/*~ ping/*~ tracelb/*~ dealias/*~ sting/*~ \
-	neighbourdisc/*~ tbit/*~ sniff/*~
+	neighbourdisc/*~ tbit/*~ sniff/*~ host/*~

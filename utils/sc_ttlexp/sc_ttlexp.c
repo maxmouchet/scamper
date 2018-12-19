@@ -1,7 +1,7 @@
 /*
  * sc_ttlexp: dump all unique source IP addresses in TTL expired messages
  *
- * $Id: sc_ttlexp.c,v 1.5 2018/03/08 08:02:10 mjl Exp $
+ * $Id: sc_ttlexp.c,v 1.8 2018/10/29 07:41:39 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@luckie.org.nz
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_ttlexp.c,v 1.5 2018/03/08 08:02:10 mjl Exp $";
+  "$Id: sc_ttlexp.c,v 1.8 2018/10/29 07:41:39 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -37,15 +37,23 @@ static const char rcsid[] =
 #include "trace/scamper_trace.h"
 #include "tracelb/scamper_tracelb.h"
 #include "scamper_file.h"
-#include "mjl_patricia.h"
+#include "mjl_splaytree.h"
 
-static patricia_t *pt_ip4 = NULL;
-static patricia_t *pt_ip6 = NULL;
+static splaytree_t *st_ip4 = NULL;
+static splaytree_t *st_ip6 = NULL;
 static int         no_dst = 0;
+static int         no_reserved = 0;
+static char      **files  = NULL;
+static int         filec  = 0;
 
 static void usage(void)
 {
-  fprintf(stderr, "usage: sc_ttlexp [-O options] file1 .. fileN\n");
+  fprintf(stderr,
+	  "usage: sc_ttlexp [-O options] file1 .. fileN\n");
+
+  fprintf(stderr, "   -O options\n");
+  fprintf(stderr, "      nodst: do not include IP if same as dst probed\n");
+  fprintf(stderr, "      noreserved: do not include reserved IP addresses\n");
   return;
 }
 
@@ -61,6 +69,8 @@ static int check_options(int argc, char *argv[])
 	case 'O':
 	  if(strcasecmp(optarg, "nodst") == 0)
 	    no_dst = 1;
+	  else if(strcasecmp(optarg, "noreserved") == 0)
+	    no_reserved = 1;
 	  else
 	    return -1;
 	  break;
@@ -74,6 +84,9 @@ static int check_options(int argc, char *argv[])
 	}
     }
 
+  files = argv + optind;
+  filec = argc - optind;
+
   return 0;
 }
 
@@ -83,22 +96,25 @@ static int dump_addr(scamper_addr_t *addr)
   char b[128];
   int rc = -1;
 
+  if(no_reserved != 0 && scamper_addr_isreserved(addr) == 1)
+    return 0;
+
   if(SCAMPER_ADDR_TYPE_IS_IPV4(addr))
     {
-      if(patricia_find(pt_ip4, addr) != NULL)
+      if(splaytree_find(st_ip4, addr) != NULL)
 	return 0;
       printf("%s\n", scamper_addr_tostr(addr, b, sizeof(b)));
       a = scamper_addr_use(addr);
-      if(patricia_insert(pt_ip4, a) == NULL)
+      if(splaytree_insert(st_ip4, a) == NULL)
 	goto done;
     }
   else if(SCAMPER_ADDR_TYPE_IS_IPV6(addr))
     {
-      if(patricia_find(pt_ip6, addr) != NULL)
+      if(splaytree_find(st_ip6, addr) != NULL)
 	return 0;
       printf("%s\n", scamper_addr_tostr(addr, b, sizeof(b)));
       a = scamper_addr_use(addr);
-      if(patricia_insert(pt_ip6, a) == NULL)
+      if(splaytree_insert(st_ip6, a) == NULL)
 	goto done;
     }
   rc = 0;
@@ -178,16 +194,16 @@ static int dump_trace(scamper_trace_t *trace)
 
 static void cleanup(void)
 {
-  if(pt_ip4 != NULL)
+  if(st_ip4 != NULL)
     {
-      patricia_free_cb(pt_ip4, (patricia_free_t)scamper_addr_free);
-      pt_ip4 = NULL;
+      splaytree_free(st_ip4, (splaytree_free_t)scamper_addr_free);
+      st_ip4 = NULL;
     }
 
-  if(pt_ip6 != NULL)
+  if(st_ip6 != NULL)
     {
-      patricia_free_cb(pt_ip6, (patricia_free_t)scamper_addr_free);
-      pt_ip6 = NULL;
+      splaytree_free(st_ip6, (splaytree_free_t)scamper_addr_free);
+      st_ip6 = NULL;
     }
 
   return;
@@ -221,12 +237,8 @@ int main(int argc, char *argv[])
   if(check_options(argc, argv) != 0)
     return -1;
 
-  if((pt_ip4 = patricia_alloc((patricia_bit_t)scamper_addr_bit,
-			      (patricia_cmp_t)scamper_addr_cmp,
-			      (patricia_fbd_t)scamper_addr_fbd)) == NULL ||
-     (pt_ip6 = patricia_alloc((patricia_bit_t)scamper_addr_bit,
-			      (patricia_cmp_t)scamper_addr_cmp,
-			      (patricia_fbd_t)scamper_addr_fbd)) == NULL)
+  if((st_ip4 = splaytree_alloc((splaytree_cmp_t)scamper_addr_cmp)) == NULL ||
+     (st_ip6 = splaytree_alloc((splaytree_cmp_t)scamper_addr_cmp)) == NULL)
     return -1;
 
   if((filter = scamper_file_filter_alloc(filter_types, filter_cnt)) == NULL)
@@ -235,13 +247,10 @@ int main(int argc, char *argv[])
       return -1;
     }
 
-  for(f=0; f<argc; f++)
+  for(f=0; f<=filec; f++)
     {
-      if(f == 0)
+      if(filec == 0)
 	{
-	  if(argc > 1)
-	    continue;
-
 	  if((file=scamper_file_openfd(STDIN_FILENO,"-",'r',"warts")) == NULL)
 	    {
 	      usage();
@@ -249,21 +258,22 @@ int main(int argc, char *argv[])
 	      return -1;
 	    }
 	}
-      else
+      else if(f < filec)
 	{
-	  if((file = scamper_file_open(argv[f], 'r', NULL)) == NULL)
+	  if((file = scamper_file_open(files[f], 'r', NULL)) == NULL)
 	    {
 	      usage();
-	      fprintf(stderr, "could not open %s\n", argv[f]);
+	      fprintf(stderr, "could not open %s\n", files[f]);
 	      return -1;
 	    }
 	}
+      else break;
 
       while(scamper_file_read(file, filter, &type, &data) == 0)
 	{
 	  /* hit eof */
 	  if(data == NULL)
-	    goto done;
+	    break;
 
 	  switch(type)
 	    {
@@ -277,11 +287,7 @@ int main(int argc, char *argv[])
 	    }
 	}
 
-    done:
       scamper_file_close(file);
-
-      if(argc == 1)
-	break;
     }
 
   scamper_file_filter_free(filter);

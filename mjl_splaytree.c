@@ -3,7 +3,7 @@
  * By Matthew Luckie
  * U of Waikato 0657.317b 1999
  *
- * Copyright (C) 1999-2017 Matthew Luckie. All rights reserved.
+ * Copyright (C) 1999-2018 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,7 +30,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_splaytree.c,v 1.29 2017/04/29 09:45:30 mjl Exp $";
+  "$Id: mjl_splaytree.c,v 1.31 2018/12/04 08:57:38 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -81,7 +81,8 @@ static int   stack_push(splaytree_stack_t *stack, splaytree_node_t *node);
 static void  stack_clean(splaytree_stack_t *stack);
 
 #if !defined(NDEBUG) && defined(MJLSPLAYTREE_DEBUG)
-static void splaytree_assert2(splaytree_t *tree, splaytree_node_t *node)
+static void splaytree_assert2(const splaytree_t *tree,
+			      const splaytree_node_t *node)
 {
   int i;
 
@@ -104,7 +105,7 @@ static void splaytree_assert2(splaytree_t *tree, splaytree_node_t *node)
   return;
 }
 
-static void splaytree_assert(splaytree_t *tree)
+static void splaytree_assert(const splaytree_t *tree)
 {
   splaytree_assert2(tree, tree->head);
   return;
@@ -537,6 +538,36 @@ void *splaytree_find(splaytree_t *tree, const void *item)
   splaytree_splay(tree);
   splaytree_assert(tree);
   return tree->head->item;
+}
+
+/*
+ * splaytree_find_ro
+ *
+ * a read-only version of splaytree_find, which finds an item in the
+ * tree, and returns it without splaying the tree.
+ */
+void *splaytree_find_ro(const splaytree_t *tree, const void *item)
+{
+  splaytree_node_t *tn;
+  int i;
+
+  if(tree == NULL)
+    return NULL;
+  splaytree_assert(tree);
+
+  tn = tree->head;
+  while(tn != NULL)
+    {
+      i = tree->cmp(item, tn->item);
+      if(i < 0)
+	tn = tn->left;
+      else if(i > 0)
+	tn = tn->right;
+      else
+	return tn->item;
+    }
+
+  return NULL;
 }
 
 /*

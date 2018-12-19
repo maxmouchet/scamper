@@ -19,12 +19,12 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: sc_tbitpmtud.c,v 1.16 2018/03/08 00:32:10 mjl Exp $
+ * $Id: sc_tbitpmtud.c,v 1.17 2018/10/24 19:40:25 mjl Exp $
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_tbitpmtud.c,v 1.16 2018/03/08 00:32:10 mjl Exp $";
+  "$Id: sc_tbitpmtud.c,v 1.17 2018/10/24 19:40:25 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1345,7 +1345,6 @@ static int ip2as_line(char *line, void *param)
   struct in6_addr in6;
   uint32_t u32, *ases = NULL;
   int asc = 0, last = 0;
-  int af;
   long lo;
 
   if(line[0] == '\0' || line[0] == '#')
@@ -1386,7 +1385,6 @@ static int ip2as_line(char *line, void *param)
     }
   else if(inet_pton(AF_INET6, n, &in6) == 1)
     {
-      af = AF_INET6;
       if(lo < IPV6_PREFIX_MIN || lo > IPV6_PREFIX_MAX)
 	return 0;
       sa.type = SCAMPER_ADDR_TYPE_IPV6;

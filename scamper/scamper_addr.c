@@ -1,7 +1,7 @@
 /*
  * scamper_addr.c
  *
- * $Id: scamper_addr.c,v 1.68 2017/12/03 09:55:14 mjl Exp $
+ * $Id: scamper_addr.c,v 1.69 2018/10/24 00:21:25 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_addr.c,v 1.68 2017/12/03 09:55:14 mjl Exp $";
+  "$Id: scamper_addr.c,v 1.69 2018/10/24 00:21:25 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -34,7 +34,7 @@ static const char rcsid[] =
 #endif
 #include "internal.h"
 
-#include "mjl_patricia.h"
+#include "mjl_splaytree.h"
 #include "scamper_addr.h"
 #include "utils.h"
 
@@ -200,7 +200,7 @@ static const struct handler handlers[] = {
 
 struct scamper_addrcache
 {
-  patricia_t *trie[sizeof(handlers)/sizeof(struct handler)];
+  splaytree_t *tree[sizeof(handlers)/sizeof(struct handler)];
 };
 
 static int ipv4_cmp(const scamper_addr_t *sa, const scamper_addr_t *sb)
@@ -1048,7 +1048,7 @@ scamper_addr_t *scamper_addrcache_get(scamper_addrcache_t *ac,
   findme.type = type;
   findme.addr = (void *)addr;
 
-  if((sa = patricia_find(ac->trie[type-1], &findme)) != NULL)
+  if((sa = splaytree_find(ac->tree[type-1], &findme)) != NULL)
     {
       assert(sa->internal == ac);
       sa->refcnt++;
@@ -1057,7 +1057,7 @@ scamper_addr_t *scamper_addrcache_get(scamper_addrcache_t *ac,
 
   if((sa = scamper_addr_alloc(type, addr)) != NULL)
     {
-      if(patricia_insert(ac->trie[type-1], sa) == NULL)
+      if(splaytree_insert(ac->tree[type-1], sa) == NULL)
 	goto err;
       sa->internal = ac;
     }
@@ -1136,7 +1136,7 @@ void scamper_addr_free(scamper_addr_t *sa)
     return;
 
   if((ac = sa->internal) != NULL)
-    patricia_remove_item(ac->trie[sa->type-1], sa);
+    splaytree_remove_item(ac->tree[sa->type-1], sa);
 
   free(sa->addr);
   free(sa);
@@ -1227,8 +1227,8 @@ void scamper_addrcache_free(scamper_addrcache_t *ac)
   int i;
 
   for(i=(sizeof(handlers)/sizeof(struct handler))-1; i>=0; i--)
-    if(ac->trie[i] != NULL)
-      patricia_free_cb(ac->trie[i], free_cb);
+    if(ac->tree[i] != NULL)
+      splaytree_free(ac->tree[i], free_cb);
   free(ac);
 
   return;
@@ -1244,10 +1244,8 @@ scamper_addrcache_t *scamper_addrcache_alloc()
 
   for(i=(sizeof(handlers)/sizeof(struct handler))-1; i>=0; i--)
     {
-      ac->trie[i] = patricia_alloc((patricia_bit_t)handlers[i].bit,
-				   (patricia_cmp_t)handlers[i].cmp,
-				   (patricia_fbd_t)handlers[i].fbd);
-      if(ac->trie[i] == NULL)
+      ac->tree[i] = splaytree_alloc((splaytree_cmp_t)handlers[i].cmp);
+      if(ac->tree[i] == NULL)
 	goto err;
     }
 

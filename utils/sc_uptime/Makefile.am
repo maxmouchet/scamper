@@ -9,7 +9,8 @@ sc_uptime_SOURCES = \
 	../../utils.c \
 	../../mjl_heap.c \
 	../../mjl_list.c \
-	../../mjl_patricia.c \
+	../../mjl_splaytree.c \
+	../../mjl_prefixtree.c \
 	../../scamper/scamper_linepoll.c \
 	../../scamper/scamper_writebuf.c
 

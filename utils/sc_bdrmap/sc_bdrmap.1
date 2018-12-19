@@ -6,7 +6,7 @@
 .\" Copyright (c) 2016 The University of Waikato
 .\"                    All rights reserved
 .\"
-.\" $Id: sc_bdrmap.1,v 1.4 2016/12/22 09:16:21 mjl Exp $
+.\" $Id: sc_bdrmap.1,v 1.5 2018/08/30 00:23:16 mjl Exp $
 .\"
 .Dd December 22, 2016
 .Dt SC_BDRMAP 1
@@ -20,6 +20,7 @@
 .Op Fl 6ADi
 .Op Fl a Ar ip2as-file
 .Op Fl c Ar allyconf
+.Op Fl C Ar csum
 .Op Fl f Ar firsthop
 .Op Fl l Ar log-file
 .Op Fl o Ar output-file
@@ -105,6 +106,10 @@ central shared IP-ID counter.  By default, each pair of aliases is tested
 five additional times at 5 minute intervals because two IP addresses
 belonging to two different routers could happen to return IP-ID values
 that imply a central shared IP-ID counter.
+.It Fl C Ar csum
+specifies the checksum that scamper should use in ICMP probes so that
+traceroutes to the same destination will also use the same flowid.  By
+default, the checksum is 0x420.
 .It Fl d Ar dump
 specifies the dump ID to use to analyze the collected data.
 Currently, ID values 1 (routers) and 2 (traces) are valid, which dumps
@@ -178,6 +183,9 @@ vantage point.
 .It
 .Sy randomdst:
 probe a random address in each address block, rather than the first.
+.It
+.Sy udp:
+probe using UDP traceroute probes.
 .El
 .It Fl p Ar port
 specifies the port on the local host where

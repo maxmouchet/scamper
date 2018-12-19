@@ -10,7 +10,7 @@
  *
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_trace_json.c,v 1.16.2.1 2018/05/03 20:47:28 mjl Exp $
+ * $Id: scamper_trace_json.c,v 1.17 2018/05/03 20:44:52 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_json.c,v 1.16.2.1 2018/05/03 20:47:28 mjl Exp $";
+  "$Id: scamper_trace_json.c,v 1.17 2018/05/03 20:44:52 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H

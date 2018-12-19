@@ -2,7 +2,7 @@
  * sc_ally : scamper driver to collect data on candidate aliases using the
  *           Ally method.
  *
- * $Id: sc_ally.c,v 1.35 2018/01/26 07:11:48 mjl Exp $
+ * $Id: sc_ally.c,v 1.37 2018/05/10 10:18:14 mjl Exp $
  *
  * Copyright (C) 2009-2011 The University of Waikato
  * Copyright (C) 2013-2015 The Regents of the University of California
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_ally.c,v 1.35 2018/01/26 07:11:48 mjl Exp $";
+  "$Id: sc_ally.c,v 1.37 2018/05/10 10:18:14 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1036,16 +1036,21 @@ static int sc_allytest_new(slist_t *list)
 
 static int addressfile_line(char *buf, void *param)
 {
+  static int line = 0;
+  splaytree_t *tree = NULL;
   slist_t *list = NULL;
   scamper_addr_t *sa;
   char *a, *b;
-  int last = 0, rc;
+  int last = 0;
+
+  line++;
 
   if(buf[0] == '\0' || buf[0] == '#')
     return 0;
 
-  if((list = slist_alloc()) == NULL)
-    return -1;
+  if((list = slist_alloc()) == NULL ||
+     (tree = splaytree_alloc((splaytree_cmp_t)scamper_addr_cmp)) == NULL)
+    goto err;
 
   a = b = buf;
   for(;;)
@@ -1067,10 +1072,16 @@ static int addressfile_line(char *buf, void *param)
 
       if((sa = scamper_addr_resolve(AF_INET, a)) == NULL)
 	{
-	  fprintf(stderr, "could not resolve '%s'\n", a);
+	  fprintf(stderr, "could not resolve %s on line %d\n", a, line);
 	  goto err;
 	}
-      if(slist_tail_push(list, sa) == NULL)
+      if(splaytree_find(tree, sa) != NULL)
+	{
+	  fprintf(stderr, "%s occurs twice on line %d\n", a, line);
+	  goto err;
+	}
+      if(splaytree_insert(tree, sa) == NULL ||
+	 slist_tail_push(list, sa) == NULL)
 	{
 	  scamper_addr_free(sa);
 	  goto err;
@@ -1081,14 +1092,17 @@ static int addressfile_line(char *buf, void *param)
       b++; a = b;
     }
 
-  if((rc = slist_count(list)) < 2)
+  if(slist_count(list) < 2)
     goto err;
 
-  return sc_allytest_new(list);
+  splaytree_free(tree, NULL); tree = NULL;
+  if(sc_allytest_new(list) != 0)
+    goto err;
+  return 0;
 
  err:
-  if(list != NULL)
-    slist_free_cb(list, (slist_free_t)scamper_addr_free);
+  if(tree != NULL) splaytree_free(tree, NULL);
+  if(list != NULL) slist_free_cb(list, (slist_free_t)scamper_addr_free);
   return -1;
 }
 
@@ -1818,6 +1832,7 @@ static int tc_add(scamper_addr_t *a, scamper_addr_t *b)
 	    goto err;
 	  a2r_x->router = r_a;
 	}
+      dlist_node_pop(dump_l, r_b->node);
       sc_router_free(r_b);
     }
   else if(a2r_a != NULL)

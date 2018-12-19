@@ -1,7 +1,7 @@
 /*
  * scamper_source_file.c
  *
- * $Id: scamper_source_file.c,v 1.23 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_source_file.c,v 1.24 2018/06/06 06:41:57 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_source_file.c,v 1.23 2017/12/03 09:38:27 mjl Exp $";
+  "$Id: scamper_source_file.c,v 1.24 2018/06/06 06:41:57 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -123,21 +123,32 @@ static int ssf_open(const char *filename)
 #else
       fd = scamper_privsep_open_file(filename, O_RDONLY, 0);
 #endif
+
+      if(fd == -1)
+	{
+	  printerror(__func__, "could not open %s", filename);
+	  goto err;
+	}
     }
-  else if(stdin_used == 0)
+  else
     {
-      fd = STDIN_FILENO;
-      stdin_used = 1;
+      if(stdin_used == 0)
+	{
+	  fd = STDIN_FILENO;
+	  stdin_used = 1;
+	}
+      else
+	{
+	  printerror_msg(__func__, "stdin already used");
+	  goto err;
+	}
     }
 
-  if(fd == -1)
-    {
-      goto err;
-    }
 
 #ifdef O_NONBLOCK
   if(fcntl_set(fd, O_NONBLOCK) == -1)
     {
+      printerror(__func__, "could not set O_NONBLOCK on %s", filename);
       goto err;
     }
 #endif
@@ -168,6 +179,7 @@ static int ssf_read_line(void *param, uint8_t *buf, size_t len)
   /* make sure the string contains only printable characters */
   if(string_isprint(str, len) == 0)
     {
+      printerror(__func__, "%s contains unprintable characters", ssf->filename);
       goto err;
     }
 
@@ -188,6 +200,7 @@ static int ssf_read_line(void *param, uint8_t *buf, size_t len)
 	{
 	  if((cmd = malloc_zero(reqd_len)) == NULL)
 	    {
+	      printerror(__func__, "could not malloc %u bytes", reqd_len);
 	      goto err;
 	    }
 	}

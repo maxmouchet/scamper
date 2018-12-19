@@ -1,7 +1,7 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.186 2018/01/26 07:12:52 mjl Exp $
+ * $Id: utils.c,v 1.187 2018/12/04 08:58:36 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.186 2018/01/26 07:12:52 mjl Exp $";
+  "$Id: utils.c,v 1.187 2018/12/04 08:58:36 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -2125,17 +2125,13 @@ uint32_t byteswap32(const uint32_t word)
 	  ((word & 0xff00) << 8) | ((word >> 8) & 0xff00));
 }
 
-/* process a text file, line by line */
-int file_lines(const char *filename, int (*func)(char *, void *), void *param)
+int fd_lines(int fd, int (*func)(char *, void *), void *param)
 {
   char *readbuf = NULL;
   size_t readbuf_len, readbuf_off;
   size_t start, end, off;
-  int rc = -1, fd = -1;
+  int rc = -1;
   ssize_t ss;
-
-  if((fd = open(filename, O_RDONLY)) < 0)
-    goto done;
 
   readbuf_len = 8192; readbuf_off = 0;
   if((readbuf = malloc(readbuf_len)) == NULL)
@@ -2183,8 +2179,18 @@ int file_lines(const char *filename, int (*func)(char *, void *), void *param)
     }
 
  done:
-  if(fd != -1) close(fd);
   if(readbuf != NULL) free(readbuf);
+  return rc;
+}
+
+/* process a text file, line by line */
+int file_lines(const char *filename, int (*func)(char *, void *), void *param)
+{
+  int rc, fd = -1;
+  if((fd = open(filename, O_RDONLY)) < 0)
+    return -1;
+  rc = fd_lines(fd, func, param);
+  close(fd);
   return rc;
 }
 

@@ -1,7 +1,7 @@
 /*
  * scamper_file_json.c
  *
- * $Id: scamper_file_json.c,v 1.1 2017/07/09 09:05:14 mjl Exp $
+ * $Id: scamper_file_json.c,v 1.2 2018/05/08 06:47:19 mjl Exp $
  *
  * Copyright (C) 2017 Matthew Luckie
  * Author: Matthew Luckie
@@ -23,7 +23,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_json.c,v 1.1 2017/07/09 09:05:14 mjl Exp $";
+  "$Id: scamper_file_json.c,v 1.2 2018/05/08 06:47:19 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -93,7 +93,10 @@ int json_write(const scamper_file_t *sf, const void *buf, size_t len)
        * the hdr we just wrote out above.
        */
       if(state->isreg != 0)
-	ftruncate(fd, off);
+	{
+	  if(ftruncate(fd, off) != 0)
+	    return -1;
+	}
 
       return -1;
     }

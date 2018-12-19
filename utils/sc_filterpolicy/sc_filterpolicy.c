@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_filterpolicy.c,v 1.9 2015/12/07 07:06:28 mjl Exp $";
+  "$Id: sc_filterpolicy.c,v 1.10 2018/12/10 06:13:55 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1442,22 +1442,20 @@ static int do_scamperread(void)
  */
 static int do_scamperconnect(void)
 {
+  struct sockaddr *sa;
   struct sockaddr_un sun;
   struct sockaddr_in sin;
   struct in_addr in;
+  socklen_t sl;
 
   if(options & OPT_PORT)
     {
       inet_aton("127.0.0.1", &in);
       sockaddr_compose((struct sockaddr *)&sin, AF_INET, &in, port);
+      sa = (struct sockaddr *)&sin; sl = sizeof(sin);
       if((scamper_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
 	{
 	  fprintf(stderr, "could not allocate new socket\n");
-	  return -1;
-	}
-      if(connect(scamper_fd, (const struct sockaddr *)&sin, sizeof(sin)) != 0)
-	{
-	  fprintf(stderr, "could not connect to scamper process\n");
 	  return -1;
 	}
     }
@@ -1468,18 +1466,20 @@ static int do_scamperconnect(void)
 	  fprintf(stderr, "could not build sockaddr_un\n");
 	  return -1;
 	}
+      sa = (struct sockaddr *)&sun; sl = sizeof(sun);
       if((scamper_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
 	{
 	  fprintf(stderr, "could not allocate unix domain socket\n");
 	  return -1;
 	}
-      if(connect(scamper_fd, (const struct sockaddr *)&sun, sizeof(sun)) != 0)
-	{
-	  fprintf(stderr, "could not connect to scamper process\n");
-	  return -1;
-	}
     }
   else return -1;
+
+  if(connect(scamper_fd, sa, sl) != 0)
+    {
+      fprintf(stderr, "could not connect to scamper process\n");
+      return -1;
+    }
 
   if(fcntl_set(scamper_fd, O_NONBLOCK) == -1)
     {

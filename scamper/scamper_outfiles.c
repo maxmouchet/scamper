@@ -1,7 +1,7 @@
 /*
  * scamper_outfiles: hold a collection of output targets together
  *
- * $Id: scamper_outfiles.c,v 1.47 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_outfiles.c,v 1.48 2018/06/06 19:58:36 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_outfiles.c,v 1.47 2017/12/03 09:38:27 mjl Exp $";
+  "$Id: scamper_outfiles.c,v 1.48 2018/06/06 19:58:36 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -238,7 +238,10 @@ scamper_outfile_t *scamper_outfile_open(char *name, char *file, char *mo)
 
   /* make sure the fd is valid, otherwise bail */
   if(fd == -1)
-    return NULL;
+    {
+      printerror(__func__, "could not open %s", file);
+      return NULL;
+    }
 
 #if defined(WITHOUT_PRIVSEP) && !defined(_WIN32)
   if((uid = getuid()) != geteuid() && fchown(fd, uid, -1) != 0)
@@ -289,6 +292,12 @@ static int outfile_opendef(char *filename, char *type)
 #else
       fd = scamper_privsep_open_file(filename, flags, mode);
 #endif
+
+      if(fd == -1)
+	{
+	  printerror(__func__, "could not open %s", filename);
+	  return -1;
+	}
     }
 
   if(fd == -1)

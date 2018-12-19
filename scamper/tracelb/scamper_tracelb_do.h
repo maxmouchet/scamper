@@ -1,13 +1,13 @@
 /*
  * scamper_do_tracelb.h
  *
- * $Id: scamper_tracelb_do.h,v 1.9 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_tracelb_do.h,v 1.10 2018/05/26 21:00:30 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Author: Matthew Luckie
  *
  * Load-balancer traceroute technique authored by
- * Ben Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
+ * Brice Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
  *  Paths in the Internet", in Proc. Internet Measurement Conference 2007.
  *
  * This program is free software; you can redistribute it and/or modify

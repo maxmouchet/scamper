@@ -1,13 +1,13 @@
 /*
  * scamper_tracelb.h
  *
- * $Id: scamper_tracelb.h,v 1.57 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_tracelb.h,v 1.59 2018/05/26 21:00:30 mjl Exp $
  *
  * Copyright (C) 2008-2009 The University of Waikato
  * Author: Matthew Luckie
  *
  * Load-balancer traceroute technique authored by
- * Ben Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
+ * Brice Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
  *  Paths in the Internet", in Proc. Internet Measurement Conference 2007.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -38,6 +38,7 @@ typedef struct scamper_tracelb_link scamper_tracelb_link_t;
 typedef struct scamper_tracelb_probe scamper_tracelb_probe_t;
 typedef struct scamper_tracelb_reply scamper_tracelb_reply_t;
 typedef struct scamper_tracelb_probeset scamper_tracelb_probeset_t;
+typedef struct scamper_tracelb_probeset_summary scamper_tracelb_probeset_summary_t;
 
 /*
  * these values give the 'type' member of a scamper_tracelb_t structure
@@ -162,6 +163,13 @@ struct scamper_tracelb_probeset
 {
   scamper_tracelb_probe_t     **probes; /* array of probes sent */
   uint16_t                      probec; /* number of probes sent */
+};
+
+struct scamper_tracelb_probeset_summary
+{
+  scamper_addr_t              **addrs;
+  int                           addrc;
+  int                           nullc;
 };
 
 /*
@@ -336,6 +344,15 @@ int scamper_tracelb_probeset_add(scamper_tracelb_probeset_t *,
 				 scamper_tracelb_probe_t *);
 int scamper_tracelb_probeset_probes_alloc(scamper_tracelb_probeset_t *,
 					  uint16_t);
+
+/*
+ * routines to summarise a set of probes beyond a specific node
+ *
+ */
+scamper_tracelb_probeset_summary_t *
+  scamper_tracelb_probeset_summary_alloc(scamper_tracelb_probeset_t *);
+void
+  scamper_tracelb_probeset_summary_free(scamper_tracelb_probeset_summary_t *);
 
 /*
  * these functions allocate arrays of appropriate size, all elements

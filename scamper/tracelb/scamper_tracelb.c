@@ -1,14 +1,14 @@
 /*
  * scamper_tracelb.c
  *
- * $Id: scamper_tracelb.c,v 1.55 2014/06/12 17:32:08 mjl Exp $
+ * $Id: scamper_tracelb.c,v 1.57 2018/05/26 21:00:30 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2012      The Regents of the University of California
  * Author: Matthew Luckie
  *
  * Load-balancer traceroute technique authored by
- * Ben Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
+ * Brice Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
  *  Paths in the Internet", in Proc. Internet Measurement Conference 2007.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb.c,v 1.55 2014/06/12 17:32:08 mjl Exp $";
+  "$Id: scamper_tracelb.c,v 1.57 2018/05/26 21:00:30 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -48,6 +48,85 @@ typedef struct tracelb_fwdpathc
   int pathcc;
   int loop;
 } tracelb_fwdpathc_t;
+
+void
+scamper_tracelb_probeset_summary_free(scamper_tracelb_probeset_summary_t *sum)
+{
+  int i;
+  if(sum->addrs != NULL)
+    {
+      for(i=0; i<sum->addrc; i++)
+	if(sum->addrs[i] != NULL)
+	  scamper_addr_free(sum->addrs[i]);
+      free(sum->addrs);
+    }
+  free(sum);
+  return;
+}
+
+scamper_tracelb_probeset_summary_t *
+scamper_tracelb_probeset_summary_alloc(scamper_tracelb_probeset_t *set)
+{
+  scamper_tracelb_probeset_summary_t *sum = NULL;
+  scamper_tracelb_probe_t *probe;
+  scamper_addr_t *addr;
+  uint16_t flowid, j;
+  int i, x;
+
+  if((sum = malloc_zero(sizeof(scamper_tracelb_probeset_summary_t))) == NULL)
+    goto err;
+
+  if(set->probec == 0)
+    return sum;
+
+  flowid = set->probes[0]->flowid;
+  x = 0;
+  for(i=0; i<=set->probec; i++)
+    {
+      if(i == set->probec)
+	{
+	  if(x == 0)
+	    sum->nullc++;
+	  break;
+	}
+
+      probe = set->probes[i];
+      if(probe->flowid != flowid)
+	{
+	  /*
+	   * if a unique flowid had no response (even with multiple
+	   * attempts) then make a note of that.
+	   */
+	  if(x == 0)
+	    sum->nullc++;
+
+	  flowid = probe->flowid;
+	  x = 0;
+	}
+
+      if(probe->rxc > 0)
+	{
+	  for(j=0; j<probe->rxc; j++)
+	    {
+	      addr = probe->rxs[j]->reply_from;
+	      if(array_find((void **)sum->addrs, sum->addrc, addr,
+			    (array_cmp_t)scamper_addr_cmp) != NULL)
+		continue;
+	      if(array_insert((void ***)&sum->addrs, &sum->addrc,
+			      addr, (array_cmp_t)scamper_addr_cmp) != 0)
+		goto err;
+	      scamper_addr_use(addr);
+	    }
+	  x++;
+	}
+    }
+
+  return sum;
+
+ err:
+  if(sum != NULL) scamper_tracelb_probeset_summary_free(sum);
+  return NULL;
+}
 
 /*
  * scamper_tracelb_node_cmp

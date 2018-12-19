@@ -1,7 +1,7 @@
 /*
  * sc_warts2json
  *
- * $Id: sc_warts2json.c,v 1.7 2017/07/09 09:05:41 mjl Exp $
+ * $Id: sc_warts2json.c,v 1.8 2018/05/22 10:08:59 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_warts2json.c,v 1.7 2017/07/09 09:05:41 mjl Exp $";
+  "$Id: sc_warts2json.c,v 1.8 2018/05/22 10:08:59 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -40,6 +40,7 @@ static const char rcsid[] =
 #include "scamper_list.h"
 #include "ping/scamper_ping.h"
 #include "trace/scamper_trace.h"
+#include "tracelb/scamper_tracelb.h"
 #include "dealias/scamper_dealias.h"
 #include "tbit/scamper_tbit.h"
 #include "utils.h"
@@ -51,6 +52,7 @@ int main(int argc, char *argv[])
     SCAMPER_FILE_OBJ_CYCLE_STOP,
     SCAMPER_FILE_OBJ_PING,
     SCAMPER_FILE_OBJ_TRACE,
+    SCAMPER_FILE_OBJ_TRACELB,
     SCAMPER_FILE_OBJ_DEALIAS,
     SCAMPER_FILE_OBJ_TBIT,
   };
@@ -116,6 +118,8 @@ int main(int argc, char *argv[])
 	    scamper_dealias_free(data);
 	  else if(type == SCAMPER_FILE_OBJ_TBIT)
 	    scamper_tbit_free(data);
+	  else if(type == SCAMPER_FILE_OBJ_TRACELB)
+	    scamper_tracelb_free(data);
 	}
 
       scamper_file_close(in);

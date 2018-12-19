@@ -1,7 +1,7 @@
 /*
  * utils.h
  *
- * $Id: utils.h,v 1.115 2017/07/12 07:34:02 mjl Exp $
+ * $Id: utils.h,v 1.116 2018/12/04 08:58:36 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -216,5 +216,6 @@ uint32_t byteswap32(const uint32_t word);
 
 /* process a text file, line by line */
 int file_lines(const char *filename, int (*func)(char *, void *), void *param);
+int fd_lines(int fd, int (*func)(char *, void *), void *param);
 
 #endif /* __UTILS_H */

@@ -1,7 +1,7 @@
 /*
  * scamper_file.c
  *
- * $Id: scamper_file.c,v 1.71 2017/07/09 09:16:21 mjl Exp $
+ * $Id: scamper_file.c,v 1.73 2018/10/05 06:43:26 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file.c,v 1.71 2017/07/09 09:16:21 mjl Exp $";
+  "$Id: scamper_file.c,v 1.73 2018/10/05 06:43:26 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -55,6 +55,7 @@ static const char rcsid[] =
 #include "tracelb/scamper_tracelb.h"
 #include "tracelb/scamper_tracelb_text.h"
 #include "tracelb/scamper_tracelb_warts.h"
+#include "tracelb/scamper_tracelb_json.h"
 #include "dealias/scamper_dealias.h"
 #include "dealias/scamper_dealias_text.h"
 #include "dealias/scamper_dealias_warts.h"
@@ -209,7 +210,7 @@ static struct handler handlers[] = {
    scamper_file_json_cyclestart_write,     /* write_cycle_start */
    scamper_file_json_cyclestop_write,      /* write_cycle_stop */
    scamper_file_json_ping_write,           /* write_ping */
-   NULL,                                   /* write_tracelb */
+   scamper_file_json_tracelb_write,        /* write_tracelb */
    NULL,                                   /* write_sting */
    scamper_file_json_dealias_write,        /* write_dealias */
    NULL,                                   /* write_neighbourdisc */
@@ -630,16 +631,14 @@ static int file_open_read(scamper_file_t *sf)
   if(sf->fd != -1)
     {
       if(fstat(sf->fd, &sb) != 0)
-	{
-	  return -1;
-	}
+	return -1;
 
-      if(sb.st_size != 0 && (sb.st_mode & S_IFIFO) == 0 &&
-	 (sf->type = file_type_detect(sf)) == SCAMPER_FILE_NONE)
-	{
-	  return -1;
-	}
+      if(sb.st_size != 0 && (sb.st_mode & S_IFIFO) == 0)
+	sf->type = file_type_detect(sf);
     }
+
+  if(sf->type == SCAMPER_FILE_NONE)
+    return -1;
 
   if(handlers[sf->type].init_read == NULL)
     return -1;

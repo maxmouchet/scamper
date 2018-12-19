@@ -31,13 +31,13 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_prefixtree.c,v 1.11 2017/07/10 07:00:40 mjl Exp $
+ * $Id: mjl_prefixtree.c,v 1.13 2018/09/18 00:25:57 mjl Exp $
  *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_prefixtree.c,v 1.11 2017/07/10 07:00:40 mjl Exp $";
+  "$Id: mjl_prefixtree.c,v 1.13 2018/09/18 00:25:57 mjl Exp $";
 #endif
 
 #include <sys/types.h>
@@ -346,7 +346,7 @@ static int prefix6_fbd(const prefix6_t *a, const prefix6_t *b)
 
 static int prefix4_ip_in(const prefix4_t *p4, const struct in_addr *ip4)
 {
-  assert(p4->len >= 0); assert(p4->len <= 32);
+  assert(p4->len <= 32);
   if(p4->len == 0)
     return 1;
   if(((ip4->s_addr ^ p4->net.s_addr) & htonl(uint32_netmask[p4->len-1])) == 0)
@@ -364,7 +364,7 @@ static int prefix6_ip_in(const prefix6_t *p6, const struct in6_addr *ip6)
   uint16_t mask;
 #endif
 
-  assert(p6->len >= 0); assert(p6->len <= 128);
+  assert(p6->len <= 128);
   if((len = p6->len) == 0)
     return 1;
 
@@ -472,6 +472,17 @@ prefix4_t *prefixtree_find_best4(const prefixtree_t *tree,
   return NULL;
 }
 
+prefix4_t *prefixtree_find_exact4(const prefixtree_t *tree,
+				  const struct in_addr *net, uint8_t len)
+{
+  prefix4_t fm, *p;
+  fm.net.s_addr = net->s_addr;
+  fm.len = len;
+  if((p = prefixtree_find_best4(tree, &fm)) != NULL && p->len == len)
+    return p;
+  return NULL;
+}
+
 prefix6_t *prefixtree_find_ip6(const prefixtree_t *tree,
 			       const struct in6_addr *ip6)
 {
@@ -532,6 +543,17 @@ prefix6_t *prefixtree_find_best6(const prefixtree_t *tree,
     if(prefix6_ip_in(stack[i], &item->net) != 0)
       return stack[i];
 
+  return NULL;
+}
+
+prefix6_t *prefixtree_find_exact6(const prefixtree_t *tree,
+				  const struct in6_addr *net, uint8_t len)
+{
+  prefix6_t fm, *p;
+  memcpy(&fm.net, net, sizeof(struct in6_addr));
+  fm.len = len;
+  if((p = prefixtree_find_best6(tree, &fm)) != NULL && p->len == len)
+    return p;
   return NULL;
 }
 

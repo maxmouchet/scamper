@@ -1,7 +1,7 @@
 /*
  * scamper_control.c
  *
- * $Id: scamper_control.c,v 1.196 2017/12/03 09:38:26 mjl Exp $
+ * $Id: scamper_control.c,v 1.197 2018/06/14 08:36:20 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_control.c,v 1.196 2017/12/03 09:38:26 mjl Exp $";
+  "$Id: scamper_control.c,v 1.197 2018/06/14 08:36:20 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -2493,7 +2493,7 @@ static int remote_sock_ssl_init(control_remote_t *rm)
  * it is based on post_connection_check in "Network Security with
  * OpenSSL" by John Viega, Matt Messier, and Pravir Chandra.
  */
-#if !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
+#ifndef HAVE_X509_VERIFY_PARAM_SET1_HOST
 static int remote_sock_is_valid_cert(control_remote_t *rm)
 {
   X509 *cert = NULL;
@@ -2561,7 +2561,7 @@ static int remote_sock_is_valid_cert(control_remote_t *rm)
   if(cert != NULL) X509_free(cert);
   return rc;
 }
-#endif /* OpenSSL version < 1.1.0 */
+#endif /* ifndef HAVE_X509_VERIFY_PARAM_SET1_HOST */
 #endif
 
 /*
@@ -2960,7 +2960,7 @@ static int remote_read_sock(control_remote_t *rm)
 	  if(SSL_is_init_finished(rm->ssl) != 0 ||
 	     (rc = SSL_do_handshake(rm->ssl)) > 0)
 	    {
-#if !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
+#ifndef HAVE_X509_VERIFY_PARAM_SET1_HOST
 	      if(remote_sock_is_valid_cert(rm) == 0)
 		return -1;
 #endif
@@ -3295,8 +3295,7 @@ int scamper_control_add_remote(const char *name, int port)
 {
   uint32_t u32;
 
-#if defined(HAVE_OPENSSL) && \
-  defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10100000L
+#ifdef HAVE_X509_VERIFY_PARAM_SET1_HOST
   X509_VERIFY_PARAM *param = NULL;
 #endif
 
@@ -3321,7 +3320,7 @@ int scamper_control_add_remote(const char *name, int port)
       SSL_CTX_set_options(tls_ctx,
 			  SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1);
 
-#if defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10100000L
+#ifdef HAVE_X509_VERIFY_PARAM_SET1_HOST
       param = SSL_CTX_get0_param(tls_ctx);
       X509_VERIFY_PARAM_set_hostflags(param,
 				      X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);

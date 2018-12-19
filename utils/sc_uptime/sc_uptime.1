@@ -6,7 +6,7 @@
 .\" Copyright (c) 2017 Matthew Luckie
 .\"                    All rights reserved
 .\"
-.\" $Id: sc_uptime.1,v 1.8 2017/08/11 06:26:00 mjl Exp $
+.\" $Id: sc_uptime.1,v 1.11 2018/11/02 01:14:48 mjl Exp $
 .\"
 .Dd July 2, 2017
 .Dt SC_UPTIME 1
@@ -17,14 +17,32 @@
 .Sh SYNOPSIS
 .Nm
 .Bk -words
-.Op Fl a Ar addressfile
+.Op Fl o
 .Op Fl d Ar dbfile
+.Op Fl E Ar expire
+.Op Fl I Ar interval
 .Op Fl l Ar logfile
-.Op Fl o Ar outfile
 .Op Fl O Ar option
 .Op Fl p Ar port
 .Op Fl S Ar srcaddr
 .Op Fl U Ar unix-socket
+.Ar outfile.warts
+.Ek
+.Pp
+.Nm
+.Bk -words
+.Op Fl a
+.Op Fl d Ar dbfile
+.Op Fl E Ar expire
+.Op Fl O Ar option
+.Ar addrfile.txt
+.Ek
+.Pp
+.Nm
+.Bk -words
+.Op Fl c
+.Op Fl d Ar dbfile
+.Op Fl O Ar option
 .Ek
 .Pp
 .Nm
@@ -32,7 +50,7 @@
 .Op Fl i
 .Op Fl d Ar dbfile
 .Op Fl O Ar option
-.Op Ar
+.Ar
 .Ek
 .Pp
 .Nm
@@ -40,7 +58,15 @@
 .Op Fl r
 .Op Fl d Ar dbfile
 .Op Fl O Ar option
-.Op Ar ip ...
+.Ar ip ...
+.Ek
+.Pp
+.Nm
+.Bk -words
+.Op Fl x
+.Op Fl d Ar dbfile
+.Op Fl O Ar option
+.Ar do-not-probe.txt
 .Ek
 .\""""""""""""
 .Sh DESCRIPTION
@@ -68,25 +94,35 @@ The supported options to
 .Nm
 are as follows:
 .Bl -tag -width Ds
-.It Fl a Ar addressfile
+.It Fl a
 specifies the name of the input file which consists of a sequence of
 IPv6 addresses to probe for reboots, one address per line.  Any new
 addresses are added to the sqlite3 database for subsequent processing.
 Any addresses in the sqlite3 database but not in the addressfile continue
 to be probed.
+.It Fl c
+specifies that a sqlite3 database file is to be created.
+The mode of database is specified with
+.Fl O
 .It Fl d Ar dbfile
 specifies the name of the output sqlite3 database file to use
+.It Fl E Ar expire
+specifies the length of time, in days, that an address may remain in the probe
+state database after last being seen in traceroute, and not responding
+with incrementing IPID values.
 .It Fl i
 specifies that the IPID samples in the supplied
 .Xr warts 5
 files should be imported into the sqlite3 database.
+.It Fl I Ar interval
+specifies the desired probe interval, in seconds, for each address.
 .It Fl l Ar logfile
 specifies the name of a file to log progress output from
 .Nm
 generated at run time.
-.It Fl o Ar outfile
-specifies the name of the output file to be written.  The output file will use
-the
+.It Fl o
+specifies the name of the output file to be written.
+The output file will use the
 .Xr warts 5
 format.
 .It Fl O Ar options
@@ -96,11 +132,15 @@ to be further tailored.
 The current choices for this option are:
 .Bl -dash -offset 2n -compact -width 1n
 .It
-.Sy create-db:
-create and initialise a brand new sqlite3 database.
-Use this option the first time
-.Nm
-is run and a state database or a data database has not been created.
+.Sy init-state:
+initialise a brand new sqlite3 database for data collection.
+Use this option with
+.Fl c
+.It
+.Sy init-data
+initialise a brand new sqlite3 database for data analysis.
+Use this option with
+.Fl c
 .It
 .Sy safe-db:
 when importing into the data database, use safe operations.  By default,
@@ -130,6 +170,11 @@ could have a discontinuity unrelated to a reboot of the probed system.
 specifies the name of a unix domain socket where
 .Xr scamper 1
 is accepting control socket connections.
+.It Fl x
+specifies that the do-not-probe list has been updated and the state
+database should be cleared of matching addresses.  The do-not-probe
+file is a text file with one prefix per line.  Individual addresses
+may be specified by including the address without a suffix.
 .El
 .\""""""""""""
 .Sh EXAMPLES
@@ -152,7 +197,7 @@ must be run in rounds.  The next time
 .Nm
 is run, use:
 .Pp
-.Dl sc_uptime -p 31337 -O create-db -d state.sqlite -o out2.warts
+.Dl sc_uptime -p 31337 -d state.sqlite -o out2.warts
 .Pp
 Import the IPID samples from out1.warts and out2.warts into a separate
 probe database:

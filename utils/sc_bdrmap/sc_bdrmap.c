@@ -1,7 +1,7 @@
 /*
  * sc_bdrmap: driver to map first hop border routers of networks
  *
- * $Id: sc_bdrmap.c,v 1.12 2018/03/16 05:45:28 mjl Exp $
+ * $Id: sc_bdrmap.c,v 1.16 2018/09/27 03:27:37 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@caida.org / mjl@wand.net.nz
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_bdrmap.c,v 1.12 2018/03/16 05:45:28 mjl Exp $";
+  "$Id: sc_bdrmap.c,v 1.16 2018/09/27 03:27:37 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -219,7 +219,7 @@ typedef struct sc_indir
 {
   scamper_addr_t *dst;
   uint8_t         ttl;
-  uint16_t        csum;
+  uint16_t        flowid;
 } sc_indir_t;
 
 /*
@@ -401,14 +401,14 @@ typedef struct sc_prov
 /*
  * sc_linkprobe_t
  *
- * this structure supplies the address, ttl, and checksum (the flow) to use
+ * this structure supplies the address, ttl, and flowid to use
  * to find a given hop.
  */
 typedef struct sc_linkprobe
 {
   scamper_addr_t   *dst;
   uint8_t           ttl;
-  uint16_t          csum;
+  uint16_t          flowid;
 } sc_linkprobe_t;
 
 /*
@@ -531,7 +531,7 @@ static uint32_t               options       = 0;
 static char                  *unix_name     = NULL;
 static unsigned int           port          = 0;
 static uint8_t                firsthop      = 1;
-static uint16_t               csum          = 0x420;
+static uint16_t               flowid        = 0x420;
 static prefixtree_t          *ip2as_pt      = NULL;
 static char                  *ip2as_fn      = NULL;
 static splaytree_t           *ip2name_tree  = NULL;
@@ -577,6 +577,7 @@ static int                    probing       = 0;
 static int                    waittime      = 0;
 static int                    attempts      = 5;
 static int                    random_dst    = 0;
+static int                    protocol      = 0;
 static int                    impatient     = 0;
 static int                    allyconf      = 5;
 static int                    allyconf_wait = 60 * 5;
@@ -623,7 +624,7 @@ typedef void (*sc_stree_free_t)(void *ptr);
 #define OPT_REMOTE      0x020000
 #define OPT_ALLYCONF    0x040000
 #define OPT_DELEGATED   0x080000
-#define OPT_CSUM        0x100000
+#define OPT_FLOWID      0x100000
 
 #define TEST_TRACE      0x00
 #define TEST_LINK       0x01
@@ -674,7 +675,7 @@ static void usage(uint32_t opts)
 
   fprintf(stderr,
     "usage: sc_bdrmap [-6Di] [-a ip2as] [-A targetases] [-c allyconf]\n"
-    "                 [-C csum] [-f firsthop] [-l log] [-o warts]\n"
+    "                 [-C flowid] [-f firsthop] [-l log] [-o warts]\n"
     "                 [-O option] [-p port] [-U unix] [-R unix] [-v vpases]\n"
     "                 [-x ixps]\n"
     "\n"
@@ -699,8 +700,8 @@ static void usage(uint32_t opts)
     fprintf(stderr, "       -A: map interconnections towards specified ASes\n");
   if(opts & OPT_ALLYCONF)
     fprintf(stderr, "       -c: how many times to confirm alias inference\n");
-  if(opts & OPT_CSUM)
-    fprintf(stderr, "       -C: ICMP csum for Paris traceroute\n");
+  if(opts & OPT_FLOWID)
+    fprintf(stderr, "       -C: flowid (ICMP csum or UDP sport) for Paris traceroute\n");
   if(opts & OPT_DUMP)
     {
       fprintf(stderr, "       -d: dump id\n");
@@ -727,6 +728,7 @@ static void usage(uint32_t opts)
   if(opts & OPT_OPTIONS)
     {
       fprintf(stderr, "       -O: options\n");
+      fprintf(stderr, "           udp: use UDP traceroute probes\n");
       fprintf(stderr, "           randomdst: probe random IPs in prefixes\n");
       fprintf(stderr, "           impatient: probe large sets first\n");
       fprintf(stderr, "           dumpborders: dump only border routers\n");
@@ -887,7 +889,7 @@ static int check_options(int argc, char *argv[])
   char *opts = "?6a:A:c:C:d:Df:g:il:n:o:O:p:r:R:U:v:x:";
   char *opt_port = NULL, *opt_firsthop = NULL, *opt_dumpid = NULL;
   char *opt_unix = NULL, *opt_allyconf = NULL, *opt_vpases = NULL;
-  char *opt_csum = NULL;
+  char *opt_flowid = NULL;
   slist_t *opt_targetases = NULL;
 
   while((ch = getopt(argc, argv, opts)) != -1)
@@ -916,10 +918,10 @@ static int check_options(int argc, char *argv[])
 	  break;
 
 	case 'C':
-	  if(check_options_once(ch, OPT_CSUM) != 0)
+	  if(check_options_once(ch, OPT_FLOWID) != 0)
 	    goto done;
-	  options |= OPT_CSUM;
-	  opt_csum = optarg;
+	  options |= OPT_FLOWID;
+	  opt_flowid = optarg;
 	  break;
 
 	case 'A':
@@ -1004,6 +1006,8 @@ static int check_options(int argc, char *argv[])
 	    no_self = 1;
 	  else if(strcasecmp(optarg, "randomdst") == 0)
 	    random_dst = 1;
+	  else if(strcasecmp(optarg, "udp") == 0)
+	    protocol = 1;
 	  else
 	    {
 	      fprintf(stderr, "unknown option %s\n", optarg);
@@ -1150,14 +1154,14 @@ static int check_options(int argc, char *argv[])
       firsthop = lo;
     }
 
-  if(options & OPT_CSUM)
+  if(options & OPT_FLOWID)
     {
-      if(string_tolong(opt_csum, &lo) != 0 || lo < 1 || lo > 65535)
+      if(string_tolong(opt_flowid, &lo) != 0 || lo < 1 || lo > 65535)
 	{
-	  usage(OPT_CSUM);
+	  usage(OPT_FLOWID);
 	  return -1;
 	}
-      csum = lo;
+      flowid = lo;
     }
 
   if(options & OPT_TARGETIPS)
@@ -3316,7 +3320,7 @@ static int sc_astraces_aliases(sc_astraces_t *traces)
 	     (b = sc_ping_alloc(link->b)) == NULL)
 	    goto err;
 	  b->indir.dst = scamper_addr_use(indir->dst);
-	  b->indir.csum = indir->csum;
+	  b->indir.flowid = indir->flowid;
 	  b->indir.ttl = indir->ttl+1;
 	  if(slist_tail_push(a2a->list[0], b) == NULL)
 	    goto err;
@@ -3326,7 +3330,7 @@ static int sc_astraces_aliases(sc_astraces_t *traces)
 	 (a = sc_ping_alloc(link->a)) == NULL)
 	goto err;
       a->indir.dst = scamper_addr_use(indir->dst);
-      a->indir.csum = indir->csum;
+      a->indir.flowid = indir->flowid;
       a->indir.ttl = indir->ttl;
       if(slist_tail_push(a2a->list[1], a) == NULL)
 	goto err;
@@ -3446,9 +3450,9 @@ static int sc_astraces_link_add(sc_astraces_t *traces, scamper_addr_t *a,
       logerr("%s: indir alloc: %s\n", __func__, strerror(errno));
       goto err;
     }
-  indir->dst  = scamper_addr_use(indir_in->dst);
-  indir->ttl  = indir_in->ttl;
-  indir->csum = indir_in->csum;
+  indir->dst    = scamper_addr_use(indir_in->dst);
+  indir->ttl    = indir_in->ttl;
+  indir->flowid = indir_in->flowid;
 
   if(sc_stree_add(traces->links, link) != 0)
     {
@@ -3759,7 +3763,11 @@ static int do_method_trace(sc_test_t *test, char *cmd, size_t len)
 	return -1;
     }
 
-  string_concat(cmd, len, &off, "trace -w 1 -P icmp-paris -d %u", csum);
+  string_concat(cmd, len, &off, "trace -w 1");
+  if(protocol == 0)
+    string_concat(cmd, len, &off, " -P icmp-paris -d %u", flowid);
+  else if(protocol == 1)
+    string_concat(cmd, len, &off, " -P udp-paris -s %u", flowid);
   if(firsthop > 1)
     string_concat(cmd, len, &off, " -f %u", firsthop);
   if(no_gss == 0 && tt->astraces->gss != NULL)
@@ -3783,8 +3791,7 @@ static int do_method_trace(sc_test_t *test, char *cmd, size_t len)
 
 static int do_method_ping(sc_test_t *test, char *cmd, size_t len)
 {
-  static const char *method[] = {"icmp-echo", "tcp-ack-sport",
-				 "udp-dport", "icmp-echo"};
+  static const char *method[] = {"icmp-echo", "tcp-ack-sport", "udp-dport"};
   static const char *wait[] = {"0.3", "0.5", "1", "0.5"};
   sc_pingtest_t *pt = test->data;
   sc_ping_t *ping = pt->ping;
@@ -3795,16 +3802,24 @@ static int do_method_ping(sc_test_t *test, char *cmd, size_t len)
   assert(pt->method < 4);
   assert(pt->method < 3 || ping->indir.dst != NULL);
 
-  string_concat(cmd, len, &off, "ping -P %s -i %s -c %u -o %u",
-		method[pt->method], wait[pt->method], attempts + 2, attempts);
+  string_concat(cmd, len, &off, "ping -i %s -c %u -o %u",
+		wait[pt->method], attempts + 2, attempts);
 
   if(pt->method == METHOD_INDIR)
-    string_concat(cmd, len, &off, " -m %u -C %u %s", ping->indir.ttl,
-		  ping->indir.csum,
-		  scamper_addr_tostr(ping->indir.dst, buf, sizeof(buf)));
+    {
+      if(protocol == 0)
+	string_concat(cmd,len,&off, " -P icmp-echo -C %u", ping->indir.flowid);
+      else if(protocol == 1)
+	string_concat(cmd,len,&off, " -P udp -F %u", ping->indir.flowid);
+
+      string_concat(cmd, len, &off, " -m %u %s", ping->indir.ttl,
+		    scamper_addr_tostr(ping->indir.dst, buf, sizeof(buf)));
+    }
   else
-    string_concat(cmd, len, &off, " %s",
-		  scamper_addr_tostr(ping->addr, buf, sizeof(buf)));
+    {
+      string_concat(cmd, len, &off, " -P %s %s", method[pt->method],
+		    scamper_addr_tostr(ping->addr, buf, sizeof(buf)));
+    }
   string_concat(cmd, len, &off, "\n");
 
   return off;
@@ -3879,7 +3894,7 @@ static int do_method_ipidseq_ping(sc_test_t *test, sc_ping_t *ping,
 
   /* set up the indirect probing */
   pt->ping->indir.dst = scamper_addr_use(ping->indir.dst);
-  pt->ping->indir.csum = ping->indir.csum;
+  pt->ping->indir.flowid = ping->indir.flowid;
   pt->ping->indir.ttl = ping->indir.ttl;
 
   /* only try and add t2 if we're probing a different address */
@@ -3980,10 +3995,22 @@ static int do_method_link(sc_test_t *test, char *cmd, size_t len)
   return off;
 }
 
+static int do_method_ally_indir_P(char *cmd, size_t len, size_t *off,
+				  sc_ping_t *seq)
+{
+  char dst[64];
+  if(protocol == 0)
+    string_concat(cmd, len, off, " -p '-P icmp-echo -c %u", seq->indir.flowid);
+  else if(protocol == 1)
+    string_concat(cmd, len, off, " -p '-P udp -F %u", seq->indir.flowid);
+  string_concat(cmd, len, off, " -t %u -i %s'", seq->indir.ttl,
+		scamper_addr_tostr(seq->indir.dst, dst, sizeof(dst)));
+  return 0;
+}
+
 static int do_method_ally(sc_test_t *test, char *cmd, size_t len)
 {
-  static const char *method[] = {"icmp-echo", "tcp-ack-sport",
-				 "udp-dport", "icmp-echo"};
+  static const char *method[] = {"icmp-echo", "tcp-ack-sport", "udp-dport"};
   static const uint16_t wait[] = {300, 500, 1000, 500};
   sc_allytest_t *at = test->data;
   sc_ping_t *aseq = NULL, *bseq = NULL, *a, *b;
@@ -4067,12 +4094,8 @@ static int do_method_ally(sc_test_t *test, char *cmd, size_t len)
     }
   else
     {
-      string_concat(cmd, len, &off, " -p '-P %s -c %u -t %u -i %s'",
-		    method[at->method], aseq->indir.csum, aseq->indir.ttl,
-		    scamper_addr_tostr(aseq->indir.dst, ab, sizeof(ab)));
-      string_concat(cmd, len, &off, " -p '-P %s -c %u -t %u -i %s'",
-		    method[at->method], bseq->indir.csum, bseq->indir.ttl,
-		    scamper_addr_tostr(bseq->indir.dst, bb, sizeof(bb)));
+      do_method_ally_indir_P(cmd, len, &off, aseq);
+      do_method_ally_indir_P(cmd, len, &off, bseq);
     }
   string_concat(cmd, len, &off, "\n");
 
@@ -4081,8 +4104,7 @@ static int do_method_ally(sc_test_t *test, char *cmd, size_t len)
 
 static int do_method_allyconf(sc_test_t *test, char *cmd, size_t len)
 {
-  static const char *method[] = {"icmp-echo", "tcp-ack-sport",
-				 "udp-dport", "icmp-echo"};
+  static const char *method[] = {"icmp-echo", "tcp-ack-sport", "udp-dport"};
   static const uint16_t wait[] = {300, 500, 1000, 500};
   sc_allyconftest_t *act = test->data;
   sc_ping_t *aseq = NULL, *bseq = NULL;
@@ -4148,12 +4170,8 @@ static int do_method_allyconf(sc_test_t *test, char *cmd, size_t len)
     }
   else
     {
-      string_concat(cmd, len, &off, " -p '-P %s -c %u -t %u -i %s'",
-		    method[act->method], aseq->indir.csum, aseq->indir.ttl,
-		    scamper_addr_tostr(aseq->indir.dst, ab, sizeof(ab)));
-      string_concat(cmd, len, &off, " -p '-P %s -c %u -t %u -i %s'",
-		    method[act->method], bseq->indir.csum, bseq->indir.ttl,
-		    scamper_addr_tostr(bseq->indir.dst, bb, sizeof(bb)));
+      do_method_ally_indir_P(cmd, len, &off, aseq);
+      do_method_ally_indir_P(cmd, len, &off, bseq);
     }
   string_concat(cmd, len, &off, "\n");
 
@@ -4691,12 +4709,15 @@ static int do_decoderead_ping_ping(sc_test_t *test, scamper_ping_t *ping)
   if(class == -1)
     return -1;
 
-  if(pt->method == METHOD_ICMP || pt->method == METHOD_INDIR)
+  if(pt->method == METHOD_ICMP)
     assert(SCAMPER_PING_METHOD_IS_ICMP(ping));
   else if(pt->method == METHOD_TCP)
     assert(SCAMPER_PING_METHOD_IS_TCP(ping));
   else if(pt->method == METHOD_UDP)
     assert(SCAMPER_PING_METHOD_IS_UDP(ping));
+  else if(pt->method == METHOD_INDIR)
+    assert((protocol == 0 && SCAMPER_PING_METHOD_IS_ICMP(ping)) ||
+	   (protocol == 1 && SCAMPER_PING_METHOD_IS_UDP(ping)));
   else
     return -1;
 
@@ -4809,7 +4830,10 @@ static int do_decoderead_trace(scamper_trace_t *trace)
 
   /* these fields do not change for this traceroute, so set them now */
   indir.dst = trace->dst;
-  indir.csum = trace->dport;
+  if(protocol == 0)
+    indir.flowid = trace->dport;
+  else if(protocol == 1)
+    indir.flowid = trace->sport;
 
   for(i=trace->firsthop-1; i<=lv; i++)
     {
@@ -4886,7 +4910,9 @@ static int do_decoderead_trace(scamper_trace_t *trace)
       /* add the second hop past the last VP address to the GSS */
       if(y != NULL && SCAMPER_TRACE_HOP_IS_ICMP_TTL_EXP(y) &&
 	 scamper_addr_cmp(trace->dst, y->hop_addr) != 0 &&
-	 slist_count(astraces->dsts) > 0 && is_vp(y->hop_addr) != 1 &&
+	 slist_count(astraces->dsts) > 0 &&
+	 is_reserved(y->hop_addr) == 0 &&
+	 is_vp(y->hop_addr) == 0 &&
 	 sc_astraces_gss_add(astraces, y->hop_addr) != 0)
 	goto err;
     }
@@ -5891,6 +5917,8 @@ static int ixp_line(char *line, void *param)
 	{
 	  if(af != AF_INET) break;
 	  va = &((struct sockaddr_in *)res->ai_addr)->sin_addr;
+	  if(prefixtree_find_exact4(ixp_pt, va, lo) != NULL)
+	    break;
 	  if((p4 = prefix4_alloc(va, lo, NULL)) == NULL)
 	    return -1;
 	  p4->ptr = p4;
@@ -5902,6 +5930,8 @@ static int ixp_line(char *line, void *param)
 	{
 	  if(af != AF_INET6) break;
 	  va = &((struct sockaddr_in6 *)res->ai_addr)->sin6_addr;
+	  if(prefixtree_find_exact6(ixp_pt, va, lo) != NULL)
+	    break;
 	  if((p6 = prefix6_alloc(va, lo, NULL)) == NULL)
 	    return -1;
 	  p6->ptr = p6;
