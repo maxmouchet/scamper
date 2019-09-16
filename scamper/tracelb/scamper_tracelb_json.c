@@ -1,11 +1,11 @@
 /*
  * scamper_tracelb_json.c
  *
- * Copyright (C) 2018 Matthew Luckie
+ * Copyright (C) 2018-2019 Matthew Luckie
  *
  * Authors: Matthew Luckie
  *
- * $Id: scamper_tracelb_json.c,v 1.6 2018/05/27 03:32:14 mjl Exp $
+ * $Id: scamper_tracelb_json.c,v 1.10 2019/09/15 01:08:11 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb_json.c,v 1.6 2018/05/27 03:32:14 mjl Exp $";
+  "$Id: scamper_tracelb_json.c,v 1.10 2019/09/15 01:08:11 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -147,27 +147,28 @@ static char *probe_tostr(const scamper_tracelb_probe_t *probe,
 		probe->tx.tv_sec, probe->tx.tv_usec, rxc,
 		probe->ttl, probe->attempt, probe->flowid);
 
-  if(rxc == 0)
-    return strdup(buf);
-
-  /* make room for the replies array */
-  string_concat(buf, sizeof(buf), &off, ", \"replies\":[");
-  len += strlen(buf);
-
-  if((rxs = malloc_zero(rxc * sizeof(char *))) == NULL)
-    goto err;
-  j = 0;
-  for(i=0; i<probe->rxc; i++)
+  if(rxc > 0)
     {
-      if(scamper_addr_cmp(addr, probe->rxs[i]->reply_from) != 0)
-	continue;
-      if(j > 0) len++; /* , */
-      if((rxs[j] = reply_tostr(probe, probe->rxs[i])) == NULL)
+      /* make room for the replies array */
+      string_concat(buf, sizeof(buf), &off, ", \"replies\":[");
+      if((rxs = malloc_zero(rxc * sizeof(char *))) == NULL)
 	goto err;
-      len += strlen(rxs[j]);
-      j++;
+      j = 0;
+      for(i=0; i<probe->rxc; i++)
+	{
+	  if(scamper_addr_cmp(addr, probe->rxs[i]->reply_from) != 0)
+	    continue;
+	  if(j > 0) len++; /* , */
+	  if((rxs[j] = reply_tostr(probe, probe->rxs[i])) == NULL)
+	    goto err;
+	  len += strlen(rxs[j]);
+	  j++;
+	}
+      len++; /* ] */
     }
-  len++; /* ] */
+
+  len += strlen(buf);
+  len++; /* } */
   len++; /* \'0' */
 
   if((dup = malloc(len)) == NULL)
@@ -175,16 +176,20 @@ static char *probe_tostr(const scamper_tracelb_probe_t *probe,
   off = 0;
 
   string_concat(dup, len, &off, buf);
-  for(i=0; i<rxc; i++)
+  if(rxc > 0)
     {
-      if(i > 0) string_concat(dup, len, &off, ",");
-      string_concat(dup, len, &off, "%s", rxs[i]);
-      free(rxs[i]);
+      for(i=0; i<rxc; i++)
+	{
+	  if(i > 0) string_concat(dup, len, &off, ",");
+	  string_concat(dup, len, &off, "%s", rxs[i]);
+	  free(rxs[i]);
+	}
+      string_concat(dup, len, &off, "]");
     }
-  free(rxs);
-  string_concat(dup, len, &off, "]");
+  string_concat(dup, len, &off, "}");
   assert(off+1 == len);
 
+  if(rxs != NULL) free(rxs);
   return dup;
 
  err:
@@ -227,7 +232,7 @@ static char *probeset_summary_tojson(scamper_tracelb_probeset_summary_t *sum,
   strlist_t *head = NULL, *tail = NULL, *slp, *slpn;
   char buf[128], tmp[64], *dup = NULL;
   size_t off, len = 0;
-  int i, j, k;
+  int i, j, k, p;
 
   if(sum->nullc > 0 && sum->addrc == 0)
     return strdup("{\"addr\":\"*\"}");
@@ -242,7 +247,7 @@ static char *probeset_summary_tojson(scamper_tracelb_probeset_summary_t *sum,
 	goto err;
       if(head == NULL)
 	head = tail;
-
+      p = 0;
       for(j=0; j<set->probec; j++)
 	{
 	  probe = set->probes[j];
@@ -251,13 +256,16 @@ static char *probeset_summary_tojson(scamper_tracelb_probeset_summary_t *sum,
 	      break;
 	  if(k == probe->rxc)
 	    continue;
+	  if(p > 0 && strlist_add(&tail, ",", &len) != 0)
+	    goto err;
 	  dup = probe_tostr(probe, sum->addrs[i]);
 	  if(strlist_add(&tail, dup, &len) != 0)
 	    goto err;
 	  free(dup); dup = NULL;
+	  p++;
 	}
 
-      if(strlist_add(&tail, "}", &len) != 0)
+      if(strlist_add(&tail, "]}", &len) != 0)
 	goto err;
     }
   if(sum->nullc > 0 && strlist_add(&tail, ", {\"addr\":\"*\"}", &len) != 0)
@@ -310,6 +318,8 @@ static char *node_tostr(const scamper_tracelb_node_t *node)
     snprintf(tmp, sizeof(tmp), "*");
   off = 0;
   string_concat(buf, sizeof(buf), &off, "{\"addr\":\"%s\"", tmp);
+  if(node->name != NULL)
+    string_concat(buf, sizeof(buf), &off, ", \"name\":\"%s\"", node->name);
   if(SCAMPER_TRACELB_NODE_QTTL(node))
     string_concat(buf, sizeof(buf), &off, ", \"q_ttl\":%u", node->q_ttl);
   string_concat(buf, sizeof(buf), &off, ", \"linkc\":%u", node->linkc);
@@ -344,8 +354,6 @@ static char *node_tostr(const scamper_tracelb_node_t *node)
 	      if(strlist_add(&tail, dup, &len) != 0)
 		goto err;
 	      free(dup); dup = NULL;
-	      if(strlist_add(&tail, "}", &len) != 0)
-		goto err;
 	    }
 	  if(strlist_add(&tail, "]}", &len) != 0)
 	    goto err;
@@ -397,10 +405,15 @@ static char *node_tostr(const scamper_tracelb_node_t *node)
 	      if(strlist_add(&tail, dup, &len) != 0)
 		goto err;
 	      free(dup); dup = NULL;
-	      if(strlist_add(&tail, "}", &len) != 0)
-		goto err;
 	    }
 	  if(strlist_add(&tail, "]}]", &len) != 0)
+	    goto err;
+	}
+      else
+	{
+	  off = 0;
+	  string_concat(buf, sizeof(buf), &off, "[{\"addr\":\"*\"}]");
+	  if(strlist_add(&tail, buf, &len) != 0)
 	    goto err;
 	}
     }

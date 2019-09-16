@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_filterpolicy.c,v 1.10 2018/12/10 06:13:55 mjl Exp $";
+  "$Id: sc_filterpolicy.c,v 1.12 2019/07/12 21:40:13 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -215,7 +215,10 @@ static void usage(uint32_t opt_mask)
     "\n");
 
   if(opt_mask == 0)
-    fprintf(stderr, "       sc_filterpolicy -?\n\n");
+    {
+      fprintf(stderr, "       sc_filterpolicy -?\n\n");
+      return;
+    }
 
   if(opt_mask & OPT_HELP)
     fprintf(stderr, "   -? give an overview of the usage of sc_filterpolicy\n");
@@ -1326,7 +1329,15 @@ static int do_decoderead(void)
       return -1;
     }
   if(data == NULL)
-    return 0;
+    {
+      if(scamper_file_geteof(decode_in) != 0)
+	{
+	  scamper_file_close(decode_in);
+	  decode_in = NULL;
+	  decode_in_fd = -1;
+	}
+      return 0;
+    }
   probing--;
 
   if(scamper_file_write_obj(outfile, type, data) != 0)
@@ -1634,6 +1645,12 @@ static int fp_data(void)
 		       errno, strerror(errno));
 	      return -1;
 	    }
+
+	  if(scamper_fd < 0 && scamper_writebuf_len(decode_wb) == 0)
+	    {
+	      close(decode_out_fd);
+	      decode_out_fd = -1;
+	    }
 	}
     }
 
@@ -1731,9 +1748,9 @@ static void cleanup(void)
   if(decode_in != NULL) scamper_file_close(decode_in);
   if(ffilter != NULL) scamper_file_filter_free(ffilter);
   if(logfile != NULL) fclose(logfile);
-  close(decode_in_fd);
-  close(decode_out_fd);
-  close(scamper_fd);
+  if(decode_in_fd != -1) close(decode_in_fd);
+  if(decode_out_fd != -1) close(decode_out_fd);
+  if(scamper_fd != -1) close(scamper_fd);
   return;
 }
 

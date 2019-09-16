@@ -1,7 +1,7 @@
 /*
  * scamper_sniff_do.c
  *
- * $Id: scamper_sniff_do.c,v 1.14 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_sniff_do.c,v 1.15 2019/07/12 23:37:57 mjl Exp $
  *
  * Copyright (C) 2011 The University of Waikato
  * Author: Matthew Luckie
@@ -23,7 +23,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sniff_do.c,v 1.14 2017/12/03 09:38:27 mjl Exp $";
+  "$Id: scamper_sniff_do.c,v 1.15 2019/07/12 23:37:57 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -248,7 +248,7 @@ static void do_sniff_write(scamper_file_t *sf, scamper_task_t *task)
   return;
 }
 
-static int sniff_arg_param_validate(int optid, char *param, long *out)
+static int sniff_arg_param_validate(int optid, char *param, long long *out)
 {
   long tmp = 0;
 
@@ -277,7 +277,7 @@ static int sniff_arg_param_validate(int optid, char *param, long *out)
     }
 
   if(out != NULL)
-    *out = tmp;
+    *out = (long long)tmp;
   return 0;
 
  err:
@@ -300,7 +300,7 @@ void *scamper_do_sniff_alloc(char *str)
   long icmpid = -1;
   char *expr = NULL;
   char *src = NULL;
-  long tmp = 0;
+  long long tmp = 0;
 
   /* try and parse the string passed in */
   if(scamper_options_parse(str, opts, opts_cnt, &opts_out, &expr) != 0)

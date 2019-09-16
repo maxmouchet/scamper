@@ -1,7 +1,7 @@
 /*
  * sc_wartsdump
  *
- * $Id: sc_wartsdump.c,v 1.216 2018/01/24 19:07:47 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.221 2019/07/28 09:24:53 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -9,6 +9,7 @@
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
+ * Copyright (C) 2019      Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_wartsdump.c,v 1.216 2018/01/24 19:07:47 mjl Exp $";
+  "$Id: sc_wartsdump.c,v 1.221 2019/07/28 09:24:53 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -46,6 +47,7 @@ static const char rcsid[] =
 #include "tbit/scamper_tbit.h"
 #include "sting/scamper_sting.h"
 #include "sniff/scamper_sniff.h"
+#include "host/scamper_host.h"
 #include "scamper_file.h"
 #include "utils.h"
 
@@ -538,6 +540,9 @@ static void dump_tracelb_probe(scamper_tracelb_t *trace,
 
 static void dump_tracelb(scamper_tracelb_t *trace)
 {
+  static const char *flags[] = {
+    "ptr"
+  };
   scamper_tracelb_link_t *link;
   scamper_tracelb_node_t *node;
   scamper_tracelb_probeset_t *set;
@@ -596,6 +601,21 @@ static void dump_tracelb(scamper_tracelb_t *trace)
 	 trace->probe_size, trace->wait_probe * 10, trace->wait_timeout);
   printf(" nodec: %d, linkc: %d, probec: %d, probec_max: %d\n",
 	 trace->nodec, trace->linkc, trace->probec, trace->probec_max);
+  if(trace->flags != 0)
+    {
+      printf(" flags:");
+      l = 0;
+      for(i=0; i<1; i++)
+	{
+	  if((trace->flags & (0x1 << i)) == 0)
+	    continue;
+	  if(l > 0)
+	    printf(",");
+	  printf(" %s", flags[i]);
+	  l++;
+	}
+      printf("\n");
+    }
 
   for(i=0; i<trace->nodec; i++)
     {
@@ -608,7 +628,9 @@ static void dump_tracelb(scamper_tracelb_t *trace)
 
       printf("node %d %s", i, src);
       if(SCAMPER_TRACELB_NODE_QTTL(node) != 0)
-	printf(", qttl %d", node->q_ttl);
+	printf(", q-ttl %d", node->q_ttl);
+      if(node->name != NULL)
+	printf(", name %s", node->name);
       printf("\n");
 
       for(j=0; j<node->linkc; j++)
@@ -751,7 +773,8 @@ static void dump_ping_reply(const scamper_ping_t *ping,
 static void dump_ping(scamper_ping_t *ping)
 {
   static const char *flags[] = {
-    "v4rr", "spoof", "payload", "tsonly", "tsandaddr", "icmpsum", "dl", "8"
+    "v4rr", "spoof", "payload", "tsonly", "tsandaddr", "icmpsum", "dl", "tbt",
+    "nosrc",
   };
   scamper_ping_reply_t *reply;
   char buf[256];
@@ -791,7 +814,7 @@ static void dump_ping(scamper_ping_t *ping)
     {
       printf(" flags:");
       u32 = 0;
-      for(i=0; i<8; i++)
+      for(i=0; i<9; i++)
 	{
 	  if((ping->flags & (0x1 << i)) == 0)
 	    continue;
@@ -815,6 +838,8 @@ static void dump_ping(scamper_ping_t *ping)
     case SCAMPER_PING_METHOD_UDP:
     case SCAMPER_PING_METHOD_TCP_ACK:
     case SCAMPER_PING_METHOD_TCP_SYN:
+    case SCAMPER_PING_METHOD_TCP_RST:
+    case SCAMPER_PING_METHOD_TCP_SYNACK:
       printf(", sport: %d, dport: %d", ping->probe_sport, ping->probe_dport);
       break;
 
@@ -828,6 +853,10 @@ static void dump_ping(scamper_ping_t *ping)
 	     ping->probe_sport, ping->probe_dport);
       break;
     }
+
+  if(SCAMPER_PING_METHOD_IS_TCP(ping))
+    printf(", seq: %u, ack: %u", ping->probe_tcpseq, ping->probe_tcpack);
+
   printf("\n");
 
   if(ping->probe_tsps != NULL)
@@ -1794,6 +1823,135 @@ static void dump_sniff(scamper_sniff_t *sniff)
   return;
 }
 
+static void dump_host_rr(scamper_host_rr_t *rr, const char *section)
+{
+  char buf[256];
+
+  printf("  %s: %s %u ", section,
+	 rr->name != NULL ? rr->name : "<null>", rr->ttl);
+
+  if(rr->class == SCAMPER_HOST_CLASS_IN)
+    printf("IN");
+  else
+    printf("%d", rr->class);
+  printf(" ");
+  switch(rr->type)
+    {
+    case SCAMPER_HOST_TYPE_A: printf("A"); break;
+    case SCAMPER_HOST_TYPE_NS: printf("NS"); break;
+    case SCAMPER_HOST_TYPE_CNAME: printf("CNAME"); break;
+    case SCAMPER_HOST_TYPE_SOA: printf("SOA"); break;
+    case SCAMPER_HOST_TYPE_PTR: printf("PTR"); break;
+    case SCAMPER_HOST_TYPE_MX: printf("MX"); break;
+    case SCAMPER_HOST_TYPE_TXT: printf("TXT"); break;
+    case SCAMPER_HOST_TYPE_AAAA: printf("AAAA"); break;
+    case SCAMPER_HOST_TYPE_DS: printf("DS"); break;
+    case SCAMPER_HOST_TYPE_SSHFP: printf("SSHFP"); break;
+    case SCAMPER_HOST_TYPE_RRSIG: printf("RRISG"); break;
+    case SCAMPER_HOST_TYPE_NSEC: printf("NSEC"); break;
+    case SCAMPER_HOST_TYPE_DNSKEY: printf("DNSKEY"); break;
+    default: printf("%d", rr->type); break;
+    }
+
+  switch(scamper_host_rr_data_type(rr))
+    {
+    case SCAMPER_HOST_RR_DATA_TYPE_ADDR:
+      printf(" %s", scamper_addr_tostr(rr->un.addr, buf, sizeof(buf)));
+      break;
+
+    case SCAMPER_HOST_RR_DATA_TYPE_STR:
+      printf(" %s", rr->un.str);
+      break;
+
+    case SCAMPER_HOST_RR_DATA_TYPE_MX:
+      printf(" %d %s", rr->un.mx->preference, rr->un.mx->exchange);
+      break;
+    }
+
+  printf("\n");
+  return;
+}
+
+static void dump_host(scamper_host_t *host)
+{
+  scamper_host_query_t *query;
+  struct timeval tv;
+  char buf[256];
+  uint32_t i, j;
+
+  printf("host from %s", scamper_addr_tostr(host->src, buf, sizeof(buf)));
+  printf(" to %s\n", scamper_addr_tostr(host->dst, buf, sizeof(buf)));
+  dump_list_summary(host->list);
+  dump_cycle_summary(host->cycle);
+  printf(" user-id: %d\n", host->userid);
+  dump_timeval("start", &host->start);
+
+  if(host->flags != 0)
+    {
+      printf(" flags: ");
+      if(host->flags & SCAMPER_HOST_FLAG_NORECURSE)
+	printf("norecurse");
+      printf("\n");	
+    }
+
+  printf(" wait: %ums, retries: %u\n", host->wait, host->retries);
+  printf(" stop: ");
+  switch(host->stop)
+    {
+    case SCAMPER_HOST_STOP_NONE: printf("none"); break;
+    case SCAMPER_HOST_STOP_DONE: printf("done"); break;
+    case SCAMPER_HOST_STOP_TIMEOUT: printf("timeout"); break;
+    case SCAMPER_HOST_STOP_HALTED: printf("halted"); break;
+    case SCAMPER_HOST_STOP_ERROR: printf("error"); break;
+    default: printf("%04x", host->stop); break;
+    }
+  printf("\n");
+
+  printf(" qname: %s, qclass: %d, qtype: ", host->qname, host->qclass);
+  switch(host->qtype)
+    {
+    case SCAMPER_HOST_TYPE_A: printf("A"); break;
+    case SCAMPER_HOST_TYPE_NS: printf("NS"); break;
+    case SCAMPER_HOST_TYPE_CNAME: printf("CNAME"); break;
+    case SCAMPER_HOST_TYPE_SOA: printf("SOA"); break;
+    case SCAMPER_HOST_TYPE_PTR: printf("PTR"); break;
+    case SCAMPER_HOST_TYPE_MX: printf("MX"); break;
+    case SCAMPER_HOST_TYPE_TXT: printf("TXT"); break;
+    case SCAMPER_HOST_TYPE_AAAA: printf("AAAA"); break;
+    case SCAMPER_HOST_TYPE_DS: printf("DS"); break;
+    case SCAMPER_HOST_TYPE_SSHFP: printf("SSHFP"); break;
+    case SCAMPER_HOST_TYPE_RRSIG: printf("RRSIG"); break;
+    case SCAMPER_HOST_TYPE_NSEC: printf("NSEC"); break;
+    case SCAMPER_HOST_TYPE_DNSKEY: printf("DNSKEY"); break;
+    default: printf("%04x", host->qtype); break;
+    }
+  printf("\n");
+  printf(" qcount: %d\n", host->qcount);
+
+  for(i=0; i<host->qcount; i++)
+    {
+      query = host->queries[i];
+      timeval_diff_tv(&tv, &host->start, &query->tx);
+      printf(" query: %u, id: %u, tx: %d.%06d", i, query->id,
+	     (int)tv.tv_sec, (int)tv.tv_usec);
+      timeval_diff_tv(&tv, &query->tx, &query->rx);
+      printf(", rtt: %d.%06d", (int)tv.tv_sec, (int)tv.tv_usec);
+      printf(", an: %u, ns: %u, ar: %u", query->ancount, query->nscount,
+	     query->arcount);
+      printf("\n");
+
+      for(j=0; j<query->ancount; j++)
+	dump_host_rr(query->an[j], "an");
+      for(j=0; j<query->nscount; j++)
+	dump_host_rr(query->ns[j], "ns");
+      for(j=0; j<query->arcount; j++)
+	dump_host_rr(query->ar[j], "ar");
+    }
+
+  printf("\n");
+  return;
+}
+
 static void dump_cycle(scamper_cycle_t *cycle, const char *type)
 {
   time_t tt;
@@ -1846,6 +2004,7 @@ int main(int argc, char *argv[])
     SCAMPER_FILE_OBJ_TBIT,
     SCAMPER_FILE_OBJ_STING,
     SCAMPER_FILE_OBJ_SNIFF,
+    SCAMPER_FILE_OBJ_HOST,
   };
   uint16_t filter_cnt = sizeof(filter_types)/sizeof(uint16_t);
   void     *data;
@@ -1934,6 +2093,10 @@ int main(int argc, char *argv[])
 
 	    case SCAMPER_FILE_OBJ_SNIFF:
 	      dump_sniff(data);
+	      break;
+
+	    case SCAMPER_FILE_OBJ_HOST:
+	      dump_host(data);
 	      break;
 
 	    case SCAMPER_FILE_OBJ_LIST:

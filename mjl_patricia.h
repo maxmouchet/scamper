@@ -1,7 +1,7 @@
 /*
  * mjl_patricia
  *
- * Copyright (C) 2016 Matthew Luckie. All rights reserved.
+ * Copyright (C) 2016,2019 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,7 +24,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_patricia.h,v 1.3 2016/08/26 10:11:58 mjl Exp $
+ * $Id: mjl_patricia.h,v 1.4 2019/05/25 09:16:32 mjl Exp $
  *
  */
 
@@ -62,5 +62,13 @@ patricia_node_t *patricia_insert_dm(patricia_t *trie, void *item,
 
 void patricia_free_cb(patricia_t *trie, patricia_free_t free_cb);
 void patricia_free(patricia_t *trie);
+
+int patricia_node_bit(const patricia_node_t *node);
+void *patricia_node_item(const patricia_node_t *node);
+void *patricia_node_left_item(const patricia_node_t *node);
+void *patricia_node_right_item(const patricia_node_t *node);
+patricia_node_t *patricia_head_node(const patricia_t *trie);
+patricia_node_t *patricia_node_left_node(const patricia_node_t *node);
+patricia_node_t *patricia_node_right_node(const patricia_node_t *node);
 
 #endif /* MJL_PATRICIA_H */

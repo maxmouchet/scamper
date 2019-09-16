@@ -6,7 +6,7 @@
  * Copyright (C) 2012-2015 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping.c,v 1.33 2016/09/17 05:52:37 mjl Exp $
+ * $Id: scamper_ping.c,v 1.35 2019/07/12 23:08:22 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping.c,v 1.33 2016/09/17 05:52:37 mjl Exp $";
+  "$Id: scamper_ping.c,v 1.35 2019/07/12 23:08:22 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -49,6 +49,8 @@ char *scamper_ping_method2str(const scamper_ping_t *ping, char *buf, size_t len)
     "udp-dport",
     "icmp-time",
     "tcp-syn",
+    "tcp-synack",
+    "tcp-rst",
   };
 
   if(ping->probe_method > sizeof(m) / sizeof(char *))

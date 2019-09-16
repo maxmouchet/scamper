@@ -2,7 +2,7 @@
  * linked list routines
  * by Matthew Luckie
  *
- * Copyright (C) 2004-2016 Matthew Luckie. All rights reserved.
+ * Copyright (C) 2004-2019 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_list.c,v 1.75 2017/10/28 19:15:51 mjl Exp $";
+  "$Id: mjl_list.c,v 1.76 2019/05/22 06:12:57 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -279,22 +279,16 @@ slist_t *slist_dup_dm(slist_t *oldlist,const slist_foreach_t func,void *param,
 {
   slist_t      *list;
   slist_node_t *oldnode, *node;
-  size_t        len = sizeof(slist_t);
 
   /* first, allocate a replacement slist_t structure */
 #ifndef DMALLOC
-  list = malloc(len);
+  list = slist_alloc();
 #else
-  list = dmalloc_malloc(file, line, len, DMALLOC_FUNC_MALLOC, 0, 0);
+  list = slist_alloc_dm(file, line);
 #endif
 
   if(list == NULL)
     return NULL;
-  list->head = NULL;
-  list->tail = NULL;
-  list->length = 0;
-  list->lock = 0;
-  list->onremove = NULL;
 
   if(oldlist->head != NULL)
     {
@@ -855,6 +849,79 @@ static dlist_node_t *dlist_node(void *i, dlist_node_t *p, dlist_node_t *n,
   return node;
 }
 
+/*
+ * dlist_dup
+ *
+ * make a copy of the list that points to the same items.
+ * if the foreach function is not null, call that on each item too.
+ */
+#ifndef DMALLOC
+dlist_t *dlist_dup(dlist_t *oldlist, const dlist_foreach_t func, void *param)
+#else
+dlist_t *dlist_dup_dm(dlist_t *oldlist,const dlist_foreach_t func,void *param,
+		      const char *file, const int line)
+#endif
+{
+  dlist_t      *list;
+  dlist_node_t *oldnode, *node;
+
+  /* first, allocate a replacement slist_t structure */
+#ifndef DMALLOC
+  list = dlist_alloc();
+#else
+  list = dlist_alloc_dm(file, line);
+#endif
+
+  if(list == NULL)
+    return NULL;
+
+  if(oldlist->head != NULL)
+    {
+#ifndef DMALLOC
+      if((node = dlist_node(oldlist->head->item, NULL, NULL)) == NULL)
+#else
+      if((node = dlist_node(oldlist->head->item, NULL, NULL, file, line)) == NULL)
+#endif
+	{
+	  goto err;
+	}
+
+      if(func != NULL) func(oldlist->head->item, param);
+
+      list->length = oldlist->length;
+      list->head = node;
+      oldnode = oldlist->head->next;
+    }
+  else return list;
+
+  while(oldnode != NULL)
+    {
+#ifndef DMALLOC
+      if((node->next = dlist_node(oldnode->item, node, NULL)) == NULL)
+#else
+      if((node->next = dlist_node(oldnode->item, node, NULL, file, line)) == NULL)
+#endif
+	{
+	  goto err;
+	}
+
+      if(func != NULL) func(oldnode->item, param);
+
+      oldnode = oldnode->next;
+      node->next->prev = node;
+      node = node->next;
+    }
+
+  list->tail = node;
+  dlist_assert(list);
+
+  return list;
+
+ err:
+  dlist_free(list);
+  return NULL;
+}
+
 #ifndef DMALLOC
 dlist_node_t *dlist_node_alloc(void *item)
 {
@@ -1262,6 +1329,12 @@ dlist_node_t *dlist_head_node(const dlist_t *list)
 {
   assert(list != NULL);
   return list->head;
+}
+
+dlist_node_t *dlist_tail_node(const dlist_t *list)
+{
+  assert(list != NULL);
+  return list->tail;
 }
 
 void *dlist_tail_item(const dlist_t *list)

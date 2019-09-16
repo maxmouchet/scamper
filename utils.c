@@ -1,13 +1,13 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.187 2018/12/04 08:58:36 mjl Exp $
+ * $Id: utils.c,v 1.190 2019/09/08 00:32:37 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2011      Matthew Luckie
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2015-2016 Matthew Luckie
+ * Copyright (C) 2015-2019 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.187 2018/12/04 08:58:36 mjl Exp $";
+  "$Id: utils.c,v 1.190 2019/09/08 00:32:37 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -435,6 +435,7 @@ const char *addr_tostr(int af, const void *addr, char *buf, size_t len)
 void *memdup(const void *ptr, const size_t len)
 {
   void *d;
+  assert(ptr != NULL);
   if((d = malloc(len)) != NULL)
     {
       memcpy(d, ptr, len);
@@ -974,6 +975,23 @@ int string_tolong(const char *str, long *l)
       if(errno == EINVAL) return -1;
     }
   else if(*l == LONG_MIN || *l == LONG_MAX)
+    {
+      if(errno == ERANGE) return -1;
+    }
+
+  return 0;
+}
+
+int string_tollong(const char *str, long long *l)
+{
+  char *endptr;
+
+  *l = strtoll(str, &endptr, 0);
+  if(*l == 0)
+    {
+      if(errno == EINVAL) return -1;
+    }
+  else if(*l == LLONG_MIN || *l == LLONG_MAX)
     {
       if(errno == ERANGE) return -1;
     }
@@ -1567,7 +1585,7 @@ int stat_mtime(const char *filename, time_t *mtime)
   return 0;
 }
 
-#if !defined(__sun__) && !defined(_WIN32)
+#if defined(HAVE_SYSCTL)
 int sysctl_wrap(int *mib, u_int len, void **buf, size_t *size)
 {
   if(sysctl(mib, len, NULL, size, NULL, 0) != 0)

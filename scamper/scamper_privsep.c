@@ -1,7 +1,7 @@
 /*
  * scamper_privsep.c: code that does root-required tasks
  *
- * $Id: scamper_privsep.c,v 1.89 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_privsep.c,v 1.90 2019/05/26 08:37:49 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -32,7 +32,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_privsep.c,v 1.89 2017/12/03 09:38:27 mjl Exp $";
+  "$Id: scamper_privsep.c,v 1.90 2019/05/26 08:37:49 mjl Exp $";
 #endif
 
 #include "internal.h"
@@ -1224,9 +1224,9 @@ int scamper_privsep_init()
 	   * get the uid of the user who will get ownership of the directory.
 	   * by default, this will be root.
 	   */
-	  if((pw = getpwnam(PRIVSEP_DIR_USER)) == NULL)
+	  if((pw = getpwnam(PRIVSEP_DIR_OWNER)) == NULL)
 	    {
-	      printerror(__func__, "could not getpwnam " PRIVSEP_DIR_USER);
+	      printerror(__func__, "could not getpwnam " PRIVSEP_DIR_OWNER);
 	      endpwent();
 	      return -1;
 	    }

@@ -9,7 +9,7 @@
 .\" Copyright (c) 2015      Matthew Luckie
 .\"                         All rights reserved
 .\"
-.\" $Id: scamper.1,v 1.74 2017/08/21 21:50:50 mjl Exp $
+.\" $Id: scamper.1,v 1.78 2019/09/16 05:33:35 mjl Exp $
 .\"
 .\"  nroff -man scamper.1
 .\"  groff -man -Tascii scamper.1 | man2html -title scamper.1
@@ -305,6 +305,7 @@ trace
 .Op Fl p Ar payload
 .Op Fl P Ar method
 .Op Fl q Ar attempts
+.Op Fl r Ar rtr-addr
 .Op Fl s Ar sport
 .Op Fl S Ar srcaddr
 .Op Fl t Ar tos
@@ -381,6 +382,8 @@ default, a value of two is used.
 .It Fl Q
 specifies that all allocated probes are sent, regardless of how many responses
 have been received.
+.It Fl r Ar rtr-addr
+specifies the IP address of the router to use.
 .It Fl s Ar sport
 specifies the source port value to use.  For ICMP-based methods, this option
 specifies the ICMP identifier to use.
@@ -420,6 +423,7 @@ options are available:
 ping
 .Bk -words
 .Op Fl R
+.Op Fl A Ar tcp-ack
 .Op Fl B Ar payload
 .Op Fl c Ar probecount
 .Op Fl C Ar icmp-sum
@@ -440,6 +444,9 @@ ping
 .Op Fl z Ar tos
 .Ek
 .Bl -tag -width Ds
+.It Fl A Ar tcp-ack
+specifies the number to use in the acknowledgement field of the TCP header,
+or the sequence number field of the TCP header when sending reset probes.
 .It Fl B Ar payload
 specifies, in a hexadecimal string, the payload to include in each probe.
 .It Fl c Ar probecount
@@ -473,12 +480,16 @@ The current choices for this option are:
 .Sy dl
 specifies that the ping should use datalink sockets, rather than raw sockets.
 .It
+.Sy nosrc
+specifies that the real address of the host should not be embedded in
+the payload of the packet when the spoof option is used.
+.It
 .Sy spoof
 specifies that the source address is to be spoofed according to the address
 specified with the
 .Fl S
 option.  The address scamper would otherwise use as the source address is
-embedded in the payload of the probe.
+embedded in the payload of the probe unless the nosrc option is used.
 .It
 .Sy tbt
 specifies that the goal of the ping is to obtain fragmented responses, so that
@@ -494,8 +505,8 @@ specified.  By default, each probe's bytes are zeroed.
 .It Fl P Ar method
 specifies the type of ping packets to send.
 By default, ICMP echo requests are sent.
-Choices are: icmp-echo, icmp-time, tcp-syn, tcp-ack, tcp-ack-sport, udp,
-and udp-dport.
+Choices are: icmp-echo, icmp-time, tcp-syn, tcp-ack, tcp-ack-sport,
+tcp-synack, tcp-rst, udp, and udp-dport.
 .It Fl R
 specifies that the record route IP option should be used.
 .It Fl s Ar size
@@ -819,13 +830,14 @@ tracelb command:
 .Pp
 tracelb
 .\"tracelb [-c confidence] [-d dport] [-f firsthop] [-g gaplimit]\n"
-.\"        [-P method] [-q attempts] [-Q maxprobec] [-s sport]\n"
+.\"        [-O option] [-P method] [-q attempts] [-Q maxprobec] [-s sport]\n"
 .\"        [-t tos] [-U userid] [-w wait-timeout] [-W wait-probe]";
 .Bk -words
 .Op Fl c Ar confidence
 .Op Fl d Ar dport
 .Op Fl f Ar firsthop
 .Op Fl g Ar gaplimit
+.Op Fl O Ar option
 .Op Fl P Ar method
 .Op Fl q Ar attempts
 .Op Fl Q Ar maxprobec
@@ -849,6 +861,14 @@ specifies how many hops away we should start probing.
 .It Fl g Ar gaplimit
 specifies how many consecutive unresponsive hops are permitted before
 probing down a branch halts.  Defaults to three.
+.It Fl O Ar option
+allows tracelb behaviour to be further tailored.
+The current choices for this option are:
+.Bl -dash -offset 2n -compact -width 1n
+.It
+.Sy ptr:
+do Domain Name System pointer (PTR) record lookups for IP addresses.
+.El
 .It Fl P Ar method
 specifies which method we should use to do the probing.
 Valid options are: "udp-dport", "icmp-echo", "udp-sport", "tcp-sport", and

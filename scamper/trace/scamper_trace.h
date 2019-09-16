@@ -1,13 +1,14 @@
 /*
  * scamper_trace.h
  *
- * $Id: scamper_trace.h,v 1.137 2015/10/14 04:26:08 mjl Exp $
+ * $Id: scamper_trace.h,v 1.138 2019/06/23 05:41:21 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2008      Alistair King
  * Copyright (C) 2015      The Regents of the University of California
  * Copyright (C) 2015      The University of Waikato
+ * Copyright (C) 2019      Matthew Luckie
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
  *
@@ -322,6 +323,7 @@ typedef struct scamper_trace
   /* source and destination addresses of the trace */
   struct scamper_addr   *src;
   struct scamper_addr   *dst;
+  struct scamper_addr   *rtr;
 
   /* when the trace commenced */
   struct timeval         start;

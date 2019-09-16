@@ -1,7 +1,7 @@
 /*
  * scamper_ping.h
  *
- * $Id: scamper_ping.h,v 1.49 2015/01/12 05:28:10 mjl Exp $
+ * $Id: scamper_ping.h,v 1.51 2019/07/12 23:08:22 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -75,7 +75,9 @@
 #define SCAMPER_PING_METHOD_IS_TCP(ping) (                    \
  ((ping)->probe_method == SCAMPER_PING_METHOD_TCP_ACK ||      \
   (ping)->probe_method == SCAMPER_PING_METHOD_TCP_ACK_SPORT || \
-  (ping)->probe_method == SCAMPER_PING_METHOD_TCP_SYN))
+  (ping)->probe_method == SCAMPER_PING_METHOD_TCP_SYN || \
+  (ping)->probe_method == SCAMPER_PING_METHOD_TCP_SYNACK || \
+  (ping)->probe_method == SCAMPER_PING_METHOD_TCP_RST))
 
 #define SCAMPER_PING_METHOD_IS_UDP(ping) (                \
  ((ping)->probe_method == SCAMPER_PING_METHOD_UDP ||      \
@@ -113,6 +115,8 @@
 #define SCAMPER_PING_METHOD_UDP_DPORT     0x04
 #define SCAMPER_PING_METHOD_ICMP_TIME     0x05
 #define SCAMPER_PING_METHOD_TCP_SYN       0x06
+#define SCAMPER_PING_METHOD_TCP_SYNACK    0x07
+#define SCAMPER_PING_METHOD_TCP_RST       0x08
 
 #define SCAMPER_PING_FLAG_V4RR            0x01 /* -R: IPv4 record route */
 #define SCAMPER_PING_FLAG_SPOOF           0x02 /* -O spoof: spoof src */
@@ -122,6 +126,7 @@
 #define SCAMPER_PING_FLAG_ICMPSUM         0x20 /* -C csum */
 #define SCAMPER_PING_FLAG_DL              0x40 /* always use datalink socket */
 #define SCAMPER_PING_FLAG_TBT             0x80 /* -O tbt: too big trick */
+#define SCAMPER_PING_FLAG_NOSRC           0x100 /* -O nosrc: do not embed src */
 
 /*
  * scamper_ping_reply_v4rr
@@ -260,10 +265,12 @@ typedef struct scamper_ping
   uint16_t               probe_sport;   /* -F */
   uint16_t               probe_dport;   /* -d */
   uint16_t               probe_icmpsum; /* -C */
+  uint32_t               probe_tcpseq;  /* -A with tcp-syn and tcp-rst */
+  uint32_t               probe_tcpack;  /* -A with other tcp probe methods */
   uint16_t               reply_count;   /* -o */
   uint16_t               reply_pmtu;    /* -M */
   scamper_ping_v4ts_t   *probe_tsps;    /* -T */
-  uint8_t                flags;
+  uint32_t               flags;
 
   /* actual data collected with the ping */
   scamper_ping_reply_t **ping_replies;

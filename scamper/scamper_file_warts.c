@@ -3,7 +3,7 @@
  *
  * the warts file format
  *
- * $Id: scamper_file_warts.c,v 1.253 2016/12/09 08:42:51 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.254 2019/07/28 09:24:53 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file_warts.c,v 1.253 2016/12/09 08:42:51 mjl Exp $";
+  "$Id: scamper_file_warts.c,v 1.254 2019/07/28 09:24:53 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -56,6 +56,8 @@ static const char rcsid[] =
 #include "sting/scamper_sting_warts.h"
 #include "sniff/scamper_sniff.h"
 #include "sniff/scamper_sniff_warts.h"
+#include "host/scamper_host.h"
+#include "host/scamper_host_warts.h"
 
 #include "mjl_splaytree.h"
 #include "utils.h"
@@ -1978,6 +1980,7 @@ int scamper_file_warts_read(scamper_file_t *sf, scamper_file_filter_t *filter,
     (warts_obj_read_t)scamper_file_warts_tbit_read,
     (warts_obj_read_t)scamper_file_warts_sting_read,
     (warts_obj_read_t)scamper_file_warts_sniff_read,
+    (warts_obj_read_t)scamper_file_warts_host_read,
   };
   warts_state_t   *state = scamper_file_getstate(sf);
   warts_hdr_t      hdr;

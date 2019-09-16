@@ -1,7 +1,7 @@
 /*
  * scamper_do_tbit.c
  *
- * $Id: scamper_tbit_do.c,v 1.182 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_tbit_do.c,v 1.183 2019/07/12 23:37:57 mjl Exp $
  *
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2009-2010 Stephen Eichler
@@ -38,7 +38,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tbit_do.c,v 1.182 2017/12/03 09:38:27 mjl Exp $";
+  "$Id: scamper_tbit_do.c,v 1.183 2019/07/12 23:37:57 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -3908,7 +3908,7 @@ err:
   return;
 }
 
-static int tbit_arg_param_validate(int optid, char *param, long *out)
+static int tbit_arg_param_validate(int optid, char *param, long long *out)
 {
   long tmp;
 
@@ -4006,7 +4006,7 @@ static int tbit_arg_param_validate(int optid, char *param, long *out)
 
   /* valid parameter */
   if(out != NULL)
-    *out = tmp;
+    *out = (long long)tmp;
   return 0;
 
  err:
@@ -4297,7 +4297,7 @@ void *scamper_do_tbit_alloc(char *str)
   uint8_t ttl = 255;
   uint32_t userid = 0;
   char *addr;
-  long tmp = 0;
+  long long tmp = 0;
   int i;
 
   memset(&o, 0, sizeof(o));

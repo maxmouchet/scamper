@@ -1,12 +1,12 @@
 /*
  * scamper_task.c
  *
- * $Id: scamper_task.c,v 1.65 2018/10/24 00:21:25 mjl Exp $
+ * $Id: scamper_task.c,v 1.68 2019/05/27 09:33:52 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2019 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_task.c,v 1.65 2018/10/24 00:21:25 mjl Exp $";
+  "$Id: scamper_task.c,v 1.68 2019/05/27 09:33:52 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -50,6 +50,7 @@ static const char rcsid[] =
 #include "scamper_dl.h"
 #include "mjl_list.h"
 #include "mjl_splaytree.h"
+#include "mjl_patricia.h"
 #include "utils.h"
 
 struct scamper_task
@@ -106,17 +107,31 @@ typedef struct task_onhold
   void           *param;
 } task_onhold_t;
 
-static splaytree_t *tx_ip4 = NULL;
-static splaytree_t *tx_ip6 = NULL;
-static splaytree_t *tx_nd4 = NULL;
-static splaytree_t *tx_nd6 = NULL;
+static patricia_t  *tx_ip4 = NULL;
+static patricia_t  *tx_ip6 = NULL;
+static patricia_t  *tx_nd4 = NULL;
+static patricia_t  *tx_nd6 = NULL;
 static dlist_t     *sniff = NULL;
+static splaytree_t *host = NULL;
 
 static int tx_ip_cmp(const s2t_t *a, const s2t_t *b)
 {
   assert(a->sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_IP);
   assert(b->sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_IP);
   return scamper_addr_cmp(a->sig->sig_tx_ip_dst, b->sig->sig_tx_ip_dst);
+}
+
+static int tx_ip_bit(const s2t_t *s2t, int bit)
+{
+  assert(s2t->sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_IP);
+  return scamper_addr_bit(s2t->sig->sig_tx_ip_dst, bit);
+}
+
+static int tx_ip_fbd(const s2t_t *a, const s2t_t *b)
+{
+  assert(a->sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_IP);
+  assert(b->sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_IP);
+  return scamper_addr_fbd(a->sig->sig_tx_ip_dst, b->sig->sig_tx_ip_dst);
 }
 
 static int tx_nd_cmp(const s2t_t *a, const s2t_t *b)
@@ -126,22 +141,42 @@ static int tx_nd_cmp(const s2t_t *a, const s2t_t *b)
   return scamper_addr_cmp(a->sig->sig_tx_nd_ip, b->sig->sig_tx_nd_ip);
 }
 
+static int tx_nd_bit(const s2t_t *s2t, int bit)
+{
+  assert(s2t->sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_ND);
+  return scamper_addr_bit(s2t->sig->sig_tx_nd_ip, bit);
+}
+
+static int tx_nd_fbd(const s2t_t *a, const s2t_t *b)
+{
+  assert(a->sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_ND);
+  assert(b->sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_ND);
+  return scamper_addr_fbd(a->sig->sig_tx_nd_ip, b->sig->sig_tx_nd_ip);
+}
+
+static int host_cmp(const s2t_t *a, const s2t_t *b)
+{
+  assert(a->sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST);
+  assert(b->sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST);
+  return strcasecmp(a->sig->sig_host_name, b->sig->sig_host_name);
+}
+
 static void tx_ip_check(scamper_dl_rec_t *dl)
 {
   scamper_task_sig_t sig;
   scamper_addr_t addr, addr2buf, *addr2 = NULL;
-  splaytree_t *tree;
+  patricia_t *pt;
   s2t_t fm, *s2t;
 
   if(SCAMPER_DL_IS_IPV4(dl))
     {
       addr.type = SCAMPER_ADDR_TYPE_IPV4;
-      tree = tx_ip4;
+      pt = tx_ip4;
     }
   else if(SCAMPER_DL_IS_IPV6(dl))
     {
       addr.type = SCAMPER_ADDR_TYPE_IPV6;
-      tree = tx_ip6;
+      pt = tx_ip6;
     }
   else return;
 
@@ -186,7 +221,7 @@ static void tx_ip_check(scamper_dl_rec_t *dl)
   sig.sig_type = SCAMPER_TASK_SIG_TYPE_TX_IP;
   sig.sig_tx_ip_dst = &addr;
 
-  if((s2t = splaytree_find(tree, &fm)) != NULL &&
+  if((s2t = patricia_find(pt, &fm)) != NULL &&
      s2t->task->funcs->handle_dl != NULL)
     {
       s2t->task->funcs->handle_dl(s2t->task, dl);
@@ -194,7 +229,7 @@ static void tx_ip_check(scamper_dl_rec_t *dl)
   else if(addr2 != NULL)
     {
       sig.sig_tx_ip_dst = addr2;
-      if((s2t = splaytree_find(tree, &fm)) != NULL &&
+      if((s2t = patricia_find(pt, &fm)) != NULL &&
 	 s2t->task->funcs->handle_dl != NULL)
 	{
 	  s2t->task->funcs->handle_dl(s2t->task, dl);
@@ -210,33 +245,33 @@ static void tx_nd_check(scamper_dl_rec_t *dl)
   scamper_addr_t ip;
   struct in_addr ip4;
   struct in6_addr ip6;
-  splaytree_t *tree;
+  patricia_t *pt;
   s2t_t fm, *s2t;
 
   if(SCAMPER_DL_IS_ARP_OP_REPLY(dl) && SCAMPER_DL_IS_ARP_PRO_IPV4(dl))
     {
-      if(splaytree_count(tx_nd4) <= 0)
+      if(patricia_count(tx_nd4) <= 0)
 	return;
       ip.type = SCAMPER_ADDR_TYPE_IPV4;
       memcpy(&ip4, dl->dl_arp_spa, sizeof(ip4));
       ip.addr = &ip4;
-      tree = tx_nd4;
+      pt = tx_nd4;
     }
   else if(SCAMPER_DL_IS_ICMP6_ND_NADV(dl))
     {
-      if(splaytree_count(tx_nd6) <= 0)
+      if(patricia_count(tx_nd6) <= 0)
 	return;
       ip.type = SCAMPER_ADDR_TYPE_IPV6;
       memcpy(&ip6, dl->dl_icmp6_nd_target, sizeof(ip6));
       ip.addr = &ip6;
-      tree = tx_nd6;
+      pt = tx_nd6;
     }
   else return;
 
   sig.sig_type = SCAMPER_TASK_SIG_TYPE_TX_ND;
   sig.sig_tx_nd_ip = &ip;
   fm.sig = &sig;
-  if((s2t = splaytree_find(tree, &fm)) == NULL)
+  if((s2t = patricia_find(pt, &fm)) == NULL)
     return;
 
   if(s2t->task->funcs->handle_dl != NULL)
@@ -289,6 +324,7 @@ static void sniff_check(scamper_dl_rec_t *dl)
 static void s2t_free(s2t_t *s2t)
 {
   scamper_task_sig_t *sig = s2t->sig;
+  int x;
 
   if(s2t == NULL)
     return;
@@ -298,19 +334,23 @@ static void s2t_free(s2t_t *s2t)
       if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_IP)
 	{
 	  if(sig->sig_tx_ip_dst->type == SCAMPER_ADDR_TYPE_IPV4)
-	    splaytree_remove_node(tx_ip4, s2t->node);
+	    x = patricia_remove_node(tx_ip4, s2t->node);
 	  else
-	    splaytree_remove_node(tx_ip6, s2t->node);
+	    x = patricia_remove_node(tx_ip6, s2t->node);
+	  assert(x == 0);
 	}
       else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_ND)
 	{
 	  if(sig->sig_tx_nd_ip->type == SCAMPER_ADDR_TYPE_IPV4)
-	    splaytree_remove_node(tx_nd4, s2t->node);
+	    x = patricia_remove_node(tx_nd4, s2t->node);
 	  else
-	    splaytree_remove_node(tx_nd6, s2t->node);
+	    x = patricia_remove_node(tx_nd6, s2t->node);
+	  assert(x == 0);
 	}
       else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_SNIFF)
 	dlist_node_pop(sniff, s2t->node);
+      else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST)
+	splaytree_remove_node(host, s2t->node);
     }
 
   free(s2t);
@@ -332,6 +372,8 @@ char *scamper_task_sig_tostr(scamper_task_sig_t *sig, char *buf, size_t len)
     string_concat(buf, len, &off, "sniff %s icmp-id %04x",
 		  scamper_addr_tostr(sig->sig_sniff_src, tmp, sizeof(tmp)),
 		  sig->sig_sniff_icmp_id);
+  else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST)
+    string_concat(buf, len, &off, "host %s", sig->sig_host_name);
   else
     return NULL;
 
@@ -364,6 +406,10 @@ void scamper_task_sig_free(scamper_task_sig_t *sig)
 
     case SCAMPER_TASK_SIG_TYPE_SNIFF:
       if(sig->sig_sniff_src != NULL) scamper_addr_free(sig->sig_sniff_src);
+      break;
+
+    case SCAMPER_TASK_SIG_TYPE_HOST:
+      if(sig->sig_host_name != NULL) free(sig->sig_host_name);
       break;
     }
 
@@ -406,7 +452,10 @@ int scamper_task_sig_add(scamper_task_t *task, scamper_task_sig_t *sig)
   s2t->sig = sig;
   s2t->task = task;
   if(slist_tail_push(task->siglist, s2t) == NULL)
-    return -1;
+    {
+      free(s2t);
+      return -1;
+    }
   return 0;
 }
 
@@ -418,16 +467,16 @@ scamper_task_t *scamper_task_find(scamper_task_sig_t *sig)
   if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_IP)
     {
       if(sig->sig_tx_ip_dst->type == SCAMPER_ADDR_TYPE_IPV4)
-	s2t = splaytree_find(tx_ip4, &fm);
+	s2t = patricia_find(tx_ip4, &fm);
       else
-	s2t = splaytree_find(tx_ip6, &fm);
+	s2t = patricia_find(tx_ip6, &fm);
     }
   else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_ND)
     {
       if(sig->sig_tx_nd_ip->type == SCAMPER_ADDR_TYPE_IPV4)
-	s2t = splaytree_find(tx_nd4, &fm);
+	s2t = patricia_find(tx_nd4, &fm);
       else
-	s2t = splaytree_find(tx_nd6, &fm);
+	s2t = patricia_find(tx_nd6, &fm);
     }
   else
     return NULL;
@@ -461,7 +510,10 @@ int scamper_task_sig_install(scamper_task_t *task)
   slist_node_t *n;
 
   if(slist_count(task->siglist) < 1)
-    return -1;
+    {
+      printerror(__func__, "no signatures for task");
+      return -1;
+    }
 
   for(n=slist_head_node(task->siglist); n != NULL; n = slist_node_next(n))
     {
@@ -478,19 +530,21 @@ int scamper_task_sig_install(scamper_task_t *task)
       if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_IP)
 	{
 	  if(sig->sig_tx_ip_dst->type == SCAMPER_ADDR_TYPE_IPV4)
-	    s2t->node = splaytree_insert(tx_ip4, s2t);
+	    s2t->node = patricia_insert(tx_ip4, s2t);
 	  else
-	    s2t->node = splaytree_insert(tx_ip6, s2t);
+	    s2t->node = patricia_insert(tx_ip6, s2t);
 	}
       else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_ND)
 	{
 	  if(sig->sig_tx_nd_ip->type == SCAMPER_ADDR_TYPE_IPV4)
-	    s2t->node = splaytree_insert(tx_nd4, s2t);
+	    s2t->node = patricia_insert(tx_nd4, s2t);
 	  else
-	    s2t->node = splaytree_insert(tx_nd6, s2t);
+	    s2t->node = patricia_insert(tx_nd6, s2t);
 	}
       else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_SNIFF)
 	s2t->node = dlist_tail_push(sniff, s2t);
+      else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST)
+	s2t->node = splaytree_insert(host, s2t);
 
       if(s2t->node == NULL)
 	{
@@ -878,13 +932,23 @@ scamper_fd_t *scamper_task_fd_rtsock(scamper_task_t *task)
 
 int scamper_task_init(void)
 {
-  if((tx_ip4 = splaytree_alloc((splaytree_cmp_t)tx_ip_cmp)) == NULL)
+  if((tx_ip4 = patricia_alloc((patricia_bit_t)tx_ip_bit,
+			      (patricia_cmp_t)tx_ip_cmp,
+			      (patricia_fbd_t)tx_ip_fbd)) == NULL)
     return -1;
-  if((tx_ip6 = splaytree_alloc((splaytree_cmp_t)tx_ip_cmp)) == NULL)
+  if((tx_ip6 = patricia_alloc((patricia_bit_t)tx_ip_bit,
+			      (patricia_cmp_t)tx_ip_cmp,
+			      (patricia_fbd_t)tx_ip_fbd)) == NULL)
     return -1;
-  if((tx_nd4 = splaytree_alloc((splaytree_cmp_t)tx_nd_cmp)) == NULL)
+  if((tx_nd4 = patricia_alloc((patricia_bit_t)tx_nd_bit,
+			      (patricia_cmp_t)tx_nd_cmp,
+			      (patricia_fbd_t)tx_nd_fbd)) == NULL)
     return -1;
-  if((tx_nd6 = splaytree_alloc((splaytree_cmp_t)tx_nd_cmp)) == NULL)
+  if((tx_nd6 = patricia_alloc((patricia_bit_t)tx_nd_bit,
+			      (patricia_cmp_t)tx_nd_cmp,
+			      (patricia_fbd_t)tx_nd_fbd)) == NULL)
+    return -1;
+  if((host = splaytree_alloc((splaytree_cmp_t)host_cmp)) == NULL)
     return -1;
   if((sniff = dlist_alloc()) == NULL)
     return -1;
@@ -893,10 +957,11 @@ int scamper_task_init(void)
 
 void scamper_task_cleanup(void)
 {
-  if(tx_ip4 != NULL) { splaytree_free(tx_ip4, NULL); tx_ip4 = NULL; }
-  if(tx_ip6 != NULL) { splaytree_free(tx_ip6, NULL); tx_ip6 = NULL; }
-  if(tx_nd4 != NULL) { splaytree_free(tx_nd4, NULL); tx_nd4 = NULL; }
-  if(tx_nd6 != NULL) { splaytree_free(tx_nd6, NULL); tx_nd6 = NULL; }
+  if(tx_ip4 != NULL) { patricia_free(tx_ip4); tx_ip4 = NULL; }
+  if(tx_ip6 != NULL) { patricia_free(tx_ip6); tx_ip6 = NULL; }
+  if(tx_nd4 != NULL) { patricia_free(tx_nd4); tx_nd4 = NULL; }
+  if(tx_nd6 != NULL) { patricia_free(tx_nd6); tx_nd6 = NULL; }
+  if(host != NULL)   { splaytree_free(host, NULL);   host   = NULL; }
   if(sniff != NULL)  { dlist_free(sniff); sniff = NULL; }
   return;
 }

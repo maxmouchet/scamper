@@ -19,12 +19,12 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: sc_tbitpmtud.c,v 1.17 2018/10/24 19:40:25 mjl Exp $
+ * $Id: sc_tbitpmtud.c,v 1.20 2019/07/12 21:40:13 mjl Exp $
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_tbitpmtud.c,v 1.17 2018/10/24 19:40:25 mjl Exp $";
+  "$Id: sc_tbitpmtud.c,v 1.20 2019/07/12 21:40:13 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1113,6 +1113,12 @@ static int do_decoderead(void)
 
   if(data == NULL)
     {
+      if(scamper_file_geteof(decode_in) != 0)
+	{
+	  scamper_file_close(decode_in);
+	  decode_in = NULL;
+	  decode_in_fd = -1;
+	}
       return 0;
     }
 
@@ -1235,7 +1241,6 @@ static int pmtud_data(void)
 	break;
 
       tv_ptr = NULL;
-      gettimeofday_wrap(&tv);
       if(more > 0)
 	{
 	  if(slist_count(list) > 0 &&
@@ -1246,8 +1251,9 @@ static int pmtud_data(void)
 	    }
 	  else if((target = heap_head_item(heap)) != NULL)
 	    {
-	      if(timeval_cmp(&tv, &target->next) <= 0)
-		timeval_diff_tv(&tv, &tv, &target->next);
+	      gettimeofday_wrap(&now);
+	      if(timeval_cmp(&now, &target->next) <= 0)
+		timeval_diff_tv(&tv, &now, &target->next);
 	      else
 		memset(&tv, 0, sizeof(tv));
 	      tv_ptr = &tv;
@@ -1405,7 +1411,7 @@ static int ip2as_line(char *line, void *param)
       u32 = atoi(a);
       /* skip over private / reserved ASNs */
       if(u32 == 0 || u32 == 23456 ||
-	 (u32 >= 64512 && u32 <= 65535) || u32 >= 4200000000)
+	 (u32 >= 64512 && u32 <= 65535) || u32 >= 4200000000UL)
 	continue;
       if(uint32_add(&ases, &asc, u32) != 0)
 	goto err;

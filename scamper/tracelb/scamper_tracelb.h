@@ -1,9 +1,10 @@
 /*
  * scamper_tracelb.h
  *
- * $Id: scamper_tracelb.h,v 1.59 2018/05/26 21:00:30 mjl Exp $
+ * $Id: scamper_tracelb.h,v 1.60 2019/01/13 07:02:07 mjl Exp $
  *
  * Copyright (C) 2008-2009 The University of Waikato
+ * Copyright (C) 2018-2019 Matthew Luckie
  * Author: Matthew Luckie
  *
  * Load-balancer traceroute technique authored by
@@ -49,6 +50,12 @@ typedef struct scamper_tracelb_probeset_summary scamper_tracelb_probeset_summary
 #define SCAMPER_TRACELB_TYPE_UDP_SPORT      0x03 /* vary udp-sport */
 #define SCAMPER_TRACELB_TYPE_TCP_SPORT      0x04 /* vary tcp-sport */
 #define SCAMPER_TRACELB_TYPE_TCP_ACK_SPORT  0x05 /* tcp-ack, vary sport */
+
+/*
+ * these values give the 'flags' member of a scamper_tracelb_t structure
+ * some meaning.
+ */
+#define SCAMPER_TRACELB_FLAG_PTR            0x01 /* do ptr lookups */
 
 /*
  * these values give the 'flags' member of a scamper_tracelb_node_t
@@ -180,6 +187,7 @@ struct scamper_tracelb_probeset_summary
 struct scamper_tracelb_node
 {
   scamper_addr_t               *addr;  /* address of the node */
+  char                         *name;  /* PTR for the addr */
   uint8_t                       flags; /* associated flags */
   uint8_t                       q_ttl; /* quoted ttl */
   scamper_tracelb_link_t      **links; /* links */
@@ -231,6 +239,7 @@ typedef struct scamper_tracelb
   uint8_t                    confidence;   /* confidence level to attain */
   uint8_t                    tos;          /* type-of-service byte to use */
   uint8_t                    gaplimit;     /* max consecutive unresp. hops */
+  uint8_t                    flags;        /* flags */
   uint32_t                   probec_max;   /* max number of probes to send */
 
   /*

@@ -1,7 +1,7 @@
 /*
  * scamper_do_sting.c
  *
- * $Id: scamper_sting_do.c,v 1.47 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_sting_do.c,v 1.48 2019/07/12 23:37:57 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012      The Regents of the University of California
@@ -31,7 +31,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sting_do.c,v 1.47 2017/12/03 09:38:27 mjl Exp $";
+  "$Id: scamper_sting_do.c,v 1.48 2019/07/12 23:37:57 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -856,7 +856,7 @@ static void do_sting_probe(scamper_task_t *task)
   return;
 }
 
-static int sting_arg_param_validate(int optid, char *param, long *out)
+static int sting_arg_param_validate(int optid, char *param, long long *out)
 {
   long tmp;
 
@@ -919,7 +919,7 @@ static int sting_arg_param_validate(int optid, char *param, long *out)
 
   /* valid parameter */
   if(out != NULL)
-    *out = tmp;
+    *out = (long long)tmp;
   return 0;
 
  err:
@@ -948,7 +948,7 @@ void *scamper_do_sting_alloc(char *str)
   scamper_option_out_t *opts_out = NULL, *opt;
   scamper_sting_t *sting = NULL;
   char *addr;
-  long tmp = 0;
+  long long tmp = 0;
 
   /* try and parse the string passed in */
   if(scamper_options_parse(str, opts, opts_cnt, &opts_out, &addr) != 0)

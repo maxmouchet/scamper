@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_tbitblind.c,v 1.4 2016/02/15 21:04:54 mjl Exp $";
+  "$Id: sc_tbitblind.c,v 1.5 2019/07/12 21:40:13 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -819,6 +819,12 @@ static int do_decoderead(void)
 
   if(data == NULL)
     {
+      if(scamper_file_geteof(decode_in) != 0)
+	{
+	  scamper_file_close(decode_in);
+	  decode_in = NULL;
+	  decode_in_fd = -1;
+	}
       return 0;
     }
 

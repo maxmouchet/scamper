@@ -3,7 +3,14 @@ SUBDIRS = \
 	sc_analysis_dump \
 	sc_attach \
 	sc_bdrmap \
-	sc_filterpolicy \
+	sc_erosprober \
+	sc_filterpolicy
+
+if WITH_SC_HOIHO
+SUBDIRS+= sc_hoiho
+endif
+
+SUBDIRS+= \
 	sc_ipiddump \
 	sc_prefixscan \
 	sc_radargun \

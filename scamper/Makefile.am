@@ -1,4 +1,4 @@
-# $Id: Makefile.am,v 1.31 2018/10/24 00:21:25 mjl Exp $
+# $Id: Makefile.am,v 1.34 2019/07/28 09:24:53 mjl Exp $
 
 AUTOMAKE_OPTIONS = subdir-objects
 
@@ -47,12 +47,15 @@ libscamperfile_la_SOURCES = \
 	tbit/scamper_tbit_text.c \
 	tbit/scamper_tbit_json.c \
 	sniff/scamper_sniff.c \
-	sniff/scamper_sniff_warts.c
+	sniff/scamper_sniff_warts.c \
+	host/scamper_host.c \
+	host/scamper_host_warts.c
 
 scamper_SOURCES = \
 	../mjl_list.c \
 	../mjl_heap.c \
 	../mjl_splaytree.c \
+	../mjl_patricia.c \
 	../utils.c \
 	scamper.c \
 	scamper_osinfo.c \
@@ -131,7 +134,10 @@ scamper_SOURCES = \
 	tbit/scamper_tbit_do.c \
 	sniff/scamper_sniff.c \
 	sniff/scamper_sniff_warts.c \
-	sniff/scamper_sniff_do.c
+	sniff/scamper_sniff_do.c \
+	host/scamper_host.c \
+	host/scamper_host_warts.c \
+	host/scamper_host_do.c
 
 scamper_CFLAGS = $(AM_CFLAGS)
 
@@ -150,7 +156,8 @@ include_HEADERS = \
 	sting/scamper_sting.h \
 	neighbourdisc/scamper_neighbourdisc.h \
 	tbit/scamper_tbit.h \
-	sniff/scamper_sniff.h
+	sniff/scamper_sniff.h \
+	host/scamper_host.h
 
 man_MANS = \
 	scamper.1 \

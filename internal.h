@@ -1,7 +1,7 @@
 /*
  * internal.h
  *
- * $Id: internal.h,v 1.42 2016/09/17 01:38:13 mjl Exp $
+ * $Id: internal.h,v 1.43 2019/08/20 20:00:40 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -173,6 +173,7 @@ typedef unsigned short sa_family_t;
 #include <linux/types.h>
 #include <linux/filter.h>
 #include <linux/netfilter_ipv4/ip_tables.h>
+#include <linux/sockios.h>
 #include <limits.h>
 #ifndef SOL_PACKET
 #define SOL_PACKET 263

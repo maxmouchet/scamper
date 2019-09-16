@@ -4,7 +4,7 @@
  * Adapted from the patricia trie in "Robert Sedgewick's Algorithms in C++"
  * and from the Java implementation by Josh Hentosh and Robert Sedgewick.
  *
- * Copyright (C) 2016 Matthew Luckie. All rights reserved.
+ * Copyright (C) 2016,2019 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,13 +27,13 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_patricia.c,v 1.3 2016/08/26 10:11:58 mjl Exp $
+ * $Id: mjl_patricia.c,v 1.4 2019/05/25 09:16:32 mjl Exp $
  *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: mjl_patricia.c,v 1.3 2016/08/26 10:11:58 mjl Exp $";
+  "$Id: mjl_patricia.c,v 1.4 2019/05/25 09:16:32 mjl Exp $";
 #endif
 
 #include <stdlib.h>
@@ -61,6 +61,45 @@ struct patricia_node
   patricia_node_t *left;
   patricia_node_t *right;
 };
+
+int patricia_node_bit(const patricia_node_t *node)
+{
+  return node->bit;
+}
+
+void *patricia_node_item(const patricia_node_t *node)
+{
+  return node->item;
+}
+
+void *patricia_node_left_item(const patricia_node_t *node)
+{
+  if(node->left == NULL)
+    return NULL;
+  return node->left->item;
+}
+
+patricia_node_t *patricia_node_left_node(const patricia_node_t *node)
+{
+  return node->left;
+}
+
+void *patricia_node_right_item(const patricia_node_t *node)
+{
+  if(node->right == NULL)
+    return NULL;
+  return node->right->item;
+}
+
+patricia_node_t *patricia_node_right_node(const patricia_node_t *node)
+{
+  return node->right;
+}
+
+patricia_node_t *patricia_head_node(const patricia_t *trie)
+{
+  return trie->head;
+}
 
 void *patricia_find(const patricia_t *trie, const void *item)
 {
@@ -92,6 +131,7 @@ patricia_node_t *patricia_insert_dm(patricia_t *trie, void *item,
   size_t len;
   int b;
 
+  assert(x != NULL);
   do
     {
       p = x;
@@ -99,6 +139,7 @@ patricia_node_t *patricia_insert_dm(patricia_t *trie, void *item,
 	x = x->left;
       else
 	x = x->right;
+      assert(x != NULL);
     }
   while(p->bit < x->bit);
 
@@ -126,11 +167,12 @@ patricia_node_t *patricia_insert_dm(patricia_t *trie, void *item,
   x = trie->head;
   do
     {
-      p = x;
+      p = x; assert(p != NULL);
       if(x->bit != 0 && trie->bit(item, x->bit) == 0)
 	x = x->left;
       else
 	x = x->right;
+      assert(x != NULL);
     }
   while(p->bit < x->bit && x->bit < b);
 
@@ -218,6 +260,7 @@ static void patricia_gpx_remove(patricia_t *trie,
   y = trie->head;
   do
     {
+      assert(y != NULL);
       z = y;
       if(y->bit != 0 && trie->bit(x->item, y->bit) == 0)
 	y = y->left;
@@ -229,9 +272,15 @@ static void patricia_gpx_remove(patricia_t *trie,
   if(x == p)
     {
       if(x->bit != 0 && trie->bit(x->item, x->bit) == 0)
-	c = x->right;
+	{
+	  assert(x->right != x);
+	  c = x->right;
+	}
       else
-	c = x->left;
+	{
+	  assert(x->left != x);
+	  c = x->left;
+	}
       if(z->bit != 0 && trie->bit(x->item, z->bit) == 0)
 	z->left = c;
       else
@@ -239,20 +288,34 @@ static void patricia_gpx_remove(patricia_t *trie,
     }
   else
     {
+      assert(p != NULL);
       if(p->bit != 0 && trie->bit(x->item, p->bit) == 0)
 	c = p->right;
       else
 	c = p->left;
+      assert(g != NULL);
       if(g->bit != 0 && trie->bit(x->item, g->bit) == 0)
 	g->left = c;
       else
 	g->right = c;
+      assert(z != NULL);
       if(z->bit != 0 && trie->bit(x->item, z->bit) == 0)
 	z->left = p;
       else
 	z->right = p;
-      p->left = x->left;
-      p->right = x->right;
+
+      /*
+       * set the trie up for when x is removed.  handle the case when
+       * x points to itself
+       */
+      if(x->left != x)
+	p->left = x->left;
+      else
+	p->left = p;
+      if(x->right != x)
+	p->right = x->right;
+      else
+	p->right = p;
       p->bit = x->bit;
     }
 
@@ -264,6 +327,8 @@ static void patricia_gpx_remove(patricia_t *trie,
       trie->head->bit = 0;
       trie->head->item = NULL;
     }
+
+  assert(x != trie->head);
 
   /* don't need the node structure anymore, so free it */
   free(x);

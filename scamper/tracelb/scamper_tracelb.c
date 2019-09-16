@@ -1,10 +1,11 @@
 /*
  * scamper_tracelb.c
  *
- * $Id: scamper_tracelb.c,v 1.57 2018/05/26 21:00:30 mjl Exp $
+ * $Id: scamper_tracelb.c,v 1.58 2019/01/13 07:02:07 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2018-2019 Matthew Luckie
  * Author: Matthew Luckie
  *
  * Load-balancer traceroute technique authored by
@@ -28,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb.c,v 1.57 2018/05/26 21:00:30 mjl Exp $";
+  "$Id: scamper_tracelb.c,v 1.58 2019/01/13 07:02:07 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -474,6 +475,9 @@ void scamper_tracelb_node_free(scamper_tracelb_node_t *node)
 
   if(node->addr != NULL)
     scamper_addr_free(node->addr);
+
+  if(node->name != NULL)
+    free(node->name);
 
   free(node);
   return;

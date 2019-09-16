@@ -1,7 +1,7 @@
 /*
  * sc_bdrmap: driver to map first hop border routers of networks
  *
- * $Id: sc_bdrmap.c,v 1.16 2018/09/27 03:27:37 mjl Exp $
+ * $Id: sc_bdrmap.c,v 1.20 2019/09/16 03:45:31 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@caida.org / mjl@wand.net.nz
@@ -9,7 +9,7 @@
  * Copyright (C) 2014-2015 The Regents of the University of California
  * Copyright (C) 2015-2016 The University of Waikato
  * Copyright (C) 2017      The Regents of the University of California
- * Copyright (C) 2018      The University of Waikato
+ * Copyright (C) 2018-2019 The University of Waikato
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_bdrmap.c,v 1.16 2018/09/27 03:27:37 mjl Exp $";
+  "$Id: sc_bdrmap.c,v 1.20 2019/09/16 03:45:31 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -594,7 +594,8 @@ static struct timeval         now;
 static char                   cmd[32768];
 static int                    dump_id       = 0;
 static const sc_dump_t        dump_funcs[]  = {
-  {NULL, NULL, NULL, NULL},
+  {NULL, NULL,
+   NULL,   NULL,            NULL,           NULL,              NULL},
   {"infer border routers", "routers",
    init_1, process_1_trace, process_1_ping, process_1_dealias, finish_1},
   {"dump annotated traceroutes", "traces",
@@ -1101,7 +1102,7 @@ static int check_options(int argc, char *argv[])
     {
       if(string_isnumber(opt_dumpid) != 0)
 	{
-	  if(string_tolong(opt_dumpid, &lo) != 0 || lo < 1 || lo > dump_funcc)
+	  if(string_tolong(opt_dumpid, &lo) != 0 || lo < 1 || lo >= dump_funcc)
 	    {
 	      usage(OPT_DUMP);
 	      goto done;
@@ -2165,8 +2166,8 @@ static void sc_linktest_free(sc_linktest_t *lt)
 
 static int sc_linktest_alloc(scamper_addr_t *a, scamper_addr_t *b)
 {
+  sc_linktest_t *lt = NULL;
   sc_link_t *link;
-  sc_linktest_t *lt;
   sc_test_t *test;
 
   /* the two addresses should not be the same */
@@ -2180,7 +2181,10 @@ static int sc_linktest_alloc(scamper_addr_t *a, scamper_addr_t *b)
      (lt = malloc_zero(sizeof(sc_linktest_t))) == NULL ||
      (lt->ta = sc_target_alloc(a)) == NULL ||
      (lt->tb = sc_target_alloc(b)) == NULL)
-    return -1;
+    {
+      if(lt != NULL) sc_linktest_free(lt);
+      return -1;
+    }
   lt->link = link;
 
   if((test = sc_test_alloc(TEST_LINK, lt)) == NULL || sc_waittest(test) != 0)
@@ -5377,7 +5381,7 @@ static int ip2as_line(char *line, void *param)
       u32 = atoi(a);
       /* skip over private / reserved ASNs */
       if(u32 == 0 || u32 == 23456 ||
-	 (u32 >= 64512 && u32 <= 65535) || u32 >= 4200000000)
+	 (u32 >= 64512 && u32 <= 65535) || u32 >= 4200000000UL)
 	continue;
       if(uint32_add(&ases, &asc, u32) != 0)
 	goto err;

@@ -2,11 +2,11 @@
  * sc_ally : scamper driver to collect data on candidate aliases using the
  *           Ally method.
  *
- * $Id: sc_ally.c,v 1.37 2018/05/10 10:18:14 mjl Exp $
+ * $Id: sc_ally.c,v 1.40 2019/07/12 21:40:13 mjl Exp $
  *
  * Copyright (C) 2009-2011 The University of Waikato
  * Copyright (C) 2013-2015 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2019 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_ally.c,v 1.37 2018/05/10 10:18:14 mjl Exp $";
+  "$Id: sc_ally.c,v 1.40 2019/07/12 21:40:13 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -312,9 +312,10 @@ static int check_options(int argc, char *argv[])
 {
   int       ch;
   long      lo;
-  char     *opts = "a:d:Di:o:O:p:q:t:U:w:?";
+  char     *opts = "a:d:Df:i:o:O:p:q:t:U:w:?";
   char     *opt_port = NULL, *opt_probewait = NULL, *opt_dump = NULL;
   char     *opt_text = NULL, *opt_attempts = NULL, *opt_wait = NULL;
+  char     *opt_fudge = NULL;
 
   while((ch = getopt(argc, argv, opts)) != -1)
     {
@@ -332,6 +333,11 @@ static int check_options(int argc, char *argv[])
 
 	case 'D':
 	  options |= OPT_DAEMON;
+	  break;
+
+	case 'f':
+	  options |= OPT_FUDGE;
+	  opt_fudge = optarg;
 	  break;
 
 	case 'i':
@@ -408,6 +414,16 @@ static int check_options(int argc, char *argv[])
 	      return -1;
 	    }
 	  port = lo;
+	}
+
+      if(options & OPT_FUDGE)
+	{
+	  if(string_tolong(opt_fudge, &lo) != 0 || lo < 0 || lo > 5000)
+	    {
+	      usage(OPT_FUDGE);
+	      return -1;
+	    }
+	  fudge = lo;
 	}
 
       if(options & OPT_ATTEMPTS)
@@ -696,10 +712,23 @@ static sc_addr2router_t *sc_addr2router_find(splaytree_t *t, scamper_addr_t *a)
   return splaytree_find(t, &fm);
 }
 
+static int sc_addr2router_human_cmp(const sc_addr2router_t *a,
+				   const sc_addr2router_t *b)
+{
+  return scamper_addr_human_cmp(a->addr, b->addr);
+}
+
 static int sc_addr2router_cmp(const sc_addr2router_t *a,
 			      const sc_addr2router_t *b)
 {
   return scamper_addr_cmp(a->addr, b->addr);
+}
+
+static int sc_router_human_cmp(const sc_router_t *a, const sc_router_t *b)
+{
+  sc_addr2router_t *a_a2r = slist_head_item(a->addrs);
+  sc_addr2router_t *b_a2r = slist_head_item(b->addrs);
+  return sc_addr2router_human_cmp(a_a2r, b_a2r);
 }
 
 static void sc_router_free(sc_router_t *r)
@@ -1328,7 +1357,15 @@ static int do_decoderead(void)
     }
 
   if(data == NULL)
-    return 0;
+    {
+      if(scamper_file_geteof(decode_in) != 0)
+	{
+	  scamper_file_close(decode_in);
+	  decode_in = NULL;
+	  decode_in_fd = -1;
+	}
+      return 0;
+    }
 
   probing--;
 
@@ -1745,8 +1782,8 @@ static int do_scamperread(void)
     }
   else if(rc == 0)
     {
-      close(scamper_fd);
-      scamper_fd = -1;
+      status("disconnected\n");
+      close(scamper_fd); scamper_fd = -1;
       return 0;
     }
   else if(errno == EINTR || errno == EAGAIN)
@@ -1869,6 +1906,13 @@ static void tc_dump(void)
   sc_router_t *r;
   char buf[64];
   int x;
+
+  for(dn=dlist_head_node(dump_l); dn != NULL; dn = dlist_node_next(dn))
+    {
+      r = dlist_node_item(dn);
+      slist_qsort(r->addrs, (slist_cmp_t)sc_addr2router_human_cmp);
+    }
+  dlist_qsort(dump_l, (dlist_cmp_t)sc_router_human_cmp);
 
   for(dn=dlist_head_node(dump_l); dn != NULL; dn = dlist_node_next(dn))
     {
@@ -2302,6 +2346,12 @@ static int ally_data(void)
 	  if(wfdsp != NULL && FD_ISSET(decode_out_fd, wfdsp) &&
 	     scamper_writebuf_write(decode_out_fd, decode_wb) != 0)
 	    return -1;
+
+	  if(scamper_fd < 0 && scamper_writebuf_len(decode_wb) == 0)
+	    {
+	      close(decode_out_fd);
+	      decode_out_fd = -1;
+	    }
 	}
     }
 

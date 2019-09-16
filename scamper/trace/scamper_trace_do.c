@@ -1,13 +1,14 @@
 /*
  * scamper_do_trace.c
  *
- * $Id: scamper_trace_do.c,v 1.304 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_trace_do.c,v 1.306 2019/07/12 23:37:57 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2008      Alistair King
  * Copyright (C) 2012-2015 The Regents of the University of California
  * Copyright (C) 2015      The University of Waikato
+ * Copyright (C) 2019      Matthew Luckie
  *
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
@@ -29,7 +30,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace_do.c,v 1.304 2017/12/03 09:38:27 mjl Exp $";
+  "$Id: scamper_trace_do.c,v 1.306 2019/07/12 23:37:57 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -360,6 +361,7 @@ static const int         L2_cnt  = sizeof(L2) / sizeof(pmtud_L2_t);
 #define TRACE_OPT_LSSNAME     22
 #define TRACE_OPT_OFFSET      23
 #define TRACE_OPT_OPTION      24
+#define TRACE_OPT_RTRADDR     25
 
 static const scamper_option_in_t opts[] = {
   {'c', NULL, TRACE_OPT_CONFIDENCE,  SCAMPER_OPTION_TYPE_NUM},
@@ -376,6 +378,7 @@ static const scamper_option_in_t opts[] = {
   {'P', NULL, TRACE_OPT_PROTOCOL,    SCAMPER_OPTION_TYPE_STR},
   {'q', NULL, TRACE_OPT_ATTEMPTS,    SCAMPER_OPTION_TYPE_NUM},
   {'Q', NULL, TRACE_OPT_ALLATTEMPTS, SCAMPER_OPTION_TYPE_NULL},
+  {'r', NULL, TRACE_OPT_RTRADDR,     SCAMPER_OPTION_TYPE_STR},
   {'s', NULL, TRACE_OPT_SPORT,       SCAMPER_OPTION_TYPE_NUM},
   {'S', NULL, TRACE_OPT_SRCADDR,     SCAMPER_OPTION_TYPE_STR},
   {'t', NULL, TRACE_OPT_TOS,         SCAMPER_OPTION_TYPE_NUM},
@@ -392,9 +395,9 @@ const char *scamper_do_trace_usage(void)
 {
   return
     "trace [-MQT] [-c confidence] [-d dport] [-f firsthop]\n"
-    "      [-g gaplimit] [-G gapaction] [-l loops]\n"
-    "      [-m maxttl] [-o offset] [-O options] [-p payload] [-P method]\n"
-    "      [-q attempts] [-s sport] [-S srcaddr] [-t tos] [-U userid]\n"
+    "      [-g gaplimit] [-G gapaction] [-l loops] [-m maxttl]\n"
+    "      [-o offset] [-O options] [-p payload] [-P method] [-q attempts]\n"
+    "      [-r rtraddr] [-s sport] [-S srcaddr] [-t tos] [-U userid]\n"
     "      [-w wait-timeout] [-W wait-probe] [-z gss-entry] [-Z lss-name]";
 }
 
@@ -3294,6 +3297,7 @@ static void trace_handle_rt(scamper_route_t *rt)
    * fall back to a raw socket.
    */
   if(SCAMPER_TRACE_TYPE_IS_TCP(trace) && state->raw == NULL &&
+     trace->rtr == NULL &&
      scamper_dl_tx_type(dl) == SCAMPER_DL_TX_UNSUPPORTED &&
      SCAMPER_ADDR_TYPE_IS_IPV4(trace->dst))
     {
@@ -3301,13 +3305,14 @@ static void trace_handle_rt(scamper_route_t *rt)
     }
 
   /*
-   * if we're doing path MTU discovery, or doing tcp traceroute,
-   * or doing udp paris traceroute, determine the underlying framing to use
-   * with each probe packet that will be sent on the datalink.
+   * if we're doing path MTU discovery, or doing tcp traceroute, or
+   * doing udp paris traceroute, or relaying probes via a specific
+   * router, or sending fragments, determine the underlying framing to
+   * use with each probe packet that will be sent on the datalink.
    */
   if(SCAMPER_TRACE_IS_PMTUD(trace) ||
      (SCAMPER_TRACE_TYPE_IS_TCP(trace) && state->raw == NULL) ||
-     trace->offset != 0 ||
+     trace->offset != 0 || trace->rtr != NULL ||
      (trace->flags & SCAMPER_TRACE_FLAG_DL) != 0 ||
      (SCAMPER_TRACE_TYPE_IS_UDP_PARIS(trace) && sunos != 0))
     {
@@ -3317,7 +3322,10 @@ static void trace_handle_rt(scamper_route_t *rt)
 	  trace_handleerror(task, errno);
 	  goto done;
 	}
-      state->dlhdr->dst = scamper_addr_use(trace->dst);
+      if(trace->rtr == NULL)
+	state->dlhdr->dst = scamper_addr_use(trace->dst);
+      else
+	state->dlhdr->dst = scamper_addr_use(trace->rtr);
       state->dlhdr->gw = rt->gw != NULL ? scamper_addr_use(rt->gw) : NULL;
       state->dlhdr->ifindex = rt->ifindex;
       state->dlhdr->txtype = scamper_dl_tx_type(dl);
@@ -3470,6 +3478,7 @@ static int trace_state_alloc(scamper_task_t *task)
   /* if scamper has to get the ifindex, then start in the rtsock mode */
   if(SCAMPER_TRACE_IS_PMTUD(trace) || SCAMPER_TRACE_IS_DL(trace) ||
      SCAMPER_TRACE_TYPE_IS_TCP(trace) || trace->offset != 0 ||
+     trace->rtr != NULL ||
      (SCAMPER_TRACE_TYPE_IS_UDP_PARIS(trace) && sunos != 0))
     {
       state->mode = MODE_RTSOCK;
@@ -3600,7 +3609,10 @@ static void do_trace_probe(scamper_task_t *task)
 
   if(state->mode == MODE_RTSOCK)
     {
-      state->route = scamper_route_alloc(trace->dst, task, trace_handle_rt);
+      if(trace->rtr == NULL)
+	state->route = scamper_route_alloc(trace->dst, task, trace_handle_rt);
+      else
+	state->route = scamper_route_alloc(trace->rtr, task, trace_handle_rt);
       if(state->route == NULL)
 	goto err;
 
@@ -3714,6 +3726,7 @@ static void do_trace_probe(scamper_task_t *task)
       state->mode == MODE_PMTUD_SILENT_TTL ||
       state->mode == MODE_PMTUD_BADSUGG ||
       trace->offset != 0 ||
+      trace->rtr != NULL ||
       (SCAMPER_TRACE_TYPE_IS_UDP_PARIS(trace) && sunos != 0) ||
       (SCAMPER_TRACE_TYPE_IS_UDP_PARIS(trace) &&
        (trace->flags & SCAMPER_TRACE_FLAG_CONSTPAYLOAD) != 0 &&
@@ -3876,7 +3889,7 @@ static void do_trace_probe(scamper_task_t *task)
   return;
 }
 
-static int trace_arg_param_validate(int optid, char *param, long *out)
+static int trace_arg_param_validate(int optid, char *param, long long *out)
 {
   long tmp = 0;
 
@@ -4035,6 +4048,7 @@ static int trace_arg_param_validate(int optid, char *param, long *out)
     case TRACE_OPT_SRCADDR:
     case TRACE_OPT_GSSENTRY:
     case TRACE_OPT_LSSNAME:
+    case TRACE_OPT_RTRADDR:
       /* these parameters are validated at execution time */
       break;
 
@@ -4050,7 +4064,7 @@ static int trace_arg_param_validate(int optid, char *param, long *out)
 
   /* valid parameter */
   if(out != NULL)
-    *out = tmp;
+    *out = (long long)tmp;
   return 0;
 
  err:
@@ -4094,8 +4108,8 @@ void *scamper_do_trace_alloc(char *str)
   splaytree_t *gss_tree = NULL;
   scamper_addr_t *sa;
   char *addr;
-  long tmp = 0;
-  char *src = NULL;
+  long long tmp = 0;
+  char *src = NULL, *rtr = NULL;
   int af, x;
   uint32_t optids = 0;
 
@@ -4204,6 +4218,12 @@ void *scamper_do_trace_alloc(char *str)
 
 	case TRACE_OPT_WAIT:
 	  wait = (uint8_t)tmp;
+	  break;
+
+	case TRACE_OPT_RTRADDR:
+	  if(rtr != NULL)
+	    goto err;
+	  rtr = opt->str;
 	  break;
 
 	case TRACE_OPT_SRCADDR:
@@ -4337,11 +4357,13 @@ void *scamper_do_trace_alloc(char *str)
   if(af != AF_INET && af != AF_INET6)
     goto err;
 
-  if(src != NULL)
-    {
-      if((trace->src = scamper_addrcache_resolve(addrcache, af, src)) == NULL)
-	goto err;
-    }
+  if(src != NULL &&
+     (trace->src = scamper_addrcache_resolve(addrcache, af, src)) == NULL)
+    goto err;
+
+  if(rtr != NULL &&
+     (trace->rtr = scamper_addrcache_resolve(addrcache, af, rtr)) == NULL)
+    goto err;
 
   /*
    * if icmp paris traceroute is being used, say that the csum used can be

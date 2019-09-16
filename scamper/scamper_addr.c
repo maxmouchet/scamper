@@ -1,7 +1,7 @@
 /*
  * scamper_addr.c
  *
- * $Id: scamper_addr.c,v 1.69 2018/10/24 00:21:25 mjl Exp $
+ * $Id: scamper_addr.c,v 1.70 2019/05/25 23:34:28 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_addr.c,v 1.69 2018/10/24 00:21:25 mjl Exp $";
+  "$Id: scamper_addr.c,v 1.70 2019/05/25 23:34:28 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -372,7 +372,7 @@ static int ipv4_bit(const scamper_addr_t *sa, int bit)
 {
   struct in_addr *a = (struct in_addr *)sa->addr;
   assert(bit > 0); assert(bit <= 32);
-  return (ntohl(a->s_addr) >> (32 - bit)) & 1;
+  return (ntohl(a->s_addr) >> (31 - (bit-1))) & 1;
 }
 
 /*
@@ -713,9 +713,9 @@ static int ipv6_bit(const scamper_addr_t *sa, int bit)
   struct in6_addr *a = (struct in6_addr *)sa->addr;
   assert(bit > 0); assert(bit <= 128);
 #ifndef _WIN32
-  return (ntohl(a->s6_addr32[(bit-1)/32]) >> (32 - (bit % 32))) & 1;
+  return (ntohl(a->s6_addr32[(bit-1)/32]) >> (31 - ((bit-1) % 32))) & 1;
 #else
-  return (ntohs(a->u.Word[(bit-1)/16]) >> (16 - (bit % 16))) & 1;
+  return (ntohs(a->u.Word[(bit-1)/16]) >> (15 - ((bit-1) % 16))) & 1;
 #endif
 }
 

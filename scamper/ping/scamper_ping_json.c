@@ -6,9 +6,10 @@
  * Copyright (c) 2011-2013 Internap Network Services Corporation
  * Copyright (c) 2013      Matthew Luckie
  * Copyright (c) 2013-2015 The Regents of the University of California
+ * Copyright (c) 2019      Matthew Luckie
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_ping_json.c,v 1.15 2017/07/12 07:34:02 mjl Exp $
+ * $Id: scamper_ping_json.c,v 1.18 2019/07/12 23:08:22 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_ping_json.c,v 1.15 2017/07/12 07:34:02 mjl Exp $";
+  "$Id: scamper_ping_json.c,v 1.18 2019/07/12 23:08:22 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -60,7 +61,8 @@ static char *ping_probe_data(const scamper_ping_t *ping, char *buf, size_t len)
 static char *ping_header(const scamper_ping_t *ping)
 {
   static const char *flags[] = {
-    "v4rr", "spoof", "payload", "tsonly", "tsandaddr", "icmpsum", "dl", "8"
+    "v4rr", "spoof", "payload", "tsonly", "tsandaddr", "icmpsum", "dl", "tbt",
+    "nosrc"
   };
   char buf[1024], tmp[512];
   size_t off = 0;
@@ -90,6 +92,10 @@ static char *ping_header(const scamper_ping_t *ping)
   if(SCAMPER_PING_METHOD_IS_UDP(ping) || SCAMPER_PING_METHOD_IS_TCP(ping))
     string_concat(buf, sizeof(buf), &off, ", \"sport\":%u, \"dport\":%u",
 		  ping->probe_sport, ping->probe_dport);
+  if(SCAMPER_PING_METHOD_IS_TCP(ping))
+    string_concat(buf, sizeof(buf), &off,
+		  ", \"tcp_seq\":%u, \"tcp_ack\":%u",
+		  ping->probe_tcpseq, ping->probe_tcpack);
 
   if(ping->probe_datalen > 0 && ping->probe_data != NULL)
     {
@@ -105,7 +111,7 @@ static char *ping_header(const scamper_ping_t *ping)
     {
       c = 0;
       string_concat(buf, sizeof(buf), &off, ", \"flags\":[");
-      for(u8=0; u8<8; u8++)
+      for(u8=0; u8<9; u8++)
 	{
 	  if((ping->flags & (0x1 << u8)) == 0)
 	    continue;

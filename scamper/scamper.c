@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.262 2017/12/03 09:38:26 mjl Exp $
+ * $Id: scamper.c,v 1.263 2019/01/13 06:58:50 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -10,7 +10,7 @@
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2014      The Regents of the University of California
- * Copyright (C) 2014-2016 Matthew Luckie
+ * Copyright (C) 2014-2019 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper.c,v 1.262 2017/12/03 09:38:26 mjl Exp $";
+  "$Id: scamper.c,v 1.263 2019/01/13 06:58:50 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -72,6 +72,7 @@ static const char rcsid[] =
 #include "neighbourdisc/scamper_neighbourdisc_do.h"
 #include "tbit/scamper_tbit_do.h"
 #include "sniff/scamper_sniff_do.h"
+#include "host/scamper_host_do.h"
 
 #include "utils.h"
 
@@ -466,6 +467,8 @@ static int check_options(int argc, char *argv[])
      scamper_do_tbit_arg_validate, scamper_do_tbit_usage},
     {"scamper-sniff", "sniff",
      scamper_do_sniff_arg_validate, scamper_do_sniff_usage},
+    {"scamper-host", "host",
+     scamper_do_host_arg_validate, scamper_do_host_usage},
   };
   int   i;
   long  lo_w = window, lo_p = pps;
@@ -1333,7 +1336,8 @@ static int scamper(int argc, char *argv[])
      scamper_do_sting_init() != 0 ||
      scamper_do_neighbourdisc_init() != 0 ||
      scamper_do_tbit_init() != 0 ||
-     scamper_do_sniff_init() != 0)
+     scamper_do_sniff_init() != 0 ||
+     scamper_do_host_init() != 0)
     {
       return -1;
     }
@@ -1534,6 +1538,7 @@ static void cleanup(void)
   scamper_do_neighbourdisc_cleanup();
   scamper_do_tbit_cleanup();
   scamper_do_sniff_cleanup();
+  scamper_do_host_cleanup();
 
   scamper_dl_cleanup();
 

@@ -1,12 +1,13 @@
 /*
  * scamper_trace.c
  *
- * $Id: scamper_trace.c,v 1.95 2015/07/23 03:53:20 mjl Exp $
+ * $Id: scamper_trace.c,v 1.96 2019/06/23 05:41:21 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2003-2011 The University of Waikato
  * Copyright (C) 2008      Alistair King
  * Copyright (C) 2012-2015 The Regents of the University of California
+ * Copyright (C) 2019      Matthew Luckie
  *
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
@@ -28,7 +29,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_trace.c,v 1.95 2015/07/23 03:53:20 mjl Exp $";
+  "$Id: scamper_trace.c,v 1.96 2019/06/23 05:41:21 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -541,6 +542,7 @@ void scamper_trace_free(scamper_trace_t *trace)
 
   if(trace->dst != NULL) scamper_addr_free(trace->dst);
   if(trace->src != NULL) scamper_addr_free(trace->src);
+  if(trace->rtr != NULL) scamper_addr_free(trace->rtr);
 
   if(trace->cycle != NULL) scamper_cycle_free(trace->cycle);
   if(trace->list != NULL) scamper_list_free(trace->list);

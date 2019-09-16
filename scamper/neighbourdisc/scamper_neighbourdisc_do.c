@@ -1,7 +1,7 @@
 /*
  * scamper_do_neighbourdisc
  *
- * $Id: scamper_neighbourdisc_do.c,v 1.37 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_neighbourdisc_do.c,v 1.39 2019/08/04 05:08:40 mjl Exp $
  *
  * Copyright (C) 2009-2011 Matthew Luckie
  *
@@ -22,7 +22,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_neighbourdisc_do.c,v 1.37 2017/12/03 09:38:27 mjl Exp $";
+  "$Id: scamper_neighbourdisc_do.c,v 1.39 2019/08/04 05:08:40 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -255,7 +255,7 @@ static void do_nd_probe_nsol(scamper_task_t *task)
   uint16_t u16, *w;
   uint8_t ip6_dst[16];
   uint8_t sol[4];
-  size_t off = 0;
+  size_t off = 0, icmp_off;
   int i, sum = 0;
 
   /* figure out the lower 4 bytes of the solicited multicast address */
@@ -287,6 +287,7 @@ static void do_nd_probe_nsol(scamper_task_t *task)
   memcpy(&ip6->ip6_dst, ip6_dst, 16);
 
   /* ICMP6 neighbour discovery: 32 bytes */
+  icmp_off = off;
   icmp6 = (struct icmp6_hdr *)(pktbuf+off); off += sizeof(struct icmp6_hdr);
   icmp6->icmp6_type = ND_NEIGHBOR_SOLICIT;
   icmp6->icmp6_code = 0;
@@ -309,7 +310,7 @@ static void do_nd_probe_nsol(scamper_task_t *task)
   sum += *w++; sum += *w++; sum += *w++; sum += *w++;
   sum += ip6->ip6_plen;
   sum += htons(IPPROTO_ICMPV6);
-  w = (uint16_t *)icmp6;
+  w = (uint16_t *)(pktbuf + icmp_off);
   for(i = ntohs(ip6->ip6_plen); i > 1; i -= 2)
     sum += *w++;
   if(i != 0)
@@ -545,7 +546,7 @@ static void do_nd_free(scamper_task_t *task)
   return;
 }
 
-static int nd_arg_param_validate(int optid, char *param, long *out)
+static int nd_arg_param_validate(int optid, char *param, long long *out)
 {
   long tmp;
 
@@ -576,7 +577,7 @@ static int nd_arg_param_validate(int optid, char *param, long *out)
     }
 
   if(out != NULL)
-    *out = tmp;
+    *out = (long long)tmp;
 
   return 0;
 }
@@ -633,7 +634,7 @@ void *scamper_do_neighbourdisc_alloc(char *str)
   uint8_t  flags    = 0;
   char    *dst      = NULL;
   char    *src      = NULL;
-  long     tmp      = 0;
+  long long tmp     = 0;
 
   /* try and parse the string passed in */
   if(scamper_options_parse(str, opts, opts_cnt, &opts_out, &dst) != 0)

@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([scamper], [20181219], [mjl@luckie.org.nz])
+AC_INIT([scamper], [20190916], [mjl@luckie.org.nz])
 
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([scamper/scamper.c])
@@ -42,10 +42,10 @@ AC_ARG_WITH([privsep_dir],
   [privsep_dir=$withval],
   [privsep_dir=/var/empty])
 AC_ARG_WITH([privsep_dir_owner],
-  [AC_HELP_STRING([--with-privsep-dir-user=USER],
+  [AC_HELP_STRING([--with-privsep-dir-owner=USER],
     [sets chroot directory owner])],
-  [privsep_dir_user=$withval],
-  [privsep_dir_user=root])
+  [privsep_dir_owner=$withval],
+  [privsep_dir_owner=root])
 AC_ARG_WITH([privsep_dir_group],
   [AC_HELP_STRING([--with-privsep-dir-group=GROUP],
     [sets chroot directory group id])],
@@ -53,7 +53,7 @@ AC_ARG_WITH([privsep_dir_group],
   [privsep_dir_group=wheel])
 AC_SUBST(privsep_user)
 AC_SUBST(privsep_dir)
-AC_SUBST(privsep_dir_user)
+AC_SUBST(privsep_dir_owner)
 AC_SUBST(privsep_dir_group)
 AC_DEFINE_UNQUOTED(PRIVSEP_USER,
   ["$privsep_user"],
@@ -61,8 +61,8 @@ AC_DEFINE_UNQUOTED(PRIVSEP_USER,
 AC_DEFINE_UNQUOTED(PRIVSEP_DIR,
   ["$privsep_dir"],
   [chroot directory for privsep process])
-AC_DEFINE_UNQUOTED(PRIVSEP_DIR_USER,
-  ["$privsep_dir_user"],
+AC_DEFINE_UNQUOTED(PRIVSEP_DIR_OWNER,
+  ["$privsep_dir_owner"],
   [chroot directory owner])
 AC_DEFINE_UNQUOTED(PRIVSEP_DIR_GROUP,
   ["$privsep_dir_group"],
@@ -89,8 +89,47 @@ if test "x$with_dmalloc" = xyes; then
 		LDFLAGS="$LDFLAGS -ldmalloc"
 		],
 		[AC_MSG_FAILURE([dmalloc test failed (remove --with-dmalloc)])])
-
 fi
+
+# pcre support
+AC_ARG_WITH([pcre],
+  [AS_HELP_STRING([--with-pcre],
+     [use pcre for regex engine])])
+
+if test "x$with_pcre" = xyes; then
+	AC_CHECK_LIB([pcre], [pcre_compile],
+		[
+		PCRE_CFLAGS="-DHAVE_PCRE"
+		PCRE_LIBS="-lpcre"
+		],
+		[AC_MSG_FAILURE([pcre test failed (remove --with-pcre)])])
+fi
+
+# pcre2 support
+AC_ARG_WITH([pcre2],
+  [AS_HELP_STRING([--with-pcre2],
+     [use pcre2 for regex engine])])
+
+if test "x$with_pcre2" = xyes; then
+	AC_CHECK_LIB([pcre2-8], [pcre2_compile_8],
+		[
+		PCRE_CFLAGS="-DHAVE_PCRE2"
+		PCRE_LIBS="-lpcre2-8"
+		],
+		[AC_MSG_FAILURE([pcre2 test failed (remove --with-pcre2)])])
+fi
+
+AC_SUBST(PCRE_CFLAGS)
+AC_SUBST(PCRE_LIBS)
+
+# sc_hoiho utlity
+AC_ARG_WITH([sc_hoiho],
+  [AS_HELP_STRING([--with-sc_hoiho],
+     [enable support for sc_hoiho])],
+     [with_sc_hoiho=$withval],
+     [with_sc_hoiho=no]
+)
+AM_CONDITIONAL([WITH_SC_HOIHO], [test x$with_sc_hoiho = xyes])
 
 # sc_uptime prober support
 AC_ARG_WITH([sc_uptime],
@@ -226,6 +265,7 @@ AC_CHECK_FUNCS(strdup)
 AC_CHECK_FUNCS(strerror)
 AC_CHECK_FUNCS(strncasecmp)
 AC_CHECK_FUNCS(strtol)
+AC_CHECK_FUNCS(sysctl)
 AC_CHECK_FUNCS(uname)
 
 AC_CHECK_SIZEOF(long)
@@ -347,6 +387,15 @@ AC_CONFIG_FILES([
 	utils/sc_analysis_dump/Makefile
 	utils/sc_attach/Makefile
 	utils/sc_bdrmap/Makefile
+	utils/sc_erosprober/Makefile])
+
+if test "x$with_sc_hoiho" != xno; then
+   AC_CONFIG_FILES([
+   utils/sc_hoiho/Makefile
+   ])
+fi
+
+AC_CONFIG_FILES([
 	utils/sc_filterpolicy/Makefile
 	utils/sc_ipiddump/Makefile
 	utils/sc_prefixscan/Makefile

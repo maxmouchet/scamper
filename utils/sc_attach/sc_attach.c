@@ -2,13 +2,30 @@
  * sc_attach : scamper driver to collect data by connecting to scamper on
  *             a specified port and supplying it with commands.
  *
- * Author    : Matthew Luckie.
+ * Author    : Matthew Luckie
+ *
+ * Copyright (C) 2008-2011 The University of Waikato
+ * Copyright (C) 2012-2015 Regents of the University of California
+ * Copyright (C) 2015-2019 Matthew Luckie
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_attach.c,v 1.23 2016/06/09 09:44:04 mjl Exp $";
+  "$Id: sc_attach.c,v 1.25 2019/07/12 21:38:23 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -242,7 +259,7 @@ static int check_options(int argc, char *argv[])
 	  break;
 
 	case 'v':
-	  printf("$Id: sc_attach.c,v 1.23 2016/06/09 09:44:04 mjl Exp $\n");
+	  printf("$Id: sc_attach.c,v 1.25 2019/07/12 21:38:23 mjl Exp $\n");
 	  return -1;
 
 	case '?':
@@ -383,38 +400,13 @@ static int do_method(void)
 
 static int do_stdinread_line(void *param, uint8_t *buf, size_t linelen)
 {
-  char *cmd;
-
-  if(buf[0] == '#')
-    return 0;
-
-  /* make a copy of the command string */
-  if((cmd = memdup(buf, linelen+2)) == NULL)
-    {
-      fprintf(stderr, "%s: could not memdup command: %s\n",
-	      __func__, strerror(errno));
-      return -1;
-    }
-  cmd[linelen] = '\n';
-  cmd[linelen+1] = '\0';
-
-  /* put the command string on the list of things to do */
-  if(slist_tail_push(commands, cmd) == NULL)
-    {
-      fprintf(stderr, "%s: could not push command onto list: %s\n",
-	      __func__, strerror(errno));
-      free(cmd);
-      return -1;
-    }
-
-  return 0;
+  return command_new((char *)buf, NULL);
 }
 
 /*
- * do_scamperread
+ * do_stdinread
  *
- * the fd for the scamper process is marked as readable, so do a read
- * on it.
+ * the fd for stdin is marked as readable, so do a read on it.
  */
 static int do_stdinread(void)
 {
@@ -504,7 +496,7 @@ static int do_scamperread_line(void *param, uint8_t *buf, size_t linelen)
   /* feedback letting us know that the command was not accepted */
   if(linelen >= 3 && strncasecmp(head, "ERR", 3) == 0)
     {
-      fprintf(stderr, "%s: command no accepted\n", __func__);
+      fprintf(stderr, "%s: command not accepted\n", __func__);
       error = 1;
       return -1;
     }

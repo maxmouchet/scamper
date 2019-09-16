@@ -1,14 +1,11 @@
 /*
- * sc_uptime: system to probe routers to identify reboot events
+ * sc_uptime : system to probe routers to identify reboot events
  *
- * $Id: sc_uptime.c,v 1.67 2018/12/17 04:45:57 mjl Exp $
- *
- *        Matthew Luckie
- *        mjl@luckie.org.nz
+ * Authors   : Matthew Luckie, Marianne Fletcher
  *
  * Copyright (C) 2015 The Regents of the University of California
  * Copyright (C) 2017 Matthew Luckie
- * Copyright (C) 2018 The University of Waikato
+ * Copyright (C) 2018-2019 The University of Waikato
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_uptime.c,v 1.67 2018/12/17 04:45:57 mjl Exp $";
+  "$Id: sc_uptime.c,v 1.71 2019/09/16 04:47:31 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -115,7 +112,8 @@ static int                    up_import_stop = 0;
 #define ST_CLASS_LAST_IPID 3
 #define ST_CLASS_LAST_RX   4
 #define ST_CLASS_LOSS      5
-#define ST_CLASS_ID        6
+#define ST_CLASS_LAST_TX   6
+#define ST_CLASS_ID        7
 
 #define BLOB_SIZE_MIN 214 /* 10 21 byte records + 4 bytes of length */
 
@@ -180,7 +178,10 @@ static void usage(uint32_t opt_mask)
     "\n");
 
   if(opt_mask == 0)
-    fprintf(stderr, "       sc_uptime -?\n\n");
+    {
+      fprintf(stderr, "       sc_uptime -?\n\n");
+      return;
+    }
 
   if(opt_mask & OPT_HELP)
     fprintf(stderr, "   -? give an overview of the usage of sc_uptime\n");
@@ -697,11 +698,12 @@ static int do_sqlite_vacuum(void)
 /*
  * db_update
  *
- * sql = "update state_dsts set class=?,next=?,last_ipid=?,last_rx=?,loss=? "
- *       "where id=?";
+ * sql = "update state_dsts set class=?,next=?,last_ipid=?,last_rx=?,loss=?,"
+ *       " last_tx=?"
+ *       " where id=?";
  *
  */
-static int db_update(sc_dst_t *dst)
+static int db_update(sc_dst_t *dst, uint32_t last_tx)
 {
   int next;
 
@@ -749,6 +751,7 @@ static int db_update(sc_dst_t *dst)
   sqlite3_bind_int64(st_class, ST_CLASS_LAST_IPID, dst->last_ipid);
   sqlite3_bind_int64(st_class, ST_CLASS_LAST_RX, dst->last_rx);
   sqlite3_bind_int(st_class, ST_CLASS_LOSS, dst->loss);
+  sqlite3_bind_int64(st_class, ST_CLASS_LAST_TX, last_tx);
   sqlite3_bind_int64(st_class, ST_CLASS_ID, dst->id);
 
   if(sqlite3_step(st_class) != SQLITE_DONE)
@@ -766,6 +769,7 @@ static int do_decoderead_ping(scamper_ping_t *ping)
   scamper_ping_reply_t *reply;
   sc_sample_t ipids[10];
   int i, rc = 0, ipidc = 0, replyc = 0, freedst = 1;
+  uint32_t last_tx;
   sc_dst_t *dst;
   char buf[128];
 
@@ -795,6 +799,7 @@ static int do_decoderead_ping(scamper_ping_t *ping)
 	  ipidc++;
 	}
     }
+  last_tx = (uint32_t)ping->start.tv_sec;
   scamper_ping_free(ping); ping = NULL;
 
   if(dst->class != CLASS_INCR)
@@ -849,7 +854,7 @@ static int do_decoderead_ping(scamper_ping_t *ping)
       dst->last_rx   = ipids[ipidc-1].tx_sec;
     }
 
-  db_update(dst);
+  db_update(dst, last_tx);
 
   if(freedst != 0) sc_dst_free(dst);
   return rc;
@@ -867,7 +872,15 @@ static int do_decoderead(void)
       return -1;
     }
   if(data == NULL)
-    return 0;
+    {
+      if(scamper_file_geteof(decode_in) != 0)
+	{
+	  scamper_file_close(decode_in);
+	  decode_in = NULL;
+	  decode_in_fd = -1;
+	}
+      return 0;
+    }
   probing--;
 
   if(scamper_file_write_obj(outfile, type, data) != 0)
@@ -1169,6 +1182,7 @@ static int do_sqlite_init_state(void)
     "\"last_tr\" INTEGER NOT NULL, "
     "\"last_ipid\" INTEGER, "
     "\"last_rx\" INTEGER, "
+    "\"last_tx\" INTEGER, "
     "\"loss\" INTEGER)";
   char *errmsg;
 
@@ -1385,8 +1399,9 @@ static int do_sqlite_state(void)
 
   slist_shuffle(list);
 
-  sql = "update state_dsts set class=?,next=?,last_ipid=?,last_rx=?,loss=? "
-    "where id=?";
+  sql = "update state_dsts set class=?,next=?,last_ipid=?,last_rx=?,loss=?,"
+    " last_tx=?"
+    " where id=?";
   len = strlen(sql);
   if((x = sqlite3_prepare_v2(db, sql, len+1, &st_class, NULL)) != SQLITE_OK)
     {
@@ -1551,6 +1566,12 @@ static int up_data(void)
 	  if(wfdsp != NULL && FD_ISSET(decode_out_fd, wfdsp) &&
 	     scamper_writebuf_write(decode_out_fd, decode_wb) != 0)
 	    goto done;
+
+	  if(scamper_fd < 0 && scamper_writebuf_len(decode_wb) == 0)
+	    {
+	      close(decode_out_fd);
+	      decode_out_fd = -1;
+	    }
 	}
     }
 
@@ -2268,7 +2289,7 @@ static int up_reboots_seqs_make(slist_t *seqs, sc_sample_t **samples,
   int i;
 
   if((seq = malloc_zero(sizeof(sc_ipidseq_t))) == NULL ||
-     (seq->samples = malloc(sizeof(sc_sample_t) * (r - l))) == NULL ||
+     (seq->samples = malloc(sizeof(sc_sample_t *) * (r - l))) == NULL ||
      slist_tail_push(seqs, seq) == NULL)
     goto err;
 

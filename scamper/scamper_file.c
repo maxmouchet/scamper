@@ -1,7 +1,7 @@
 /*
  * scamper_file.c
  *
- * $Id: scamper_file.c,v 1.73 2018/10/05 06:43:26 mjl Exp $
+ * $Id: scamper_file.c,v 1.74 2019/07/28 09:24:53 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -25,7 +25,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_file.c,v 1.73 2018/10/05 06:43:26 mjl Exp $";
+  "$Id: scamper_file.c,v 1.74 2019/07/28 09:24:53 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -68,6 +68,8 @@ static const char rcsid[] =
 #include "tbit/scamper_tbit_json.h"
 #include "sniff/scamper_sniff.h"
 #include "sniff/scamper_sniff_warts.h"
+#include "host/scamper_host.h"
+#include "host/scamper_host_warts.h"
 
 #include "utils.h"
 
@@ -142,6 +144,9 @@ struct handler
   int (*write_sniff)(const scamper_file_t *sf,
 		     const struct scamper_sniff *sniff);
 
+  int (*write_host)(const scamper_file_t *sf,
+		    const struct scamper_host *host);
+
   void (*free_state)(scamper_file_t *sf);
 };
 
@@ -162,6 +167,7 @@ static struct handler handlers[] = {
    NULL,                                   /* write_neighbourdisc */
    scamper_file_text_tbit_write,           /* write_tbit */
    NULL,                                   /* write_sniff */
+   NULL,                                   /* write_host */
    NULL,                                   /* free_state */
   },
   {"arts",                                 /* type */
@@ -180,6 +186,7 @@ static struct handler handlers[] = {
    NULL,                                   /* write_neighbourdisc */
    NULL,                                   /* write_tbit */
    NULL,                                   /* write_sniff */
+   NULL,                                   /* write_host */
    scamper_file_arts_free_state,           /* free_state */
   },
   {"warts",                                /* type */
@@ -198,6 +205,7 @@ static struct handler handlers[] = {
    scamper_file_warts_neighbourdisc_write, /* write_neighbourdisc */
    scamper_file_warts_tbit_write,          /* write_tbit */
    scamper_file_warts_sniff_write,         /* write_sniff */
+   scamper_file_warts_host_write,          /* write_host */
    scamper_file_warts_free_state,          /* free_state */
   },
   {"json",                                 /* type */
@@ -216,6 +224,7 @@ static struct handler handlers[] = {
    NULL,                                   /* write_neighbourdisc */
    scamper_file_json_tbit_write,           /* write_tbit */
    NULL,                                   /* write_sniff */
+   NULL,                                   /* write_host */
    scamper_file_json_free_state,           /* free_state */
   },
 };
@@ -364,6 +373,16 @@ int scamper_file_write_sniff(scamper_file_t *sf,
 
 }
 
+int scamper_file_write_host(scamper_file_t *sf,
+			    const struct scamper_host *host)
+{
+  if(sf->type != SCAMPER_FILE_NONE && handlers[sf->type].write_host != NULL)
+    {
+      return handlers[sf->type].write_host(sf, host);
+    }
+  return -1;
+}
+
 int scamper_file_write_obj(scamper_file_t *sf, uint16_t type, const void *data)
 {
   static int (*const func[])(scamper_file_t *sf, const void *) = {
@@ -381,6 +400,7 @@ int scamper_file_write_obj(scamper_file_t *sf, uint16_t type, const void *data)
     (write_obj_func_t)scamper_file_write_tbit,
     (write_obj_func_t)scamper_file_write_sting,
     (write_obj_func_t)scamper_file_write_sniff,
+    (write_obj_func_t)scamper_file_write_host,
   };
   if(type > 13 || func[type] == NULL)
     return -1;

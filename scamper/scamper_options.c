@@ -1,7 +1,7 @@
 /*
  * scamper_options.c: code to handle parsing of options
  *
- * $Id: scamper_options.c,v 1.14 2015/04/22 02:43:00 mjl Exp $
+ * $Id: scamper_options.c,v 1.15 2019/07/12 23:37:57 mjl Exp $
  *
  * Copyright (C) 2006-2010 The University of Waikato
  * Copyright (C) 2014-2015 The Regents of the University of California
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_options.c,v 1.14 2015/04/22 02:43:00 mjl Exp $";
+  "$Id: scamper_options.c,v 1.15 2019/07/12 23:37:57 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -363,7 +363,8 @@ int scamper_options_parse(char *str,
 
 int scamper_options_validate(const scamper_option_in_t *opts, const int cnt,
 			     int argc, char *argv[], int *stop,
-			     int validate(int optid, char *param, long *out))
+			     int validate(int optid, char *param,
+					  long long *out))
 {
   int i, j, k, needp;
   int optid = -1;

@@ -1,7 +1,7 @@
 /*
  * sc_analysis_dump
  *
- * $Id: sc_analysis_dump.c,v 1.59 2013/08/31 00:12:49 mjl Exp $
+ * $Id: sc_analysis_dump.c,v 1.60 2019/01/13 07:35:11 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_analysis_dump.c,v 1.59 2013/08/31 00:12:49 mjl Exp $";
+  "$Id: sc_analysis_dump.c,v 1.60 2019/01/13 07:35:11 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -275,7 +275,7 @@ static void print_header_comments(void)
 {
   uint32_t u32;
   int i = 1;
-  char buf[64], buf2[64], buf3[64];
+  char buf[64], buf2[64], buf3[256];
   size_t off;
 
   printf(

@@ -1,7 +1,7 @@
 /*
  * scamper_do_dealias.c
  *
- * $Id: scamper_dealias_do.c,v 1.161 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_dealias_do.c,v 1.162 2019/07/12 23:37:57 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012-2013 Matthew Luckie
@@ -30,7 +30,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_dealias_do.c,v 1.161 2017/12/03 09:38:27 mjl Exp $";
+  "$Id: scamper_dealias_do.c,v 1.162 2019/07/12 23:37:57 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -2349,7 +2349,7 @@ static void do_dealias_free(scamper_task_t *task)
   return;
 }
 
-static int dealias_arg_param_validate(int optid, char *param, long *out)
+static int dealias_arg_param_validate(int optid, char *param, long long *out)
 {
   long tmp;
 
@@ -2432,7 +2432,7 @@ static int dealias_arg_param_validate(int optid, char *param, long *out)
     }
 
   if(out != NULL)
-    *out = tmp;
+    *out = (long long)tmp;
   return 0;
 }
 
@@ -3214,7 +3214,7 @@ void *scamper_do_dealias_alloc(char *str)
   dealias_options_t o;
   uint8_t  method = SCAMPER_DEALIAS_METHOD_MERCATOR;
   uint32_t userid = 0;
-  long tmp = 0;
+  long long tmp = 0;
 
   memset(&o, 0, sizeof(o));
 

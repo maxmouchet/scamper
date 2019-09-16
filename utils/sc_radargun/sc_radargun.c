@@ -1,7 +1,7 @@
 /*
  * sc_radargun : scamper driver to do radargun-style probing.
  *
- * $Id: sc_radargun.c,v 1.8 2017/11/22 04:55:20 mjl Exp $
+ * $Id: sc_radargun.c,v 1.9 2019/07/12 21:40:13 mjl Exp $
  *
  * Copyright (C) 2014 The Regents of the University of California
  * Copyright (C) 2016 The University of Waikato
@@ -32,7 +32,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_radargun.c,v 1.8 2017/11/22 04:55:20 mjl Exp $";
+  "$Id: sc_radargun.c,v 1.9 2019/07/12 21:40:13 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -1235,7 +1235,15 @@ static int do_decoderead(void)
     }
 
   if(data == NULL)
-    return 0;
+    {
+      if(scamper_file_geteof(decode_in) != 0)
+	{
+	  scamper_file_close(decode_in);
+	  decode_in = NULL;
+	  decode_in_fd = -1;
+	}
+      return 0;
+    }
 
   probing--;
 

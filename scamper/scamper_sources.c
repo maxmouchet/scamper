@@ -1,12 +1,13 @@
 /*
  * scamper_source
  *
- * $Id: scamper_sources.c,v 1.56 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_sources.c,v 1.57 2019/01/13 06:58:50 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2018      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_sources.c,v 1.56 2017/12/03 09:38:27 mjl Exp $";
+  "$Id: scamper_sources.c,v 1.57 2019/01/13 06:58:50 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -51,6 +52,7 @@ static const char rcsid[] =
 #include "neighbourdisc/scamper_neighbourdisc_do.h"
 #include "tbit/scamper_tbit_do.h"
 #include "sniff/scamper_sniff_do.h"
+#include "host/scamper_host_do.h"
 
 #include "scamper_debug.h"
 
@@ -200,6 +202,12 @@ static const command_func_t command_funcs[] = {
     scamper_do_sniff_alloc,
     scamper_do_sniff_alloctask,
     scamper_do_sniff_free,
+  },
+  {
+    "host", 4,
+    scamper_do_host_alloc,
+    scamper_do_host_alloctask,
+    scamper_do_host_free,
   },
 };
 

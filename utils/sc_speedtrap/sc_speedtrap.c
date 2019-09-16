@@ -1,7 +1,7 @@
 /*
  * sc_speedtrap
  *
- * $Id: sc_speedtrap.c,v 1.40 2017/07/10 07:24:13 mjl Exp $
+ * $Id: sc_speedtrap.c,v 1.42 2019/07/12 21:40:13 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -26,7 +26,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_speedtrap.c,v 1.40 2017/07/10 07:24:13 mjl Exp $";
+  "$Id: sc_speedtrap.c,v 1.42 2019/07/12 21:40:13 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -508,11 +508,8 @@ static int mode_ok(int m)
   return 1;
 }
 
-static int slist_count_cmp(const slist_t *a, const slist_t *b)
+static int ptrcmp(const void *a, const void *b)
 {
-  int al = slist_count(a), bl = slist_count(b);
-  if(al > bl) return -1;
-  if(al < bl) return  1;
   if(a < b) return -1;
   if(a > b) return  1;
   return 0;
@@ -750,36 +747,82 @@ static int process_1_ally(const scamper_dealias_t *dealias)
   return -1;
 }
 
+static int d1_cmp(const slist_t *a, const slist_t *b)
+{
+  int al = slist_count(a), bl = slist_count(b);
+  scamper_addr_t *aa, *ab;
+  if(al > bl) return -1;
+  if(al < bl) return  1;
+  aa = slist_head_item(a);
+  ab = slist_head_item(b);
+  return scamper_addr_human_cmp(aa, ab);
+}
+
+static void d1_free(slist_t *list)
+{
+  scamper_addr_t *a;
+  while((a = slist_head_pop(list)) != NULL)
+    scamper_addr_free(a);
+  slist_free(list);
+  return;
+}
+
 static void finish_1(void)
 {
+  splaytree_t *tree = NULL;
   scamper_addr_t *addr;
   sc_addr2ptr_t *a2p;
   slist_t *a2ps = NULL;
   slist_t *sets = NULL;
   slist_t *addrs = NULL;
-  slist_t *last;
   char buf[128];
   int x;
 
-  if((a2ps = slist_alloc()) == NULL || (sets = slist_alloc()) == NULL)
-    return;
-  splaytree_inorder(d1_tree, tree_to_slist, a2ps);
-  splaytree_free(d1_tree, NULL);
+  if((a2ps = slist_alloc()) == NULL || (sets = slist_alloc()) == NULL ||
+     (tree = splaytree_alloc((splaytree_cmp_t)ptrcmp)) == NULL)
+    {
+      fprintf(stderr, "%s: could not alloc lists\n", __func__);
+      goto done;
+    }
 
+  /*
+   * get all the addr2ptr structures and put them into a list.
+   * we no longer need the tree.
+   */
+  splaytree_inorder(d1_tree, tree_to_slist, a2ps);
+  splaytree_free(d1_tree, NULL); d1_tree = NULL;
+
+  /*
+   * for each sc_addr2ptr_t, take the router and put it in a tree
+   * so we only store unique routers.
+   */
   while((a2p = slist_head_pop(a2ps)) != NULL)
     {
-      slist_tail_push(sets, a2p->ptr);
-      a2p->ptr = NULL; sc_addr2ptr_free(a2p);
-    }
-  slist_free(a2ps);
+      addrs = a2p->ptr; a2p->ptr = NULL;
+      sc_addr2ptr_free(a2p);
 
-  last = NULL;
-  slist_qsort(sets, (slist_cmp_t)slist_count_cmp);
+      if(splaytree_find(tree, addrs) != NULL)
+	continue;
+      if(splaytree_insert(tree, addrs) == NULL)
+	{
+	  fprintf(stderr, "%s: could not add addrs to tree\n", __func__);
+	  goto done;
+	}
+      slist_qsort(addrs, (slist_cmp_t)scamper_addr_human_cmp);
+    }
+  slist_free(a2ps); a2ps = NULL;
+
+  /*
+   * get the router sets and put them in a list.  perform a canonical
+   * sort of the router sets.
+   */
+  splaytree_inorder(tree, tree_to_slist, sets);
+  splaytree_free(tree, NULL); tree = NULL;
+  slist_qsort(sets, (slist_cmp_t)d1_cmp);
+
+  /* print out each router */
   while((addrs = slist_head_pop(sets)) != NULL)
     {
-      if(last == addrs)
-	continue;
-      slist_qsort(addrs, (slist_cmp_t)scamper_addr_human_cmp);
       x = 0;
       while((addr = slist_head_pop(addrs)) != NULL)
 	{
@@ -790,9 +833,14 @@ static void finish_1(void)
 	}
       printf("\n");
       slist_free(addrs);
-      last = addrs;
     }
-  slist_free(sets);
+
+ done:
+  if(tree != NULL) splaytree_free(tree, (splaytree_free_t)d1_free);
+  if(sets != NULL) slist_free_cb(sets, (slist_free_t)d1_free);
+  if(d1_tree != NULL)
+    splaytree_free(d1_tree, (splaytree_free_t)sc_addr2ptr_free);
+  if(a2ps != NULL) slist_free_cb(a2ps, (slist_free_t)sc_addr2ptr_free);
   return;
 }
 
@@ -2375,7 +2423,15 @@ static int do_decoderead(void)
       return -1;
     }
   if(data == NULL)
-    return 0;
+    {
+      if(scamper_file_geteof(decode_in) != 0)
+	{
+	  scamper_file_close(decode_in);
+	  decode_in = NULL;
+	  decode_in_fd = -1;
+	}
+      return 0;
+    }
   probing--;
 
   if(scamper_file_write_obj(outfile, type, data) != 0)
@@ -2666,6 +2722,12 @@ static int speedtrap_data_select(void)
 	  if(wfdsp != NULL && FD_ISSET(decode_out_fd, wfdsp) &&
 	     scamper_writebuf_write(decode_out_fd, decode_wb) != 0)
 	    return -1;
+
+	  if(scamper_fd < 0 && scamper_writebuf_len(decode_wb) == 0)
+	    {
+	      close(decode_out_fd);
+	      decode_out_fd = -1;
+	    }
 	}
     }
 
