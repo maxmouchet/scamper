@@ -1,7 +1,7 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.190 2019/09/08 00:32:37 mjl Exp $
+ * $Id: utils.c,v 1.191 2019/09/24 07:00:57 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -27,7 +27,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: utils.c,v 1.190 2019/09/08 00:32:37 mjl Exp $";
+  "$Id: utils.c,v 1.191 2019/09/24 07:00:57 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -944,6 +944,43 @@ int fcntl_set(const int fd, const int flags)
   return 0;
 }
 #endif
+
+char *json_esc(const char *in, char *out, size_t len)
+{
+  size_t off = 0;
+
+  while(*in != '\0')
+    {
+      if(isprint(*in) == 0)
+	break;
+
+      switch(*in)
+	{
+	case '"':
+	  if(off + 2 >= len)
+	    goto done;
+	  out[off++] = '\\';
+	  out[off++] = '"';
+	  break;
+
+	case '\\':
+	  if(off + 2 >= len)
+	    goto done;
+	  out[off++] = '\\';
+	  out[off++] = '\\';
+	  break;
+
+	default:
+	  out[off++] = *in;
+	  break;
+	}
+      in++;
+    }
+  out[off++] = '\0';
+
+ done:
+  return out;
+}
 
 int string_isprint(const char *str, const size_t len)
 {

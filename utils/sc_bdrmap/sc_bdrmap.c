@@ -1,7 +1,7 @@
 /*
  * sc_bdrmap: driver to map first hop border routers of networks
  *
- * $Id: sc_bdrmap.c,v 1.20 2019/09/16 03:45:31 mjl Exp $
+ * $Id: sc_bdrmap.c,v 1.26 2019/09/25 02:16:16 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@caida.org / mjl@wand.net.nz
@@ -28,7 +28,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_bdrmap.c,v 1.20 2019/09/16 03:45:31 mjl Exp $";
+  "$Id: sc_bdrmap.c,v 1.26 2019/09/25 02:16:16 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -534,6 +534,8 @@ static uint8_t                firsthop      = 1;
 static uint16_t               flowid        = 0x420;
 static prefixtree_t          *ip2as_pt      = NULL;
 static char                  *ip2as_fn      = NULL;
+static prefixtree_t          *ipmap_pt      = NULL;
+static char                  *ipmap_fn      = NULL;
 static splaytree_t           *ip2name_tree  = NULL;
 static char                  *ip2name_fn    = NULL;
 static prefixtree_t          *ixp_pt        = NULL;
@@ -585,9 +587,10 @@ static int                    dump_borders  = 0;
 static int                    dump_onedsts  = 0;
 static int                    dump_tracesets = 0;
 static int                    no_ipopts     = 0;
+static int                    no_alias      = 0;
 static int                    no_gss        = 0;
 static int                    no_self       = 0;
-static int                    no_merge      = 0;
+static int                    no_merge      = 1;
 static int                    fudge         = 5000;
 static int                    af            = AF_INET;
 static struct timeval         now;
@@ -626,6 +629,7 @@ typedef void (*sc_stree_free_t)(void *ptr);
 #define OPT_ALLYCONF    0x040000
 #define OPT_DELEGATED   0x080000
 #define OPT_FLOWID      0x100000
+#define OPT_IPMAP       0x200000
 
 #define TEST_TRACE      0x00
 #define TEST_LINK       0x01
@@ -676,13 +680,13 @@ static void usage(uint32_t opts)
 
   fprintf(stderr,
     "usage: sc_bdrmap [-6Di] [-a ip2as] [-A targetases] [-c allyconf]\n"
-    "                 [-C flowid] [-f firsthop] [-l log] [-o warts]\n"
-    "                 [-O option] [-p port] [-U unix] [-R unix] [-v vpases]\n"
-    "                 [-x ixps]\n"
+    "                 [-C flowid] [-f firsthop] [-l log] [-M ipmap]\n"
+    "                 [-o warts] [-O option] [-p port] [-U unix] [-R unix]\n"
+    "                 [-v vpases] [-x ixps]\n"
     "\n"
     "       sc_bdrmap [-6] [-a ip2as] [-A targetases] [-d dump]\n"
-    "                 [-g delegated] [-n names] [-r rels] [-v vpases]\n"
-    "                 [-x ixps] file1 .. fileN\n");
+    "                 [-g delegated] [-M ipmap] [-n names] [-r rels]\n"
+    "                 [-v vpases] [-x ixps] file1 .. fileN\n");
 
   if(opts == 0)
     {
@@ -722,6 +726,8 @@ static void usage(uint32_t opts)
     fprintf(stderr, "       -i: map interconnections towards specified IPs\n");
   if(opts & OPT_LOGFILE)
     fprintf(stderr, "       -l: log activity to specified file\n");
+  if(opts & OPT_IPMAP)
+    fprintf(stderr, "       -M: static IP mapping file\n");
   if(opts & OPT_NAMEFILE)
     fprintf(stderr, "       -n: IP to name file\n");
   if(opts & OPT_OUTFILE)
@@ -735,9 +741,11 @@ static void usage(uint32_t opts)
       fprintf(stderr, "           dumpborders: dump only border routers\n");
       fprintf(stderr, "           dumponedsts: annotate onedst routers\n");
       fprintf(stderr, "           dumptracesets: dump unused tracesets\n");
-      fprintf(stderr, "           noipopts: do not tx probes with options\n");
+      fprintf(stderr, "           noalias: do not tx alias resolution pkts\n");
       fprintf(stderr, "           nogss: do not use global stop set\n");
+      fprintf(stderr, "           noipopts: do not tx probes with options\n");
       fprintf(stderr, "           noself: do not print adjacent VP routers\n");
+      fprintf(stderr, "           merge: analytically merge routers\n");
       fprintf(stderr, "           nomerge: do not analytically merge routers\n");
     }
   if(opts & OPT_PORT)
@@ -887,7 +895,7 @@ static int check_options_targetases(slist_t *list)
 static int check_options(int argc, char *argv[])
 {
   int rc = -1, x = 0, ch; long lo;
-  char *opts = "?6a:A:c:C:d:Df:g:il:n:o:O:p:r:R:U:v:x:";
+  char *opts = "?6a:A:c:C:d:Df:g:il:M:n:o:O:p:r:R:U:v:x:";
   char *opt_port = NULL, *opt_firsthop = NULL, *opt_dumpid = NULL;
   char *opt_unix = NULL, *opt_allyconf = NULL, *opt_vpases = NULL;
   char *opt_flowid = NULL;
@@ -980,6 +988,13 @@ static int check_options(int argc, char *argv[])
 	  logfile_fn = optarg;
 	  break;
 
+	case 'M':
+	  if(check_options_once(ch, OPT_IPMAP) != 0)
+	    goto done;
+	  options |= OPT_IPMAP;
+	  ipmap_fn = optarg;
+	  break;
+
 	case 'o':
 	  if(check_options_once(ch, OPT_OUTFILE) != 0)
 	    goto done;
@@ -997,10 +1012,14 @@ static int check_options(int argc, char *argv[])
 	    dump_tracesets = 1;
 	  else if(strcasecmp(optarg, "impatient") == 0)
 	    impatient = 1;
+	  else if(strcasecmp(optarg, "noalias") == 0)
+	    no_alias = 1;
 	  else if(strcasecmp(optarg, "nogss") == 0)
 	    no_gss = 1;
 	  else if(strcasecmp(optarg, "noipopts") == 0)
 	    no_ipopts = 1;
+	  else if(strcasecmp(optarg, "merge") == 0)
+	    no_merge = 0;
 	  else if(strcasecmp(optarg, "nomerge") == 0)
 	    no_merge = 1;
 	  else if(strcasecmp(optarg, "noself") == 0)
@@ -1312,6 +1331,8 @@ static void *pt_find(prefixtree_t *pt, scamper_addr_t *addr)
 
 static int is_ixp(scamper_addr_t *addr)
 {
+  if(ipmap_pt != NULL && pt_find(ipmap_pt, addr) != NULL)
+    return 0;
   if(ixp_pt != NULL && pt_find(ixp_pt, addr) != NULL)
     return 1;
   return 0;
@@ -1319,6 +1340,8 @@ static int is_ixp(scamper_addr_t *addr)
 
 static int is_reserved(scamper_addr_t *addr)
 {
+  if(ipmap_pt != NULL && pt_find(ipmap_pt, addr) != NULL)
+    return 0;
   return scamper_addr_isreserved(addr);
 }
 
@@ -2011,7 +2034,6 @@ static sc_prefix_t *sc_prefix_alloc(void *net, int len)
 static sc_prefix_t *sc_prefix_find_in(void *addr)
 {
   prefix4_t *p4; prefix6_t *p6;
-
   if(af == AF_INET)
     {
       if((p4 = prefixtree_find_ip4(ip2as_pt, addr)) != NULL)
@@ -2027,7 +2049,10 @@ static sc_prefix_t *sc_prefix_find_in(void *addr)
 
 static sc_prefix_t *sc_prefix_find(scamper_addr_t *addr)
 {
-  if(scamper_addr_isreserved(addr) != 0)
+  sc_prefix_t *pfx;
+  if(ipmap_pt != NULL && (pfx = pt_find(ipmap_pt, addr)) != NULL)
+    return pfx;
+  if(is_reserved(addr) != 0)
     return NULL;
   if(ixp_pt != NULL && pt_find(ixp_pt, addr) != NULL)
     return NULL;
@@ -3692,12 +3717,19 @@ static uint8_t sc_delegated_netlen(sc_delegated_t *dg)
   return 0;
 }
 
+static char *rtt_tostr(const struct timeval *rtt, char *str, size_t len)
+{
+  uint32_t v = (rtt->tv_sec * 10000) + (rtt->tv_usec / 100);
+  snprintf(str, len, "%d.%01d", v / 10, v % 10);
+  return str;
+}
+
 static void trace_dump(const scamper_trace_t *trace, sc_routerset_t *rtrset)
 {
   scamper_trace_hop_t *hop;
   sc_prefix_t *pfx;
   sc_router_t *rtr;
-  char buf[128];
+  char buf[128], rtt[128];
   int i;
 
   /* dump the traceroute output */
@@ -3714,9 +3746,10 @@ static void trace_dump(const scamper_trace_t *trace, sc_routerset_t *rtrset)
 	  printf("*\n");
 	  continue;
 	}
-      printf("%s <%u,%u> %d",
+      printf("%s <%u,%u> %s %d",
 	     scamper_addr_tostr(hop->hop_addr, buf, sizeof(buf)),
 	     hop->hop_icmp_type, hop->hop_icmp_code,
+	     rtt_tostr(&hop->hop_rtt, rtt, sizeof(rtt)),
 	     is_vp(hop->hop_addr));
       if(is_ixp(hop->hop_addr) != 0)
 	printf(" ixp");
@@ -4871,7 +4904,7 @@ static int do_decoderead_trace(scamper_trace_t *trace)
     }
 
   /* linktest the apparent last hop in the VP network */
-  if(af == AF_INET && lv-1 >= trace->firsthop-1 &&
+  if(af == AF_INET && lv-1 >= trace->firsthop-1 && no_alias == 0 &&
      (x = trace->hops[lv-1]) != NULL &&
      scamper_addr_cmp(x->hop_addr, trace->hops[lv]->hop_addr) != 0 &&
      sc_linktest_alloc(x->hop_addr, trace->hops[lv]->hop_addr) != 0)
@@ -4888,7 +4921,7 @@ static int do_decoderead_trace(scamper_trace_t *trace)
       if(y == NULL || scamper_addr_cmp(x->hop_addr, y->hop_addr) != 0)
 	{
 	  /* linktest the apparent first hop in the neighbor network */
-	  if(af == AF_INET &&
+	  if(af == AF_INET && no_alias == 0 &&
 	     sc_linktest_alloc(trace->hops[lv]->hop_addr, x->hop_addr) != 0)
 	    goto err;
 
@@ -4925,7 +4958,7 @@ static int do_decoderead_trace(scamper_trace_t *trace)
   if((addr = slist_head_pop(astraces->dsts)) == NULL)
     {
       /* figure out aliases to test for */
-      if(sc_astraces_aliases(astraces) != 0)
+      if(no_alias == 0 && sc_astraces_aliases(astraces) != 0)
 	goto err;
       sc_astraces_free(astraces);
       return 0;
@@ -5412,6 +5445,67 @@ static int ip2as_line(char *line, void *param)
   return -1;
 }
 
+static int ipmap_line(char *line, void *param)
+{
+  scamper_addr_t sa;
+  sc_prefix_t *p = NULL;
+  uint32_t ases[1];
+  struct in_addr in;
+  struct in6_addr in6;
+  char *n, *a;
+  long lo;
+
+  if(line[0] == '\0' || line[0] == '#')
+    return 0;
+
+  n = line;
+  a = line;
+
+  /* get the AS number */
+  while(isspace(*a) == 0 && *a != '\0')
+    a++;
+  if(*a == '\0')
+    return -1;
+  *a = '\0'; a++;
+  while(isspace(*a) != 0)
+    a++;
+  if(string_isnumber(a) == 0 || string_tolong(a, &lo) != 0)
+    return -1;
+
+  if(af == AF_INET)
+    {
+      if(inet_pton(AF_INET, n, &in) != 1)
+	return -1;
+      sa.type = SCAMPER_ADDR_TYPE_IPV4;
+      sa.addr = &in;
+      if((p = sc_prefix_alloc(&in, 32)) == NULL)
+	goto err;
+    }
+  else
+    {
+      if(inet_pton(AF_INET6, n, &in6) != 1)
+	return -1;
+      sa.type = SCAMPER_ADDR_TYPE_IPV6;
+      sa.addr = &in6;
+      if((p = sc_prefix_alloc(&in6, 128)) == NULL)
+	goto err;
+    }
+
+  ases[0] = lo;
+  if((p->asmap = sc_asmap_get(ases, 1)) == NULL)
+    goto err;
+
+  if((af == AF_INET  && prefixtree_insert4(ipmap_pt,p->pfx.v4) == NULL) ||
+     (af == AF_INET6 && prefixtree_insert6(ipmap_pt,p->pfx.v6) == NULL))
+    goto err;
+
+  return 0;
+
+ err:
+  if(p != NULL) sc_prefix_free(p);
+  return -1;
+}
+
 static int relfile_line(char *line, void *param)
 {
   static int linec = 0;
@@ -5523,13 +5617,6 @@ static int do_targetips(void)
  err:
   if(astraces != NULL) splaytree_free(astraces, NULL);
   return -1;
-}
-
-static int do_targetases(void)
-{
-
-
-  return 0;
 }
 
 static int rec_target_4(sc_prefix_nest_t *nest, struct in_addr *in)
@@ -5887,6 +5974,28 @@ static int do_ip2as(void)
   return -1;
 }
 
+static int do_ipmap(void)
+{
+  if(ipmap_fn == NULL)
+    return 0;
+
+  if((ipmap_pt = prefixtree_alloc(af)) == NULL)
+    {
+      logerr("%s: could not alloc pt: %s\n", __func__, strerror(errno));
+      goto err;
+    }
+  if(file_lines(ipmap_fn, ipmap_line, NULL) != 0)
+    {
+      logerr("%s: could not read %s: %s\n",__func__,ipmap_fn,strerror(errno));
+      goto err;
+    }
+
+  return 0;
+
+ err:
+  return -1;
+}
+
 static int ixp_line(char *line, void *param)
 {
   struct addrinfo hints, *res, *res0;
@@ -5986,11 +6095,12 @@ static int bdrmap_data(void)
     }
   else
     {
-      if((options & OPT_TARGETASES) && do_targetases() != 0)
-	goto done;
       if(do_targets() != 0)
 	goto done;
     }
+
+  if(do_ipmap() != 0)
+    return -1;
 
   if(do_scamperconnect() != 0 ||
      (outfile = scamper_file_open(outfile_fn, 'w', "warts")) == NULL ||
@@ -6462,8 +6572,7 @@ static int process_1_trace_work(scamper_trace_t *trace, int lh)
 	 SCAMPER_TRACE_HOP_IS_ICMP_TTL_EXP(x) == 0 ||
 	 SCAMPER_TRACE_HOP_IS_ICMP_TTL_EXP(y) == 0 ||
 	 scamper_addr_cmp(y->hop_addr, trace->dst) == 0 ||
-	 scamper_addr_isreserved(x->hop_addr) ||
-	 scamper_addr_isreserved(y->hop_addr))
+	 is_reserved(x->hop_addr) || is_reserved(y->hop_addr))
 	continue;
 
       /*
@@ -6506,7 +6615,7 @@ static int process_1_trace_work(scamper_trace_t *trace, int lh)
 	    {
 	      if((z = trace->hops[j]) == NULL ||
 		 SCAMPER_TRACE_HOP_IS_ICMP_TTL_EXP(z) == 0 ||
-		 scamper_addr_isreserved(z->hop_addr) ||
+		 is_reserved(z->hop_addr) ||
 		 (pfx = sc_prefix_find(z->hop_addr)) == NULL)
 		continue;
 	      if(sc_link4_addadj(link4, pfx) != 0)
@@ -6669,7 +6778,7 @@ static int process_1_ping(scamper_ping_t *ping)
 	{
 	  if(SCAMPER_PING_REPLY_IS_ICMP_UNREACH_PORT(r) &&
 	     scamper_addr_cmp(r->addr, ping->dst) != 0 &&
-	     scamper_addr_isreserved(r->addr) == 0 &&
+	     is_reserved(r->addr) == 0 &&
 	     sc_link_find(ping->dst, r->addr) == NULL &&
 	     sc_link_find(r->addr, ping->dst) == NULL &&
 	     sc_routerset_getpair(rtrset, ping->dst, r->addr) == NULL)
@@ -7071,7 +7180,8 @@ static int owner_1_traceset(sc_routerset_t *set, sc_traceset_t *ts)
  * yas_set:  networks announcing ttlexp interfaces on router Y
  * a2r_list: the ttlexp interfaces on router Y
  */
-static int owner_1(sc_router_t *y, uint32_t *owner_as, uint8_t *owner_reason)
+static int owner_1(sc_router_t *y, uint32_t *owner_as, uint8_t *owner_reason,
+		   int vp_ipasn)
 {
   sc_stree_t *yas_set = NULL, *zas_set = NULL, *zas2_set = NULL;
   sc_stree_t *adj_set = NULL, *ixp_set = NULL, *tp_set = NULL;
@@ -7264,7 +7374,7 @@ static int owner_1(sc_router_t *y, uint32_t *owner_as, uint8_t *owner_reason)
 		  z = dlist_node_item(dn);
 		  if(z->owner_as != 0)
 		    z_asn = z->owner_as;
-		  else if(owner_1(z, &z_asn, &u8) != 1)
+		  else if(owner_1(z, &z_asn, &u8, 0) != 1)
 		    continue;
 
 		  if(is_vpas(z_asn) || z_asn == y_dstases_owner || z_asn == 0)
@@ -7648,7 +7758,7 @@ static int owner_1(sc_router_t *y, uint32_t *owner_as, uint8_t *owner_reason)
       yas = ((sc_asmapc_t *)slist_head_item(yas_set->list))->asmap;
       for(i=0; i<yas->asc; i++)
 	{
-	  if(is_vpas(yas->ases[i]))
+	  if(is_vpas(yas->ases[i]) && vp_ipasn == 0)
 	    continue;
 	  *owner_as = yas->ases[i];
 	  *owner_reason = SC_ROUTER_OWNER_IP2AS;
@@ -7855,7 +7965,7 @@ static void finish_1(void)
 	      y->flags |= SC_ROUTER_FLAG_VISITED;
 
 	      /* if we have an error, break out */
-	      if((rc = owner_1(y, &owner_as, &owner_reason)) < 0)
+	      if((rc = owner_1(y, &owner_as, &owner_reason, 0)) < 0)
 		goto done;
 
 	      /* if we assign an owner, then make a note */
@@ -7887,7 +7997,7 @@ static void finish_1(void)
 	  if(x->flags & SC_ROUTER_FLAG_VISITED)
 	    continue;
 	  x->flags |= SC_ROUTER_FLAG_VISITED;
-	  if((rc = owner_1(x, &owner_as, &owner_reason)) < 0)
+	  if((rc = owner_1(x, &owner_as, &owner_reason, 1)) < 0)
 	    goto done;
 	  if(rc > 0)
 	    {
@@ -8136,7 +8246,7 @@ static int process_2_trace(scamper_trace_t *trace)
   if(targetasc > 0)
     {
       if((pfx = sc_prefix_find(trace->dst)) == NULL)
-	return 0;
+	goto done;
       for(i=0; i<pfx->asmap->asc; i++)
 	{
 	  for(j=0; j<targetasc; j++)
@@ -8146,11 +8256,13 @@ static int process_2_trace(scamper_trace_t *trace)
 	    break;
 	}
       if(i == pfx->asmap->asc)
-	return 0;
+	goto done;
     }
 
   trace_dump(trace, NULL);
   printf("\n");
+
+ done:
   scamper_trace_free(trace);
   return 0;
 }
@@ -8181,6 +8293,9 @@ static int bdrmap_dump(void)
       if(slist_qsort(delegated, (slist_cmp_t)sc_delegated_cmp) != 0)
 	return -1;
     }
+
+  if(do_ipmap() != 0)
+    return -1;
 
   if(dump_funcs[dump_id].init != NULL)
     dump_funcs[dump_id].init();
@@ -8306,6 +8421,12 @@ static void cleanup(void)
     {
       prefixtree_free(ip2as_pt);
       ip2as_pt = NULL;
+    }
+
+  if(ipmap_pt != NULL)
+    {
+      prefixtree_free(ipmap_pt);
+      ipmap_pt = NULL;
     }
 
   if(ixp_pt != NULL)

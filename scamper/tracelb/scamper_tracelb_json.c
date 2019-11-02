@@ -5,7 +5,7 @@
  *
  * Authors: Matthew Luckie
  *
- * $Id: scamper_tracelb_json.c,v 1.10 2019/09/15 01:08:11 mjl Exp $
+ * $Id: scamper_tracelb_json.c,v 1.11 2019/09/24 07:00:57 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_tracelb_json.c,v 1.10 2019/09/15 01:08:11 mjl Exp $";
+  "$Id: scamper_tracelb_json.c,v 1.11 2019/09/24 07:00:57 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -87,8 +87,6 @@ static char *header_tostr(const scamper_tracelb_t *trace)
 
   return strdup(buf);
 }
-
-
 
 static char *reply_tostr(const scamper_tracelb_probe_t *probe,
 			 const scamper_tracelb_reply_t *reply)
@@ -307,7 +305,7 @@ static char *node_tostr(const scamper_tracelb_node_t *node)
   scamper_tracelb_probeset_t *set;
   scamper_tracelb_probe_t *probe;
   scamper_tracelb_link_t *link;
-  char buf[2048], tmp[128], *dup = NULL;
+  char buf[2048], tmp[512], *dup = NULL;
   size_t off, len = 0;
   int j, k;
 
@@ -319,7 +317,8 @@ static char *node_tostr(const scamper_tracelb_node_t *node)
   off = 0;
   string_concat(buf, sizeof(buf), &off, "{\"addr\":\"%s\"", tmp);
   if(node->name != NULL)
-    string_concat(buf, sizeof(buf), &off, ", \"name\":\"%s\"", node->name);
+    string_concat(buf, sizeof(buf), &off, ", \"name\":\"%s\"",
+		  json_esc(node->name, tmp, sizeof(tmp)));
   if(SCAMPER_TRACELB_NODE_QTTL(node))
     string_concat(buf, sizeof(buf), &off, ", \"q_ttl\":%u", node->q_ttl);
   string_concat(buf, sizeof(buf), &off, ", \"linkc\":%u", node->linkc);

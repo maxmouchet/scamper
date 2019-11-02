@@ -1,7 +1,7 @@
 /*
  * sc_hoiho: Holistic Orthography of Internet Hostname Observations
  *
- * $Id: sc_hoiho.c,v 1.1 2019/09/16 04:09:14 mjl Exp $
+ * $Id: sc_hoiho.c,v 1.6 2019/11/02 03:20:07 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@luckie.org.nz
@@ -125,7 +125,6 @@ typedef struct sc_iface
   sc_router_t    *rtr;     /* backpointer to router */
   int16_t         ip_s;    /* possible start of IP address */
   int16_t         ip_e;    /* possible end of IP address */
-  uint8_t         ip_b;    /* which bytes of address are present */
 } sc_iface_t;
 
 struct sc_router
@@ -313,7 +312,6 @@ static splaytree_t     *domain_tree  = NULL;
 static slist_t         *domain_list  = NULL;
 static char            *domain_eval  = NULL;
 static const char      *regex_eval   = NULL;
-static int              verbose      = 0;
 static int              refine_sets  = 1;
 static int              refine_ip    = 1;
 static int              refine_fp    = 1;
@@ -324,6 +322,7 @@ static int              refine_class = 1;
 static int              thin_same    = 1;
 static int              thin_matchc  = 1;
 static int              thin_mask    = 1;
+static int              do_debug     = 0;
 static int              do_ri        = 0;
 static int              do_appl      = 0;
 static int              do_jit       = 1;
@@ -384,6 +383,7 @@ static void usage(uint32_t opts)
     {
       fprintf(stderr, "       -O: options\n");
       fprintf(stderr, "           application: show outcome of regexes\n");
+      fprintf(stderr, "           debug: output debugging information\n");
       fprintf(stderr, "           json: output inferences in json format\n");
       fprintf(stderr, "           nojit: do not use PCRE JIT complication\n");
       fprintf(stderr, "           norefine: do not refine regexes\n");
@@ -407,7 +407,6 @@ static void usage(uint32_t opts)
       fprintf(stderr, "           nothin-same: do not thin equivalent regexes\n");
       fprintf(stderr, "           thin-same: thin equivalent regexes\n");
       fprintf(stderr, "           randindex: compute the Rand Index metric\n");
-      fprintf(stderr, "           verbose: output debugging information\n");
     }
 
   if(opts & OPT_REGEX)
@@ -503,8 +502,8 @@ static int check_options(int argc, char *argv[])
 	    do_ri = 1;
 	  else if(strcasecmp(optarg, "application") == 0)
 	    do_appl = 1;
-	  else if(strcasecmp(optarg, "verbose") == 0)
-	    verbose = 1;
+	  else if(strcasecmp(optarg, "debug") == 0)
+	    do_debug = 1;
 	  else if(strcasecmp(optarg, "nojit") == 0)
 	    do_jit = 0;
 	  else if(strcasecmp(optarg, "json") == 0)
@@ -1017,7 +1016,7 @@ static int pt_to_bits_ip(const sc_ifacedom_t *ifd, int *l, int lc,
       free(trip);
     }
 
-  if(verbose != 0 && threadc == 1)
+  if(do_debug != 0 && threadc == 1)
     {
       printf("%s %d | %d %d", ifd->label, (int)ifd->len, ip_s, ip_e);
       if(lc > 0)
@@ -1280,7 +1279,7 @@ static int pt_to_bits(const char *s, int *c, int cc, int *l, int lc,
       free(trip);
     }
 
-  if(verbose != 0 && threadc == 1)
+  if(do_debug != 0 && threadc == 1)
     {
       printf("%s |", s);
       for(i=0; i<cc; i++)
@@ -2723,7 +2722,6 @@ static dlist_t *sc_css_reduce_ls(splaytree_t *tree)
        *
        * the next block of code handles cases like ae-1-2.
        */
-      ptr = css->css;
       al = 0; num = 0; skip = 0;
       for(ptr = css->css; *ptr != '\0' && skip == 0; ptr++)
 	{
@@ -3522,7 +3520,7 @@ static int sc_regex_findnew(const sc_regex_t *cur, const sc_regex_t *can)
   return can->regexc-1;
 }
 
-static int sc_regex_score_tpa(const sc_regex_t *re)
+static int sc_regex_score_atp(const sc_regex_t *re)
 {
   return (int)re->tp_c - (int)(re->fp_c + re->fne_c + re->ip_c);
 }
@@ -3597,8 +3595,8 @@ static char *sc_regex_score_tostr(const sc_regex_t *re, char *buf, size_t len)
   if(re->ip_c > 0)
     string_concat(buf, len, &off, " ip %u", re->ip_c);
 
-  string_concat(buf, len, &off, " tpr %.1f tpa %d",
-		sc_regex_score_tpr(re), sc_regex_score_tpa(re));
+  string_concat(buf, len, &off, " tpr %.1f atp %d",
+		sc_regex_score_tpr(re), sc_regex_score_atp(re));
 
   string_concat(buf, len, &off, ", score %u matches %u", re->score, re->matchc);
 
@@ -3732,14 +3730,14 @@ static int sc_regex_score_cmp(const sc_regex_t *a, const sc_regex_t *b)
 
 static int sc_regex_score_rank_cmp(const sc_regex_t *a, const sc_regex_t *b)
 {
-  int a_tpa, b_tpa;
+  int a_atp, b_atp;
 
-  a_tpa = sc_regex_score_tpa(a);
-  b_tpa = sc_regex_score_tpa(b);
+  a_atp = sc_regex_score_atp(a);
+  b_atp = sc_regex_score_atp(b);
 
-  if(a_tpa > b_tpa)
+  if(a_atp > b_atp)
     return -1;
-  if(a_tpa < b_tpa)
+  if(a_atp < b_atp)
     return 1;
 
   if(a->fp_c < b->fp_c) return -1;
@@ -4403,7 +4401,7 @@ static int sc_iface_ip_find_4(sc_iface_t *iface, const char *suffix)
 	    {
 	      iface->ip_s = ip_s;
 	      iface->ip_e = ip_e;
-	      if(verbose != 0 && threadc == 1)
+	      if(do_debug != 0 && threadc == 1)
 		{
 		  printf("found %s in %s bytes %d - %d\n",
 			 scamper_addr_tostr(iface->addr, buf, sizeof(buf)),
@@ -4864,7 +4862,7 @@ static int sc_iface_ip_find_6(sc_iface_t *iface, const char *suffix)
 
   iface->ip_s = best.left;
   iface->ip_e = best.right;
-  if(verbose != 0 && threadc == 1)
+  if(do_debug != 0 && threadc == 1)
     {
       printf("found %s in %s bytes %d - %d\n",
 	     scamper_addr_tostr(iface->addr, buf, sizeof(buf)),
@@ -6387,9 +6385,9 @@ static int sc_regex_del_ppv_ok(const sc_regex_t *cur, const sc_regex_t *can)
 
 static sc_regex_t *sc_domain_bestre(sc_domain_t *dom)
 {
-  int best_tpa, best_ppv, best_len;
-  int re_ppv, re_tpa, re_len;
-  int diff_tpa, diff_tpa_r;
+  int best_atp, best_ppv, best_len;
+  int re_ppv, re_atp, re_len;
+  int diff_atp, diff_atp_r;
   int del_ppv, del_tp, del_fp;
   sc_regex_t *re, *best;
   slist_node_t *sn;
@@ -6399,7 +6397,7 @@ static sc_regex_t *sc_domain_bestre(sc_domain_t *dom)
 
   slist_qsort(dom->regexes, (slist_cmp_t)sc_regex_score_rank_cmp);
   best = slist_head_item(dom->regexes);
-  best_tpa = sc_regex_score_tpa(best);
+  best_atp = sc_regex_score_atp(best);
   best_len = sc_regex_str_len(best);
 
   if(best->tp_c != 0 && best->fp_c != 0)
@@ -6414,7 +6412,7 @@ static sc_regex_t *sc_domain_bestre(sc_domain_t *dom)
 	continue;
       if(re->tp_c == 0 && re->fp_c == 0)
 	continue;
-      if((re_tpa = sc_regex_score_tpa(re)) < 1)
+      if((re_atp = sc_regex_score_atp(re)) < 1)
 	break;
 
       /*
@@ -6431,16 +6429,16 @@ static sc_regex_t *sc_domain_bestre(sc_domain_t *dom)
         }
 
       re_len = sc_regex_str_len(re);
-      diff_tpa = best_tpa - re_tpa;
-      diff_tpa_r = (diff_tpa * 1000) / re_tpa;
+      diff_atp = best_atp - re_atp;
+      diff_atp_r = (diff_atp * 1000) / re_atp;
 
       /*
        * if the best regex has more TPs and more FPs than a candidate
-       * regex down the list, the TPA difference is less than 4%, and
+       * regex down the list, the ATP difference is less than 4%, and
        * the delta ppv from the candidate regex to the current best
        * regex is poor, then replace the current best regex.
        */
-      if(best->regexc == re->regexc && diff_tpa_r <= 40 &&
+      if(best->regexc == re->regexc && diff_atp_r <= 40 &&
 	 best->tp_c > re->tp_c && best->fp_c > re->fp_c)
 	{
 	  del_tp = best->tp_c - re->tp_c;
@@ -6450,7 +6448,7 @@ static sc_regex_t *sc_domain_bestre(sc_domain_t *dom)
 	  if(del_ppv < re_ppv && re_ppv - del_ppv > 100 && del_fp != 1)
 	    {
 	      best = re;
-	      best_tpa = sc_regex_score_tpa(best);
+	      best_atp = sc_regex_score_atp(best);
 	      best_len = sc_regex_str_len(best);
 	      best_ppv = (best->tp_c * 1000) / (best->tp_c + best->fp_c);
 	      continue;
@@ -6458,11 +6456,11 @@ static sc_regex_t *sc_domain_bestre(sc_domain_t *dom)
 	}
 
       if((best->regexc > re->regexc || best_len > re_len * 4) &&
-	 (diff_tpa_r <= 40 ||
-	  (diff_tpa == 2 && best->tp_c > re->tp_c && best->tp_c - re->tp_c == 1)))
+	 (diff_atp_r <= 40 ||
+	  (diff_atp == 2 && best->tp_c > re->tp_c && best->tp_c - re->tp_c == 1)))
 	{
 	  best = re;
-	  best_tpa = sc_regex_score_tpa(best);
+	  best_atp = sc_regex_score_atp(best);
 	  best_len = sc_regex_str_len(best);
 	  best_ppv = (best->tp_c * 1000) / (best->tp_c + best->fp_c);
 	}
@@ -7504,7 +7502,7 @@ static int sc_regex_build(splaytree_t *tree, const char *name, sc_domain_t *dom,
 
 	  if(sc_regex_find(tree, buf) != NULL)
 	    continue;
-	  if(verbose != 0 && threadc == 1)
+	  if(do_debug != 0 && threadc == 1)
 	    {
 	      printf("%s %s", buf, name);
 	      for(k=0; k<bitc; k+=3)
@@ -8761,7 +8759,7 @@ static int sc_regex_refine_tp(sc_regex_t *re)
 	      if(capc == 1 && css->cssc == 1 &&
 		 La[0] == 0 && ptr[La[1]+1] == '\0')
 		continue;
-	      if(threadc == 1 && verbose != 0)
+	      if(threadc == 1 && do_debug != 0)
 		printf("%s %s\n", ptr, sc_css_tostr(css,'|',buf,sizeof(buf)));
 	      if(pt_to_bits_lit(ptr, La, Lc, &bits, &bitc) == 0)
 		{
@@ -8792,7 +8790,7 @@ static int sc_regex_refine_tp(sc_regex_t *re)
 
 	  if(sc_regex_eval(re_new, NULL) != 0)
 	    goto done;
-	  if(re_new->matchc == 0 && threadc == 1 && verbose != 0)
+	  if(re_new->matchc == 0 && threadc == 1 && do_debug != 0)
 	    printf("no matches %s\n", re_new->regexes[0]->str);
 	  if(sc_regex_tp_isbetter(re, re_new) == 0)
 	    {
@@ -9298,7 +9296,7 @@ static int sc_regex_refine_fne(sc_regex_t *re)
   splaytree_free(re_tree, NULL); re_tree = NULL;
   dlist_qsort(recss_list, (dlist_cmp_t)sc_regex_css_score_cmp);
 
-  if(verbose != 0 && threadc == 1)
+  if(do_debug != 0 && threadc == 1)
     {
       for(dn=dlist_head_node(recss_list); dn != NULL; dn=dlist_node_next(dn))
 	{
@@ -9361,7 +9359,7 @@ static int sc_regex_refine_fne(sc_regex_t *re)
 	}
       dlist_qsort(recss_list, (dlist_cmp_t)sc_regex_css_work_score_cmp);
 
-      if(verbose != 0 && threadc == 1)
+      if(do_debug != 0 && threadc == 1)
 	{
 	  for(dn=dlist_head_node(recss_list);dn != NULL;dn=dlist_node_next(dn))
 	    {
@@ -9423,7 +9421,7 @@ static int sc_regex_refine_fne(sc_regex_t *re)
       sc_domain_unlock(re->dom);
       re_work = NULL;
     }
-  else if(verbose != 0 && threadc == 1)
+  else if(do_debug != 0 && threadc == 1)
     {
       printf("%s %s\n",
 	     re_work->regexes[0]->str,
@@ -9756,7 +9754,7 @@ static int sc_regex_refine_class_do(sc_regex_t *re, slist_t *ifd_list,
       slist_empty(list);
     }
 
-  if(verbose != 0 && threadc == 1)
+  if(do_debug != 0 && threadc == 1)
     {
       for(i=0; i<cc; i++)
 	{
@@ -9898,7 +9896,7 @@ static int sc_regex_refine_class(sc_regex_t *re)
     }
   slist_qsort(re_list, (slist_cmp_t)sc_regex_score_rank_cmp);
 
-  if(verbose != 0 && threadc == 1)
+  if(do_debug != 0 && threadc == 1)
     {
       for(sn=slist_head_node(re_list); sn != NULL; sn=slist_node_next(sn))
 	{
@@ -10147,7 +10145,7 @@ static int sc_regex_refine_fnu(sc_regex_t *re)
 	       * make sure La and Xa do not overlap, i.e. the literal
 	       * is not allowed to be within the extraction
 	       */
-	      if(threadc == 1 && verbose != 0)
+	      if(threadc == 1 && do_debug != 0)
 		printf("%s %s\n", ifd->label,
 		       sc_css_tostr(css, '|', buf, sizeof(buf)));
 	      if(pt_overlap(Xa, Xc * 2, La, Lc * 2) != 0)
@@ -10231,7 +10229,7 @@ static int sc_regex_refine_fnu(sc_regex_t *re)
   splaytree_inorder(re_tree, tree_to_dlist, re_list);
   splaytree_free(re_tree, NULL); re_tree = NULL;
 
-  if(threadc == 1 && verbose != 0)
+  if(threadc == 1 && do_debug != 0)
     {
       for(dn=dlist_head_node(re_list); dn != NULL; dn=dlist_node_next(dn))
 	{
@@ -10273,7 +10271,7 @@ static int sc_regex_refine_fnu(sc_regex_t *re)
 	    goto done;
 	  if(slist_count(re_set) == 0)
 	    {
-	      if(threadc == 1 && verbose != 0)
+	      if(threadc == 1 && do_debug != 0)
 		printf("no matches %s\n", re_eval->regexes[0]->str);
 	      sc_regex_free(re_eval); re_eval = NULL;
 	      dlist_node_pop(re_list, dn_this);
@@ -10512,7 +10510,7 @@ static int sc_regex_refine_ip(sc_regex_t *re)
       dlist_qsort(re_list, (dlist_cmp_t)sc_regex_score_ip_cmp);
       slist_empty_cb(ri_list, (slist_free_t)sc_routerinf_free);
 
-      if(verbose != 0 && threadc == 1)
+      if(do_debug != 0 && threadc == 1)
 	{
 	  for(dn=dlist_head_node(re_list); dn != NULL; dn=dlist_node_next(dn))
 	    {
@@ -10840,7 +10838,7 @@ static int sc_regex_refine_fp(sc_regex_t *re)
   for(sn=slist_head_node(css_list); sn != NULL; sn=slist_node_next(sn))
     {
       css = slist_node_item(sn);
-      if(verbose != 0 && threadc == 1)
+      if(do_debug != 0 && threadc == 1)
 	printf("%s\n", sc_css_tostr(css, '|', buf, sizeof(buf)));
       La = malloc(sizeof(int) * 2 * css->cssc);
       for(sn2=slist_head_node(ifd_list); sn2 != NULL; sn2=slist_node_next(sn2))
@@ -10880,7 +10878,7 @@ static int sc_regex_refine_fp(sc_regex_t *re)
 	}
       dlist_qsort(re_list, (dlist_cmp_t)sc_regex_score_fp_cmp);
 
-      if(verbose != 0 && threadc == 1)
+      if(do_debug != 0 && threadc == 1)
 	{
 	  printf("fp round %d\n", x);
 	  for(dn=dlist_head_node(re_list); dn != NULL; dn=dlist_node_next(dn))
@@ -10934,6 +10932,7 @@ static int sc_regex_refine_fp(sc_regex_t *re)
   rc = 0;
 
  done:
+  if(bits != NULL) free(bits);
   if(re_tmp != NULL) sc_regex_free(re_tmp);
   if(ifd_list != NULL) slist_free(ifd_list);
   if(ri_list != NULL) slist_free_cb(ri_list, (slist_free_t)sc_routerinf_free);
@@ -10984,8 +10983,8 @@ static int sc_regex_f_isbetter(sc_regex_t *cur, sc_regex_t *can)
   if(can->tp_c <= cur->tp_c)
     return 0;
 
-  /* if the tpa score does not increase, then no better */
-  if(sc_regex_score_tpa(cur) >= sc_regex_score_tpa(can))
+  /* if the atp score does not increase, then no better */
+  if(sc_regex_score_atp(cur) >= sc_regex_score_atp(can))
     return 0;
 
   /*
@@ -11155,14 +11154,92 @@ static void generate_regexes_thread(sc_domain_t *dom)
   return;
 }
 
+static uint32_t regex_file_line_score(char *score_str)
+{
+  uint32_t score = 0;
+  char *ptr = score_str + 6;
+  long lo;
+
+  score_str = ptr;
+  while(*ptr != '\0' && *ptr != ' ')
+    ptr++;
+  if(*ptr == ' ')
+    *ptr = '\0';
+  if(string_isnumber(score_str) != 0 && string_tolong(score_str, &lo) == 0)
+    score = (uint32_t)lo;
+
+  return score;
+}
+
+static int regex_file_line_d3(char *line)
+{
+  sc_domain_t *dom;
+  sc_regex_t *re = NULL;
+  uint32_t score;
+  char *dup = NULL;
+  char *ptr, *eval_ptr, *score_ptr;
+  int rc = -1;
+
+  /* dup the string in case we find the string isn't one we wanted */
+  if((dup = strdup(line)) == NULL)
+    return -1;
+
+  /* look for magic ", score: " and "score " strings */
+  if((eval_ptr = (char *)string_findlc(dup, ", score: ")) == NULL ||
+     (score_ptr = (char *)string_findlc(eval_ptr, "score ")) == NULL)
+    {
+      rc = 0;
+      goto done;
+    }
+  *eval_ptr = '\0';
+  score = regex_file_line_score(score_ptr);
+
+  ptr = dup;
+  while(*ptr != '\0')
+    {
+      if(*ptr == ':')
+	break;
+      ptr++;
+    }
+
+  if(*ptr == '\0' || *(ptr+1) == '\0' || *(ptr+2) == '\0')
+    {
+      rc = 0;
+      goto done;
+    }
+  *ptr = '\0';
+  ptr += 2;
+
+  if((dom = sc_domain_find(dup)) == NULL)
+    {
+      rc = 0;
+      goto done;
+    }
+
+  /* build the regex and tag the score */
+  if((re = sc_regex_alloc_str(ptr)) == NULL)
+    goto done;
+  re->score = score;
+  re->dom = dom;
+  if(slist_tail_push(dom->regexes, re) == NULL)
+    goto done;
+
+  re = NULL;
+  rc = 1;
+
+ done:
+  if(re != NULL) sc_regex_free(re);
+  if(dup != NULL) free(dup);
+  return rc;
+}
+
 static int regex_file_line(char *line, void *param)
 {
   static sc_domain_t *dom = NULL;
   uint32_t score = 0;
   sc_regex_t *re;
-  char *score_str;
   char *ptr;
-  long lo;
+  int rc;
 
   if(line[0] == '\0' || line[0] == '#')
     return 0;
@@ -11173,6 +11250,12 @@ static int regex_file_line(char *line, void *param)
       dom = sc_domain_find(line + 7);
       return 0;
     }
+
+  /* try process the line as if it was from -d 3 */
+  if((rc = regex_file_line_d3(line)) == -1)
+    return -1;
+  if(rc == 1)
+    return 0;
 
   /* don't care about this domain */
   if(dom == NULL)
@@ -11193,15 +11276,7 @@ static int regex_file_line(char *line, void *param)
 
   /* if the regex is tagged with a score, copy it */
   if((ptr = (char *)string_findlc(ptr, "score ")) != NULL)
-    {
-      ptr += 6; score_str = ptr;
-      while(*ptr != '\0' && *ptr != ' ')
-	ptr++;
-      if(*ptr == ' ')
-	*ptr = '\0';
-      if(string_isnumber(score_str) != 0 && string_tolong(score_str, &lo) == 0)
-	score = (uint32_t)lo;
-    }
+    score = regex_file_line_score(ptr);
 
   /* build the regex and tag the score */
   if((re = sc_regex_alloc_str(line)) != NULL)
@@ -11359,7 +11434,7 @@ static void refine_regexes_sets_domain_check(sc_domain_fn_t *domfn)
   sc_regex_fn_t *work = NULL, *work2;
   slist_node_t *sn, *s2;
   sc_regex_t *head;
-  int all_done = 0, work_tpa, head_tpa;
+  int all_done = 0, work_atp, head_atp;
 
   /* check if we've inferred a near-perfect regex */
   slist_qsort(domfn->work, (slist_cmp_t)sc_regex_fn_score_rank_cmp);
@@ -11370,7 +11445,7 @@ static void refine_regexes_sets_domain_check(sc_domain_fn_t *domfn)
       domfn->done = 1;
       return;
     }
-  head_tpa = sc_regex_score_tpa(head);
+  head_atp = sc_regex_score_atp(head);
 
   /* put the list back in to the order it started with */
   slist_qsort(domfn->work, (slist_cmp_t)sc_regex_fn_base_rank_cmp);
@@ -11385,10 +11460,10 @@ static void refine_regexes_sets_domain_check(sc_domain_fn_t *domfn)
 
       /*
        * do not consider further refinement of a naming convention
-       * made up of more regexes but a lower TPA score.
+       * made up of more regexes but a lower ATP score.
        */
-      work_tpa = sc_regex_score_tpa(work->re);
-      if(head->regexc < work->re->regexc && head_tpa >= work_tpa)
+      work_atp = sc_regex_score_atp(work->re);
+      if(head->regexc < work->re->regexc && head_atp >= work_atp)
 	{
 	  work->done = 2;
 	  continue;
@@ -11397,7 +11472,7 @@ static void refine_regexes_sets_domain_check(sc_domain_fn_t *domfn)
 	{
 	  work2 = slist_node_item(s2);
 	  if(work2->re->regexc < work->re->regexc &&
-	     sc_regex_score_tpa(work2->re) >= work_tpa)
+	     sc_regex_score_atp(work2->re) >= work_atp)
 	    break;
 	}
       if(s2 != sn)
@@ -11519,7 +11594,7 @@ static int refine_regexes_sets(void)
 
   while(dlist_count(domfn_list) > 0)
     {
-      if(verbose != 0 && threadc == 1)
+      if(do_debug != 0 && threadc == 1)
 	printf("\n###\n");
       if((tp = threadpool_alloc(threadc)) == NULL)
 	goto done;
@@ -11531,7 +11606,7 @@ static int refine_regexes_sets(void)
 	  for(sn=slist_head_node(domfn->work); sn!=NULL; sn=slist_node_next(sn))
 	    {
 	      work = slist_node_item(sn);
-	      if(verbose != 0 && threadc == 1)
+	      if(do_debug != 0 && threadc == 1)
 		printf("%d %s %s\n", work->done,
 		       sc_regex_tostr(work->re, buf, sizeof(buf)),
 		       sc_regex_score_tostr(work->re, score, sizeof(score)));

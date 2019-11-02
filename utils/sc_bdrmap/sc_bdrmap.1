@@ -6,9 +6,9 @@
 .\" Copyright (c) 2016 The University of Waikato
 .\"                    All rights reserved
 .\"
-.\" $Id: sc_bdrmap.1,v 1.6 2018/12/19 05:18:38 mjl Exp $
+.\" $Id: sc_bdrmap.1,v 1.9 2019/09/25 00:22:17 mjl Exp $
 .\"
-.Dd December 22, 2016
+.Dd September 24, 2019
 .Dt SC_BDRMAP 1
 .Os
 .Sh NAME
@@ -20,9 +20,10 @@
 .Op Fl 6ADi
 .Op Fl a Ar ip2as-file
 .Op Fl c Ar allyconf
-.Op Fl C Ar csum
+.Op Fl C Ar flowid
 .Op Fl f Ar firsthop
 .Op Fl l Ar log-file
+.Op Fl M Ar ipmap-file
 .Op Fl o Ar output-file
 .Op Fl O Ar option
 .Op Fl p Ar port
@@ -38,6 +39,7 @@
 .Op Fl a Ar ip2as-file
 .Op Fl d Ar dump
 .Op Fl g Ar delegated-file
+.Op Fl M Ar ipmap-file
 .Op Fl n Ar names-file
 .Op Fl r Ar relationships-file
 .Op Fl v Ar vpases
@@ -106,10 +108,11 @@ central shared IP-ID counter.  By default, each pair of aliases is tested
 five additional times at 5 minute intervals because two IP addresses
 belonging to two different routers could happen to return IP-ID values
 that imply a central shared IP-ID counter.
-.It Fl C Ar csum
-specifies the checksum that scamper should use in ICMP probes so that
+.It Fl C Ar flowid
+specifies the checksum that scamper should use in ICMP probes, or the
+source port that scamper should use in UDP probes, so that
 traceroutes to the same destination will also use the same flowid.  By
-default, the checksum is 0x420.
+default, the flowid is 0x420.
 .It Fl d Ar dump
 specifies the dump ID to use to analyze the collected data.
 Currently, ID values 1 (routers) and 2 (traces) are valid, which dumps
@@ -139,6 +142,10 @@ debugging.
 specifies the name of a file to log progress output from
 .Nm
 generated at run time.
+.It Fl M Ar ipmap-file
+specifies the name of a file containing individual IP address to ASN
+mappings, which override heuristics inferring if the IP address is from
+a reserved address, or an IXP address.
 .It Fl n Ar names-file
 specifies the name of a file containing IP address to domain name system
 names.
@@ -167,8 +174,11 @@ was observed to be routed by a neighbor network.
 probe the destination ASes in order of number of address blocks, so
 that the probing will complete fastest.
 .It
+.Sy noalias:
+do not do alias resolution probes when collecting topology data.
+.It
 .Sy nogss:
-do not use a global stop set when collecting topology.
+do not use a global stop set when collecting topology data.
 .It
 .Sy noipopts:
 do not probe with IP record route and IP prespecified timestamp options.

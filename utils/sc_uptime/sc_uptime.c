@@ -24,7 +24,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: sc_uptime.c,v 1.71 2019/09/16 04:47:31 mjl Exp $";
+  "$Id: sc_uptime.c,v 1.74 2019/09/24 06:29:59 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -687,6 +687,130 @@ static int next_random(int *next, int next_min, int next_max)
   return 0;
 }
 
+/*
+ * do_meta_setlong
+ *
+ * set a value in the metadata table.  first, try using an update statement.
+ * if that fails (because there is no row to update) then try an insert
+ * statement.
+ */
+static int do_meta_setlong(char *type, long lo)
+{
+  const static char *up_sql = "update metadata set value=? where type=?";
+  const static char *in_sql = "insert into metadata(type,value) values(?,?)";
+  sqlite3_stmt *stmt = NULL;
+  char buf[256];
+  int rc = -1, x;
+
+  snprintf(buf, sizeof(buf), "%ld", lo);
+
+  /* to start with, try using an update statement */
+  x = sqlite3_prepare_v2(db, up_sql, strlen(up_sql)+1, &stmt, NULL);
+  if(x != SQLITE_OK)
+    {
+      fprintf(stderr, "%s: could not prepare update sql: %s\n", __func__,
+	      sqlite3_errstr(x));
+      goto done;
+    }
+  sqlite3_bind_text(stmt, 1, buf, strlen(buf), SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 2, type, strlen(type), SQLITE_STATIC);
+  if(sqlite3_step(stmt) != SQLITE_DONE)
+    {
+      fprintf(stderr, "%s: could not update %s %ld\n", __func__, type, lo);
+      goto done;
+    }
+  if((x = sqlite3_changes(db)) > 1 || x < 0)
+    {
+      fprintf(stderr, "%s: unexpected changes %d\n", __func__, x);
+      goto done;
+    }
+  if(x == 1)
+    {
+      rc = 0;
+      goto done;
+    }
+  sqlite3_finalize(stmt); stmt = NULL;
+
+  /* otherwise, if the type is not present in the table, insert it */
+  x = sqlite3_prepare_v2(db, in_sql, strlen(in_sql)+1, &stmt, NULL);
+  if(x != SQLITE_OK)
+    {
+      fprintf(stderr, "%s: could not prepare insert sql: %s\n", __func__,
+	      sqlite3_errstr(x));
+      goto done;
+    }
+  sqlite3_bind_text(stmt, 1, type, strlen(type), SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 2, buf, strlen(buf), SQLITE_STATIC);
+  if(sqlite3_step(stmt) != SQLITE_DONE)
+    {
+      fprintf(stderr, "%s: could not insert %s %ld\n", __func__, type, lo);
+      goto done;
+    }
+  if((x = sqlite3_changes(db)) != 1)
+    {
+      fprintf(stderr, "%s: unexpected changes %d\n", __func__, x);
+      goto done;
+    }
+  rc = 0;
+
+ done:
+  if(stmt != NULL) sqlite3_finalize(stmt);
+  return rc;
+}
+
+/*
+ * do_meta_getlong:
+ *
+ * get a value for the type in the metadata table.
+ *
+ * This will prepare the statement every time it is run because we
+ * expect that this function will be called infrequently
+ *
+ * type: the variable name
+ * returns: 1 on success, 0 if type is not present, negative if an
+ * error occurred.
+ */
+static int do_meta_getlong(char *type, long *lo)
+{
+  const static char *sql = "select value from metadata where type=?";
+  const unsigned char *value;
+  sqlite3_stmt *stmt = NULL;
+  int rc = -1;
+  int x;
+
+  if((x = sqlite3_prepare_v2(db,sql,strlen(sql)+1,&stmt,NULL)) != SQLITE_OK)
+    {
+      fprintf(stderr, "%s: could not prepare sql: %s\n", __func__,
+	      sqlite3_errstr(x));
+      goto done;
+    }
+  sqlite3_bind_text(stmt, 1, type, strlen(type), SQLITE_STATIC);
+
+  x = sqlite3_step(stmt);
+  if(x != SQLITE_ROW && x != SQLITE_OK && x != SQLITE_DONE)
+    {
+      fprintf(stderr, "%s: could not run sql stmt: %s\n", __func__,
+	      sqlite3_errstr(x));
+      goto done;
+    }
+
+  if(x != SQLITE_ROW)
+    {
+      rc = 0;
+      goto done;
+    }
+
+  value = sqlite3_column_text(stmt, 0);
+  if(string_isnumber((const char *)value) == 0 ||
+     string_tolong((const char *)value, lo) != 0)
+    goto done;
+  rc = 1;
+
+ done:
+  if(stmt != NULL) sqlite3_finalize(stmt);
+  return rc;
+}
+
 static int do_sqlite_vacuum(void)
 {
   char *errmsg;
@@ -1165,6 +1289,23 @@ static int addrfile_line(char *line, void *param)
   return rc;
 }
 
+static int do_sqlite_init_meta(void)
+{
+  static const char *sql =
+    "create table if not exists \"metadata\" ("
+    "\"type\" TEXT NOT NULL PRIMARY KEY, "
+    "\"value\" TEXT NOT NULL)";
+  char *errmsg;
+
+  if(sqlite3_exec(db, sql, NULL, NULL, &errmsg) != SQLITE_OK)
+    {
+      fprintf(stderr, "%s: could not execute sql: %s\n", __func__, errmsg);
+      return -1;
+    }
+
+  return 0;
+}
+
 /*
  * do_sqlite_state_create
  *
@@ -1251,7 +1392,8 @@ static int do_sqlite_open(void)
     {
       if(rc == 0 || errno != ENOENT)
 	{
-	  fprintf(stderr, "%s: will not create db called %s without -c\n",
+	  fprintf(stderr,
+		  "%s: will not create db called %s: it already exists\n",
 		  __func__, dbfile);
 	  return -1;
 	}
@@ -1605,6 +1747,23 @@ static int up_addrfile(void)
   const unsigned char *addr;
   const char *sql;
   int begun = 0, rc = -1, x;
+  time_t mtime;
+  long lo;
+
+  /* check to see if the addresses need to be imported given the ts */
+  if(stat_mtime(opt_args[0], &mtime) != 0)
+    {
+      fprintf(stderr, "%s: could not stat %s: %s\n", __func__, opt_args[0],
+	      strerror(errno));
+      goto done;
+    }
+  if((x = do_meta_getlong(opt_args[0], &lo)) < 0)
+    goto done;
+  if(x == 1 && mtime == (time_t)lo)
+    {
+      rc = 0;
+      goto done;
+    }
 
   if((tree = splaytree_alloc((splaytree_cmp_t)sc_dst_cmp)) == NULL)
     goto done;
@@ -1646,6 +1805,7 @@ static int up_addrfile(void)
     }
   sqlite3_finalize(stmt); stmt = NULL;
 
+  gettimeofday_wrap(&now);
   sqlite3_exec(db, "begin", NULL, NULL, NULL); begun = 1;
   sql = "insert into state_dsts(addr,class,next,last_tr) values(?,0,0,?)";
   x = sqlite3_prepare_v2(db, sql, strlen(sql)+1, &st_addr_i, NULL);
@@ -1666,6 +1826,9 @@ static int up_addrfile(void)
     }
 
   if(file_lines(opt_args[0], addrfile_line, NULL) != 0)
+    goto done;
+
+  if(do_meta_setlong(opt_args[0], (long)mtime) != 0)
     goto done;
 
   if(expire != 0 && do_sqlite_state_expire() != 0)
@@ -3102,6 +3265,8 @@ static int up_init(void)
   if((ffilter = scamper_file_filter_alloc(types, typec)) == NULL)
     return -1;
   if(do_sqlite_open() != 0)
+    return -1;
+  if(do_sqlite_init_meta() != 0)
     return -1;
   return 0;
 }

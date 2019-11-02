@@ -1,7 +1,7 @@
 /*
  * scamper_do_host
  *
- * $Id: scamper_host_do.c,v 1.27 2019/08/04 05:10:34 mjl Exp $
+ * $Id: scamper_host_do.c,v 1.28 2019/10/12 21:49:05 mjl Exp $
  *
  * Copyright (C) 2018-2019 Matthew Luckie
  *
@@ -22,7 +22,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$Id: scamper_host_do.c,v 1.27 2019/08/04 05:10:34 mjl Exp $";
+  "$Id: scamper_host_do.c,v 1.28 2019/10/12 21:49:05 mjl Exp $";
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -359,7 +359,8 @@ static host_state_t *host_state_alloc(scamper_task_t *task)
   return NULL;
 }
 
-static int extract_name(char *name, uint8_t *pktbuf, size_t off)
+static int extract_name(char *name, size_t namelen,
+			uint8_t *pktbuf, size_t pktlen, size_t off)
 {
   int ptr_used = 0, i = 0, rc = 0;
   uint16_t u16;
@@ -367,6 +368,8 @@ static int extract_name(char *name, uint8_t *pktbuf, size_t off)
 
   for(;;)
     {
+      if(off >= pktlen)
+	return -1;
       u8 = pktbuf[off];
 
       if(u8 == 0)
@@ -378,6 +381,8 @@ static int extract_name(char *name, uint8_t *pktbuf, size_t off)
 
       if((u8 & 0xc0) == 0xc0)
 	{
+	  if(off + 1 >= pktlen)
+	    return -1;
 	  u16 = bytes_ntohs(pktbuf+off) & 0x3fff;
 	  if(u16 >= off)
 	    {
@@ -385,6 +390,8 @@ static int extract_name(char *name, uint8_t *pktbuf, size_t off)
 	      return -1;
 	    }
 	  off = u16;
+	  if(off >= pktlen)
+	    return -1;
 	  if(ptr_used == 0)
 	    {
 	      ptr_used = 1;
@@ -393,6 +400,10 @@ static int extract_name(char *name, uint8_t *pktbuf, size_t off)
 	  continue;
 	}
 
+      if(off + 1 + u8 >= pktlen)
+	return -1;
+      if(i + u8 >= namelen)
+	return -1;
       memcpy(name+i, pktbuf+off+1, u8);
       off += u8 + 1;
       i += u8;
@@ -405,17 +416,18 @@ static int extract_name(char *name, uint8_t *pktbuf, size_t off)
   return rc;
 }
 
-static int extract_soa(scamper_host_rr_t *rr, uint8_t *pktbuf, size_t off)
+static int extract_soa(scamper_host_rr_t *rr, uint8_t *pktbuf, size_t pktlen,
+		       size_t off)
 {
   scamper_host_rr_soa_t *soa = NULL;
   char mname[256], rname[256];
   uint32_t serial, refresh, retry, expire, minimum;
   int i;
 
-  if((i = extract_name(mname, pktbuf, off)) <= 0)
+  if((i = extract_name(mname, sizeof(mname), pktbuf, pktlen, off)) <= 0)
     return -1;
   off += i;
-  if((i = extract_name(rname, pktbuf, off)) <= 0)
+  if((i = extract_name(rname, sizeof(rname), pktbuf, pktlen, off)) <= 0)
     return -1;
   off += i;
 
@@ -437,14 +449,15 @@ static int extract_soa(scamper_host_rr_t *rr, uint8_t *pktbuf, size_t off)
   return 0;
 }
 
-static int extract_mx(scamper_host_rr_t *rr, uint8_t *pktbuf, size_t off)
+static int extract_mx(scamper_host_rr_t *rr, uint8_t *pktbuf, size_t pktlen,
+		      size_t off)
 {
   scamper_host_rr_mx_t *mx = NULL;
   char exchange[256];
   uint16_t preference;
 
   preference = bytes_ntohs(pktbuf+off); off += 2;
-  if(extract_name(exchange, pktbuf, off) <= 0)
+  if(extract_name(exchange, sizeof(exchange), pktbuf, pktlen, off) <= 0)
     return -1;
   if((mx = scamper_host_rr_mx_alloc(preference, exchange)) == NULL)
     return -1;
@@ -492,7 +505,7 @@ static void do_host_read(const int fd, void *param)
   off = 12;
 
   /* get the question out of the packet */
-  if((i = extract_name(name, pktbuf, off)) <= 0)
+  if((i = extract_name(name, sizeof(name), pktbuf, len, off)) <= 0)
     {
       scamper_debug(__func__, "could not extract qname");
       return;
@@ -550,7 +563,7 @@ static void do_host_read(const int fd, void *param)
 
       for(j=0; j<x; j++)
 	{
-	  if((k = extract_name(name, pktbuf, off)) <= 0)
+	  if((k = extract_name(name, sizeof(name), pktbuf, len, off)) <= 0)
 	    {
 	      scamper_debug(__func__, "could not extract name");
 	      return;
@@ -572,7 +585,7 @@ static void do_host_read(const int fd, void *param)
 	      type == SCAMPER_HOST_TYPE_CNAME ||
 	      type == SCAMPER_HOST_TYPE_PTR))
 	    {
-	      if(extract_name(str, pktbuf, off) <= 0)
+	      if(extract_name(str, sizeof(str), pktbuf, len, off) <= 0)
 		goto err;
 	      if((rr->un.str = strdup(str)) == NULL)
 		goto err;
@@ -597,12 +610,12 @@ static void do_host_read(const int fd, void *param)
 	    }
 	  else if(class == 1 && type == SCAMPER_HOST_TYPE_SOA)
 	    {
-	      if(extract_soa(rr, pktbuf, off) != 0)
+	      if(extract_soa(rr, pktbuf, len, off) != 0)
 		goto err;
 	    }
 	  else if(class == 1 && type == SCAMPER_HOST_TYPE_MX)
 	    {
-	      if(extract_mx(rr, pktbuf, off) != 0)
+	      if(extract_mx(rr, pktbuf, len, off) != 0)
 		goto err;
 	    }
 

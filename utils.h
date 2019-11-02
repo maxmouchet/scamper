@@ -1,12 +1,12 @@
 /*
  * utils.h
  *
- * $Id: utils.h,v 1.117 2019/07/12 23:37:57 mjl Exp $
+ * $Id: utils.h,v 1.118 2019/09/24 07:00:57 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
- * Copyright (C) 2015      Matthew Luckie
+ * Copyright (C) 2015-2019 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -146,6 +146,9 @@ char *string_firstof_char(char *str, const char delim);
 char *string_concat(char *str, size_t len, size_t *off, const char *fs, ...);
 const char *string_findlc(const char *str, const char *find);
 int   string_addrport(const char *in, char **addr, int *port);
+
+/* escape a string for json output */
+char *json_esc(const char *in, char *out, size_t len);
 
 /* check the character to see if it is possibly hex */
 int ishex(char c);

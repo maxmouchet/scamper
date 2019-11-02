@@ -6,7 +6,7 @@
 .\" Copyright (c) 2019 Matthew Luckie
 .\"                    All rights reserved
 .\"
-.\" $Id: sc_hoiho.1,v 1.1 2019/09/16 04:09:14 mjl Exp $
+.\" $Id: sc_hoiho.1,v 1.2 2019/09/23 01:59:44 mjl Exp $
 .\"
 .Dd September 16, 2019
 .Dt SC_HOIHO 1
@@ -62,6 +62,12 @@ The current choices for this option are:
 .It
 .Sy application:
 Show the outcome of applying the regular expression to the application set.
+.It
+.Sy debug:
+output significant volumes of debugging information.  Debugging
+information is only printed when a
+.Nm
+is using a single thread.
 .It
 .Sy json:
 Output inferences using json format.  This option is only applicable on
@@ -130,12 +136,6 @@ contained in another regex, with no additional false positives.
 .Sy randindex:
 compute the Rand Index metric on the clustering of hostnames according
 to the training data.
-.It
-.Sy verbose:
-output significant volumes of debugging information.  Debugging
-information is only printed when a
-.Nm
-is using a single thread.
 .El
 .It Fl r Ar regex
 specifies the name of a file containing a working set of regexes, or a
