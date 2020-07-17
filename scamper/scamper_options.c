@@ -1,7 +1,7 @@
 /*
  * scamper_options.c: code to handle parsing of options
  *
- * $Id: scamper_options.c,v 1.15 2019/07/12 23:37:57 mjl Exp $
+ * $Id: scamper_options.c,v 1.16 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2006-2010 The University of Waikato
  * Copyright (C) 2014-2015 The Regents of the University of California
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_options.c,v 1.15 2019/07/12 23:37:57 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

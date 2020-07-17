@@ -3,7 +3,7 @@
  *
  * This is a utility program to concatenate warts data files together.
  *
- * $Id: sc_wartscat.c,v 1.22 2015/04/29 04:23:39 mjl Exp $
+ * $Id: sc_wartscat.c,v 1.23 2020/03/17 07:32:17 mjl Exp $
  *
  * Copyright (C) 2007-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -22,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_wartscat.c,v 1.22 2015/04/29 04:23:39 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

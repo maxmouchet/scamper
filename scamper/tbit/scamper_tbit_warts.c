@@ -4,10 +4,10 @@
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2010-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Authors: Matthew Luckie, Ben Stasiewicz
  *
- * $Id: scamper_tbit_warts.c,v 1.28 2017/09/27 01:54:18 mjl Exp $
+ * $Id: scamper_tbit_warts.c,v 1.30 2020/06/09 06:18:41 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_tbit_warts.c,v 1.28 2017/09/27 01:54:18 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -235,7 +230,8 @@ static void warts_tbit_blind_params(const scamper_tbit_t *tbit,
 {
   scamper_tbit_blind_t *blind = tbit->data;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tbit_blind_vars_mfb);
@@ -265,7 +261,8 @@ static void warts_tbit_icw_params(const scamper_tbit_t *tbit,
 {
   scamper_tbit_icw_t *icw = tbit->data;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tbit_icw_vars_mfb);
@@ -295,7 +292,8 @@ static void warts_tbit_null_params(const scamper_tbit_t *tbit,
 {
   scamper_tbit_null_t *null = tbit->data;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tbit_null_vars_mfb);
@@ -329,7 +327,8 @@ static void warts_tbit_pmtud_params(const scamper_tbit_t *tbit,
 {
   scamper_tbit_pmtud_t *pmtud = tbit->data;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tbit_pmtud_vars_mfb);
@@ -510,7 +509,8 @@ static void warts_tbit_app_http_params(const scamper_tbit_t *tbit,
 {
   scamper_tbit_app_http_t *http = tbit->app_data;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tbit_app_http_vars_mfb);
@@ -600,7 +600,8 @@ static void warts_tbit_app_bgp_params(const scamper_tbit_t *tbit,
 {
   scamper_tbit_app_bgp_t *bgp = tbit->app_data;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tbit_app_bgp_vars_mfb);
@@ -663,7 +664,7 @@ static void warts_tbit_pkt_params(const scamper_tbit_pkt_t *pkt,
 {
   const warts_var_t *var;
   int max_id = 0;
-  uint16_t i;
+  size_t i;
 
   memset(state->flags, 0, tbit_pkt_vars_mfb);
   state->params_len = 0;
@@ -771,7 +772,8 @@ static void warts_tbit_params(const scamper_tbit_t *tbit,
 			      uint16_t *flags_len, uint16_t *params_len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* Unset all flags */
   memset(flags, 0, tbit_vars_mfb);

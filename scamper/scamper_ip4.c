@@ -1,7 +1,7 @@
 /*
  * scamper_ip4.c
  *
- * $Id: scamper_ip4.c,v 1.17 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_ip4.c,v 1.18 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2009-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -20,11 +20,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_ip4.c,v 1.17 2017/12/03 09:38:27 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

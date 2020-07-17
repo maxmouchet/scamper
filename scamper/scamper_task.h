@@ -1,12 +1,12 @@
 /*
  * scamper_task.h
  *
- * $Id: scamper_task.h,v 1.42 2019/01/13 06:58:50 mjl Exp $
+ * $Id: scamper_task.h,v 1.43 2020/03/17 05:28:16 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2013      The Regents of the University of California
- * Copyright (C) 2018      Matthew Luckie
+ * Copyright (C) 2018-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -66,6 +66,7 @@ typedef struct scamper_task_sig
     struct host
     {
       char                *name;
+      uint16_t             type;
     } host;
   } un;
 } scamper_task_sig_t;
@@ -76,6 +77,7 @@ typedef struct scamper_task_sig
 #define sig_sniff_src     un.sniff.src
 #define sig_sniff_icmp_id un.sniff.icmpid
 #define sig_host_name     un.host.name
+#define sig_host_type     un.host.type
 
 typedef struct scamper_task_funcs
 {

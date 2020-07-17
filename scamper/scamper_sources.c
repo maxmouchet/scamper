@@ -1,7 +1,7 @@
 /*
  * scamper_source
  *
- * $Id: scamper_sources.c,v 1.57 2019/01/13 06:58:50 mjl Exp $
+ * $Id: scamper_sources.c,v 1.59 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -24,11 +24,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_sources.c,v 1.57 2019/01/13 06:58:50 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -1628,8 +1623,9 @@ scamper_source_t *scamper_source_alloc(const scamper_source_params_t *ssp)
   source->isfinished  = ssp->isfinished;
   source->tostr       = ssp->tostr;
 
-  if((source->list = scamper_list_alloc(ssp->list_id, ssp->name, ssp->descr,
-					scamper_monitorname_get())) == NULL)
+  source->list = scamper_list_alloc(ssp->list_id, ssp->name, ssp->descr,
+				    scamper_option_monitorname_get());
+  if(source->list == NULL)
     {
       printerror(__func__, "could not alloc source->list");
       goto err;

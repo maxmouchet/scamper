@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2014 The Regents of the University of California
  *
- * $Id: sc_warts2csv.c,v 1.3 2017/07/12 07:34:02 mjl Exp $
+ * $Id: sc_warts2csv.c,v 1.4 2020/03/17 07:32:17 mjl Exp $
  *
  * Authors: Vaibhav Bajpai, Matthew Luckie
  *
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_warts2csv.c,v 1.3 2017/07/12 07:34:02 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

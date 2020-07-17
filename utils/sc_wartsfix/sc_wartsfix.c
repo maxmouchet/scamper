@@ -1,7 +1,7 @@
 /*
  * warts-fix
  *
- * $Id: sc_wartsfix.c,v 1.10 2012/02/28 00:21:11 mjl Exp $
+ * $Id: sc_wartsfix.c,v 1.12 2020/06/09 08:21:31 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -22,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_wartsfix.c,v 1.10 2012/02/28 00:21:11 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -127,7 +122,7 @@ int main(int argc, char *argv[])
 
       /* write record out */
       rc = write(out, tmp, len);
-      if(rc != len)
+      if(rc < 0 || (size_t)rc != len)
 	{
 	  perror("could not write");
 	  if(ftruncate(out, off) != 0)

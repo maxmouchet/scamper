@@ -2,11 +2,11 @@
  * sc_ally : scamper driver to collect data on candidate aliases using the
  *           Ally method.
  *
- * $Id: sc_ally.c,v 1.40 2019/07/12 21:40:13 mjl Exp $
+ * $Id: sc_ally.c,v 1.42 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2009-2011 The University of Waikato
  * Copyright (C) 2013-2015 The Regents of the University of California
- * Copyright (C) 2016-2019 Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_ally.c,v 1.40 2019/07/12 21:40:13 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -1616,10 +1611,10 @@ static int do_method(void)
 static int do_files(void)
 {
   mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
-  int flags = O_WRONLY | O_CREAT | O_TRUNC;
+  int fd_flags = O_WRONLY | O_CREAT | O_TRUNC;
   int pair[2];
 
-  if((outfile_fd = open(outfile_name, flags, mode)) == -1)
+  if((outfile_fd = open(outfile_name, fd_flags, mode)) == -1)
     return -1;
 
   /*

@@ -6,10 +6,10 @@
  * Copyright (c) 2011-2013 Internap Network Services Corporation
  * Copyright (c) 2013      Matthew Luckie
  * Copyright (c) 2013-2015 The Regents of the University of California
- * Copyright (c) 2019      Matthew Luckie
+ * Copyright (c) 2019-2020 Matthew Luckie
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_ping_json.c,v 1.18 2019/07/12 23:08:22 mjl Exp $
+ * $Id: scamper_ping_json.c,v 1.21 2020/07/15 06:53:12 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,11 +25,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_ping_json.c,v 1.18 2019/07/12 23:08:22 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -71,10 +66,15 @@ static char *ping_header(const scamper_ping_t *ping)
   string_concat(buf, sizeof(buf), &off,
 		"{\"type\":\"ping\", \"version\":\"0.4\", \"method\":\"%s\"",
 		scamper_ping_method2str(ping, tmp, sizeof(tmp)));
-  string_concat(buf, sizeof(buf), &off, ", \"src\":\"%s\"",
-		scamper_addr_tostr(ping->src, tmp, sizeof(tmp)));
-  string_concat(buf, sizeof(buf), &off, ", \"dst\":\"%s\"",
-		scamper_addr_tostr(ping->dst, tmp, sizeof(tmp)));
+  if(ping->src != NULL)
+    string_concat(buf, sizeof(buf), &off, ", \"src\":\"%s\"",
+		  scamper_addr_tostr(ping->src, tmp, sizeof(tmp)));
+  if(ping->dst != NULL)
+    string_concat(buf, sizeof(buf), &off, ", \"dst\":\"%s\"",
+		  scamper_addr_tostr(ping->dst, tmp, sizeof(tmp)));
+  if(ping->rtr != NULL)
+    string_concat(buf, sizeof(buf), &off, ", \"rtr\":\"%s\"",
+		  scamper_addr_tostr(ping->rtr, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off,
 		", \"start\":{\"sec\":%u,\"usec\":%u}",
 		ping->start.tv_sec, ping->start.tv_usec);

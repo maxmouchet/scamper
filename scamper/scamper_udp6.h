@@ -1,10 +1,11 @@
 /*
  * scamper_udp6.h
  *
- * $Id: scamper_udp6.h,v 1.20 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_udp6.h,v 1.21 2020/04/27 07:32:21 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2009 The University of Waikato
+ * Copyright (C) 2020      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -27,6 +28,9 @@
 
 int scamper_udp6_open(const void *addr, int sport);
 void scamper_udp6_close(int fd);
+
+int scamper_udp6_open_err(const void *addr, int sport);
+void scamper_udp6_read_err_cb(const int fd, void *param);
 
 #ifdef __SCAMPER_PROBE_H
 int scamper_udp6_probe(scamper_probe_t *probe);

@@ -1,7 +1,7 @@
 /*
  * scamper_icmpext.c
  *
- * $Id: scamper_icmpext.c,v 1.9 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_icmpext.c,v 1.10 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
@@ -22,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_icmpext.c,v 1.9 2014/06/12 19:59:48 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

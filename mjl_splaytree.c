@@ -28,11 +28,6 @@
  *
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$Id: mjl_splaytree.c,v 1.31 2018/12/04 08:57:38 mjl Exp $";
-#endif
-
 #include <stdlib.h>
 #include <assert.h>
 

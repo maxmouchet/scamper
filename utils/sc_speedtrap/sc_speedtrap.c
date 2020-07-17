@@ -1,7 +1,7 @@
 /*
  * sc_speedtrap
  *
- * $Id: sc_speedtrap.c,v 1.42 2019/07/12 21:40:13 mjl Exp $
+ * $Id: sc_speedtrap.c,v 1.44 2020/06/09 20:14:31 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_speedtrap.c,v 1.42 2019/07/12 21:40:13 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -188,7 +183,7 @@ static int                    mode          = 0;
 static struct timeval         now;
 static FILE                  *logfile       = NULL;
 static FILE                  *aliasfile     = NULL;
-static int                    fudge         = 65535;
+static uint32_t               fudge         = 65535;
 static slist_t               *descend       = NULL;
 static dlist_t               *overlap_act   = NULL;
 static slist_t               *candidates    = NULL;

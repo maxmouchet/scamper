@@ -1,12 +1,12 @@
 /*
  * scamper_privsep.c: code that does root-required tasks
  *
- * $Id: scamper_privsep.c,v 1.90 2019/05/26 08:37:49 mjl Exp $
+ * $Id: scamper_privsep.c,v 1.93 2020/04/30 07:17:14 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2013-2014 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -29,11 +29,6 @@
 #endif
 
 #ifndef WITHOUT_PRIVSEP
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_privsep.c,v 1.90 2019/05/26 08:37:49 mjl Exp $";
-#endif
 
 #include "internal.h"
 
@@ -747,7 +742,7 @@ static int privsep_send_fd(int fd, int error, uint8_t msg_type)
       cmsg->cmsg_len = CMSG_LEN(sizeof(fd));
       cmsg->cmsg_level = SOL_SOCKET;
       cmsg->cmsg_type = SCM_RIGHTS;
-      *(int *)CMSG_DATA(cmsg) = fd;
+      memcpy(CMSG_DATA(cmsg), &fd, sizeof(int));
     }
 
   if(sendmsg(root_fd, &msg, 0) == -1)
@@ -764,7 +759,7 @@ static int privsep_recv_fd(void)
   struct msghdr   msg;
   struct iovec    vec;
   ssize_t         rc;
-  int             fd = -1, error = 0;
+  int             fd = -1, error = 0, *ptr;
   struct cmsghdr *cmsg;
 
   memset(&vec, 0, sizeof(vec));
@@ -794,7 +789,8 @@ static int privsep_recv_fd(void)
       cmsg = CMSG_FIRSTHDR(&msg);
       if(cmsg != NULL && cmsg->cmsg_type == SCM_RIGHTS)
 	{
-	  fd = (*(int *)CMSG_DATA(cmsg));
+	  ptr = (int *)CMSG_DATA(cmsg);
+	  fd = *ptr;
 	}
     }
   else
@@ -1227,11 +1223,16 @@ int scamper_privsep_init()
 	  if((pw = getpwnam(PRIVSEP_DIR_OWNER)) == NULL)
 	    {
 	      printerror(__func__, "could not getpwnam " PRIVSEP_DIR_OWNER);
+#if defined(HAVE_ENDPWENT)
 	      endpwent();
+#endif
 	      return -1;
 	    }
 	  uid = pw->pw_uid;
+
+#if defined(HAVE_ENDPWENT)
 	  endpwent();
+#endif
 
 	  gid = 0;
 
@@ -1314,7 +1315,10 @@ int scamper_privsep_init()
   uid = pw->pw_uid;
   gid = pw->pw_gid;
   memset(pw->pw_passwd, 0, strlen(pw->pw_passwd));
+
+#if defined(HAVE_ENDPWENT)
   endpwent();
+#endif
 
   /*
    * call localtime now, as then the unpriviledged process will have the

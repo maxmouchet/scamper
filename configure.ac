@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([scamper], [20191102], [mjl@luckie.org.nz])
+AC_INIT([scamper], [20200717], [mjl@luckie.org.nz])
 
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([scamper/scamper.c])
@@ -164,6 +164,7 @@ AC_CHECK_HEADERS(sys/event.h)
 AC_CHECK_HEADERS(sys/ioctl.h)
 AC_CHECK_HEADERS(sys/param.h)
 AC_CHECK_HEADERS(sys/socket.h)
+AC_CHECK_HEADERS(sys/socketvar.h)
 AC_CHECK_HEADERS(sys/time.h)
 AC_CHECK_HEADERS(unistd.h)
 AC_CHECK_HEADERS(ifaddrs.h)
@@ -215,6 +216,12 @@ AC_CHECK_HEADERS(net/pfvar.h, [], [],
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <net/if.h>
+]])
+
+AC_CHECK_HEADERS(linux/netlink.h, [], [],
+[[
+#include <sys/types.h>
+#include <sys/socket.h>
 ]])
 
 # Checks for typedefs, structures, and compiler characteristics.
@@ -312,19 +319,62 @@ if test "x$ac_cv_header_net_pfvar_h" == xyes; then
 fi
 
 # Check for structs
-AC_MSG_CHECKING([for struct ip6_ext])
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <sys/types.h>]],
-				   [[#include <netinet/in.h>]],
-				   [[#include <netinet/ip6.h>]],
-				   [[void foo(void) { struct ip6_ext ext; }]])],
-                    [
-                      AC_MSG_RESULT([yes])
-                      AC_DEFINE_UNQUOTED([HAVE_STRUCT_IP6_EXT], 1, [Define to 1 if you have the `ip6_ext' struct.])
-                    ],
-                    [
-                      AC_MSG_RESULT([no])
-                    ]
-                 )
+AC_MSG_CHECKING([for struct nlmsghdr])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+	[[
+		#include <sys/types.h>
+		#include <sys/socket.h>
+		#include <linux/netlink.h>
+	]],
+	[[
+		struct nlmsghdr msg;
+	]])],
+	[
+		AC_MSG_RESULT([yes])
+		AC_DEFINE_UNQUOTED([HAVE_STRUCT_NLMSGHDR], 1,
+		[Define to 1 if you have the `nlmsghdr' struct.])
+	],
+	[
+		AC_MSG_RESULT([no])
+	])
+
+AC_MSG_CHECKING([for struct nlmsgerr])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+	[[
+		#include <sys/types.h>
+		#include <sys/socket.h>
+		#include <linux/netlink.h>
+	]],
+	[[
+		struct nlmsgerr msgerr;
+	]])],
+	[
+		AC_MSG_RESULT([yes])
+		AC_DEFINE_UNQUOTED([HAVE_STRUCT_NLMSGERR], 1,
+		[Define to 1 if you have the `nlmsgerr' struct.])
+	],
+	[
+		AC_MSG_RESULT([no])
+	])
+
+AC_MSG_CHECKING([for struct sockaddr_nl])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+	[[
+		#include <sys/types.h>
+		#include <sys/socket.h>
+		#include <linux/netlink.h>
+	]],
+	[[
+		struct sockaddr_nl snl;
+	]])],
+	[
+		AC_MSG_RESULT([yes])
+		AC_DEFINE_UNQUOTED([HAVE_STRUCT_SOCKADDR_NL], 1,
+		[Define to 1 if you have the `sockaddr_nl' struct.])
+	],
+	[
+		AC_MSG_RESULT([no])
+	])
 
 # These libraries have to be explicitly linked in OpenSolaris
 AC_SEARCH_LIBS(getaddrinfo, socket, [], [], -lnsl)
@@ -339,27 +389,46 @@ AX_CHECK_OPENSSL(
 	[have_openssl=yes])
 
 if test "x$have_openssl" = xyes; then
-   AC_MSG_CHECKING([for X509_VERIFY_PARAM_set1_host])
    save_LIBS="$LIBS"
    save_LDFLAGS="$LDFLAGS"
    LDFLAGS="$LDFLAGS $OPENSSL_LDFLAGS"
    LIBS="$LIBS $OPENSSL_LIBS"
+   AC_MSG_CHECKING([for X509_VERIFY_PARAM_set1_host])
    AC_LINK_IFELSE([
      AC_LANG_PROGRAM([
 	[#include <openssl/bio.h>]
 	[#include <openssl/ssl.h>]
 	[#include <openssl/err.h>]
 	[#include <openssl/x509v3.h>]],
-        [
+	[
 	 [X509_VERIFY_PARAM *p = X509_VERIFY_PARAM_new();]
 	 [X509_VERIFY_PARAM_set_hostflags(p, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);]
 	 [X509_VERIFY_PARAM_set1_host(p, "localhost", 0);]
-        ])
+	])
    ],
    [
 	AC_MSG_RESULT([yes])
 	AC_DEFINE_UNQUOTED([HAVE_X509_VERIFY_PARAM_SET1_HOST], 1,
 		[Define to 1 if you have the X509_VERIFY_PARAM_set1_host function])
+   ],
+   [
+	AC_MSG_RESULT([no])
+   ])
+   AC_MSG_CHECKING([for ASN1_STRING_get0_data])
+   AC_LINK_IFELSE([
+     AC_LANG_PROGRAM([
+	[#include <openssl/bio.h>]
+	[#include <openssl/ssl.h>]
+	[#include <openssl/err.h>]
+	[#include <openssl/x509v3.h>]],
+	[
+	 [ASN1_STRING_get0_data(NULL);]
+	])
+   ],
+   [
+	AC_MSG_RESULT([yes])
+	AC_DEFINE_UNQUOTED([HAVE_ASN1_STRING_GET0_DATA], 1,
+		[Define to 1 if you have the HAVE_ASN1_STRING_GET0_DATA function])
    ],
    [
 	AC_MSG_RESULT([no])
@@ -398,6 +467,7 @@ fi
 AC_CONFIG_FILES([
 	utils/sc_filterpolicy/Makefile
 	utils/sc_ipiddump/Makefile
+	utils/sc_pinger/Makefile
 	utils/sc_prefixscan/Makefile
 	utils/sc_radargun/Makefile
 	utils/sc_remoted/Makefile
@@ -421,6 +491,7 @@ AC_CONFIG_FILES([
 	utils/sc_warts2text/Makefile
 	utils/sc_wartscat/Makefile
 	utils/sc_wartsdump/Makefile
+	utils/sc_wartsfilter/Makefile
 	utils/sc_wartsfix/Makefile
 ])
 

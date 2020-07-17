@@ -1,10 +1,11 @@
 /*
  * scamper_icmp4.h
  *
- * $Id: scamper_icmp4.h,v 1.20 2015/04/23 21:57:49 mjl Exp $
+ * $Id: scamper_icmp4.h,v 1.22 2020/04/27 07:32:21 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2009 The University of Waikato
+ * Copyright (C) 2020      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -27,10 +28,12 @@
 
 int scamper_icmp4_open(const void *addr);
 int scamper_icmp4_open_fd(void);
+int scamper_icmp4_open_err(const void *addr);
 void scamper_icmp4_close(int fd);
 
 void scamper_icmp4_cleanup(void);
 void scamper_icmp4_read_cb(const int fd, void *param);
+void scamper_icmp4_read_err_cb(const int fd, void *param);
 
 #ifdef __SCAMPER_PROBE_H
 int scamper_icmp4_probe(scamper_probe_t *probe);
@@ -40,6 +43,7 @@ uint16_t scamper_icmp4_cksum(scamper_probe_t *probe);
 
 #ifdef __SCAMPER_ICMP_RESP_H
 int scamper_icmp4_recv(int fd, scamper_icmp_resp_t *resp);
+int scamper_icmp4_recv_user(int fd, scamper_icmp_resp_t *resp);
 #endif
 
 #endif /* __SCAMPER_ICMP4_H */

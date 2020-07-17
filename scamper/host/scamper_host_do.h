@@ -1,9 +1,9 @@
 /*
  * scamper_do_host.h
  *
- * $Id: scamper_host_do.h,v 1.2 2018/12/13 09:31:29 mjl Exp $
+ * $Id: scamper_host_do.h,v 1.4 2020/03/21 00:32:57 mjl Exp $
  *
- * Copyright (C) 2018 Matthew Luckie
+ * Copyright (C) 2018-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -38,10 +38,21 @@ void scamper_do_host_free(void *data);
 
 const char *scamper_do_host_usage(void);
 
-/* code to use the host code to do DNS for another scamper task */
-scamper_host_do_t *scamper_do_host_do_ptr(
-  scamper_addr_t *ip, void *param, void (*cb)(void *, const char *name));
+/* code to use the host code to do a PTR record lookup */
+typedef void (*scamper_host_do_ptr_cb_t)(void *param, const char *name);
+scamper_host_do_t *scamper_do_host_do_ptr(scamper_addr_t *ip, void *param,
+					  scamper_host_do_ptr_cb_t cb);
+
+/* code to use the host code to do A record lookup */
+typedef void (*scamper_host_do_a_cb_t)(void *param, scamper_addr_t **a, int c);
+scamper_host_do_t *scamper_do_host_do_a(const char *name, void *param,
+					scamper_host_do_a_cb_t cb);
+
 void scamper_host_do_free(scamper_host_do_t *hostdo);
+
+/* code to get or set the nameserver that scamper should use by default */
+const scamper_addr_t *scamper_do_host_getns(void);
+int scamper_do_host_setns(const char *nsip);
 
 void scamper_do_host_cleanup(void);
 int scamper_do_host_init(void);

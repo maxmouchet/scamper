@@ -1,7 +1,7 @@
 /*
  * sc_analysis_dump
  *
- * $Id: sc_analysis_dump.c,v 1.60 2019/01/13 07:35:11 mjl Exp $
+ * $Id: sc_analysis_dump.c,v 1.62 2020/06/11 02:34:08 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -25,11 +25,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_analysis_dump.c,v 1.60 2019/01/13 07:35:11 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -282,9 +277,6 @@ static void print_header_comments(void)
  "# =======================================================================\n"
  "# This file contains an ASCII representation of the IP paths stored in\n"
  "# the binary skitter arts++ and scamper warts file formats.\n"
- "#\n"
- "# This ASCII file format is in the sk_analysis_dump text output\n"
- "# format: imdc.datcat.org/format/1-003W-7\n"
  "#\n"
  "# =======================================================================\n"
  "# There is one trace per line, with the following tab-separated fields:\n"

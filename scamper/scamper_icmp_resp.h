@@ -1,11 +1,12 @@
 /*
  * scamper_icmp_resp.h
  *
- * $Id: scamper_icmp_resp.h,v 1.31 2016/09/17 12:12:54 mjl Exp $
+ * $Id: scamper_icmp_resp.h,v 1.34 2020/06/12 23:29:25 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2013      The Regents of the University of California
+ * Copyright (C) 2020      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -30,6 +31,7 @@
 #define SCAMPER_ICMP_RESP_FLAG_INNER_IP        0x02
 #define SCAMPER_ICMP_RESP_FLAG_IPOPT_TS        0x04
 #define SCAMPER_ICMP_RESP_FLAG_INNER_IPOPT_TS  0x08
+#define SCAMPER_ICMP_RESP_FLAG_RXERR           0x10
 
 #define SCAMPER_ICMP_RESP_IS_ECHO_REPLY(ir) ( \
  (ir->ir_af == AF_INET  && ir->ir_icmp_type == 0) || \
@@ -204,9 +206,11 @@ typedef struct scamper_icmp_resp
   {
     struct irt_udp
     {
-      uint16_t sport;
-      uint16_t dport;
-      uint16_t sum;
+      uint16_t  sport;
+      uint16_t  dport;
+      uint16_t  sum;
+      uint8_t  *data;
+      uint16_t  datalen;
     } irit_udp;
 
     struct irt_tcp
@@ -233,18 +237,20 @@ typedef struct scamper_icmp_resp
 
 #define ir_ip_hlim         ir_ip_ttl
 
-#define ir_inner_ip_hlim   ir_inner_ip_ttl
-#define ir_inner_udp_sport ir_inner_trans_un.irit_udp.sport
-#define ir_inner_udp_dport ir_inner_trans_un.irit_udp.dport
-#define ir_inner_udp_sum   ir_inner_trans_un.irit_udp.sum
-#define ir_inner_tcp_sport ir_inner_trans_un.irit_tcp.sport
-#define ir_inner_tcp_dport ir_inner_trans_un.irit_tcp.dport
-#define ir_inner_tcp_seq   ir_inner_trans_un.irit_tcp.seq
-#define ir_inner_icmp_type ir_inner_trans_un.irit_icmp.type
-#define ir_inner_icmp_code ir_inner_trans_un.irit_icmp.code
-#define ir_inner_icmp_sum  ir_inner_trans_un.irit_icmp.sum
-#define ir_inner_icmp_id   ir_inner_trans_un.irit_icmp.id
-#define ir_inner_icmp_seq  ir_inner_trans_un.irit_icmp.seq
+#define ir_inner_ip_hlim     ir_inner_ip_ttl
+#define ir_inner_udp_sport   ir_inner_trans_un.irit_udp.sport
+#define ir_inner_udp_dport   ir_inner_trans_un.irit_udp.dport
+#define ir_inner_udp_sum     ir_inner_trans_un.irit_udp.sum
+#define ir_inner_udp_data    ir_inner_trans_un.irit_udp.data
+#define ir_inner_udp_datalen ir_inner_trans_un.irit_udp.datalen
+#define ir_inner_tcp_sport   ir_inner_trans_un.irit_tcp.sport
+#define ir_inner_tcp_dport   ir_inner_trans_un.irit_tcp.dport
+#define ir_inner_tcp_seq     ir_inner_trans_un.irit_tcp.seq
+#define ir_inner_icmp_type   ir_inner_trans_un.irit_icmp.type
+#define ir_inner_icmp_code   ir_inner_trans_un.irit_icmp.code
+#define ir_inner_icmp_sum    ir_inner_trans_un.irit_icmp.sum
+#define ir_inner_icmp_id     ir_inner_trans_un.irit_icmp.id
+#define ir_inner_icmp_seq    ir_inner_trans_un.irit_icmp.seq
 
 int scamper_icmp_resp_src(scamper_icmp_resp_t *resp, scamper_addr_t *addr);
 int scamper_icmp_resp_inner_dst(scamper_icmp_resp_t *resp, scamper_addr_t *a);

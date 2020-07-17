@@ -1,7 +1,7 @@
 /*
  * scamper_rtsock: code to deal with a route socket or equivalent
  *
- * $Id: scamper_rtsock.c,v 1.82 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_rtsock.c,v 1.87 2020/06/10 09:09:27 mjl Exp $
  *
  *          Matthew Luckie
  *
@@ -40,11 +40,6 @@
  *
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_rtsock.c,v 1.82 2017/12/03 09:38:27 mjl Exp $";
-#endif
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -56,21 +51,6 @@ static int broken = -1;
 
 /* include support for the netlink socket in linux */
 #if defined(__linux__)
-
-struct nlmsghdr
-{
-  uint32_t        nlmsg_len;
-  uint16_t        nlmsg_type;
-  uint16_t        nlmsg_flags;
-  uint32_t        nlmsg_seq;
-  uint32_t        nlmsg_pid;
-};
-
-struct nlmsgerr
-{
-  int             error;
-  struct nlmsghdr msg;
-};
 
 struct rtattr
 {
@@ -90,12 +70,6 @@ struct rtmsg
   unsigned char   rtm_type;
   unsigned        rtm_flags;
 };
-
-#define NLMSG_ERROR         0x2
-#define NLMSG_ALIGNTO       4
-#define NLMSG_ALIGN(len)   (((len)+NLMSG_ALIGNTO-1) & ~(NLMSG_ALIGNTO-1))
-#define NLMSG_LENGTH(len)  ((len)+NLMSG_ALIGN(sizeof(struct nlmsghdr)))
-#define NLMSG_DATA(nlh)    ((void*)(((char*)nlh) + NLMSG_LENGTH(0)))
 
 #define RTA_ALIGNTO           4
 #define RTA_ALIGN(len)        (((len)+RTA_ALIGNTO-1) & ~(RTA_ALIGNTO-1))
@@ -125,7 +99,6 @@ struct rtmsg
 #define RTM_BASE            0x10
 #define RTM_NEWROUTE       (RTM_BASE+8)
 #define RTM_GETROUTE       (RTM_BASE+10)
-#define NLM_F_REQUEST       1
 #define NETLINK_ROUTE       0
 
 #endif
@@ -229,7 +202,7 @@ static void rtmsg_dump(const uint8_t *buf, size_t len)
 }
 #endif
 
-int scamper_rtsock_roundup(size_t len)
+size_t scamper_rtsock_roundup(size_t len)
 {
 #ifdef __APPLE__
   const scamper_osinfo_t *osinfo;
@@ -549,8 +522,8 @@ static void rtsock_parsemsg(uint8_t *buf, size_t len)
   struct sockaddr_dl *sdl;
   struct sockaddr    *sa;
   struct in6_addr    *ip6;
-  size_t              off, tmp, x;
-  int                 i, ifindex;
+  size_t              off, x;
+  int                 i, tmp, ifindex;
   void               *addr;
   scamper_addr_t     *gw;
   rtsock_pair_t      *pair;
@@ -600,7 +573,7 @@ static void rtsock_parsemsg(uint8_t *buf, size_t len)
 	  if(rtm->rtm_addrs & (1 << i))
 	    {
 	      addrs[i] = sa = (struct sockaddr *)(buf + x + off);
-	      if((tmp = sockaddr_len(sa)) == -1)
+	      if((tmp = sockaddr_len(sa)) <= 0)
 		{
 		  printerror_msg(__func__, "unhandled af %d", sa->sa_family);
 		  route->error = EINVAL;

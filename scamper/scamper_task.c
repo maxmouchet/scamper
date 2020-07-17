@@ -1,12 +1,12 @@
 /*
  * scamper_task.c
  *
- * $Id: scamper_task.c,v 1.68 2019/05/27 09:33:52 mjl Exp $
+ * $Id: scamper_task.c,v 1.71 2020/03/28 20:45:52 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2016-2019 Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_task.c,v 1.68 2019/05/27 09:33:52 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -156,9 +151,16 @@ static int tx_nd_fbd(const s2t_t *a, const s2t_t *b)
 
 static int host_cmp(const s2t_t *a, const s2t_t *b)
 {
+  int i;
   assert(a->sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST);
   assert(b->sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST);
-  return strcasecmp(a->sig->sig_host_name, b->sig->sig_host_name);
+  if((i = strcasecmp(a->sig->sig_host_name, b->sig->sig_host_name)) != 0)
+    return i;
+  if(a->sig->sig_host_type < b->sig->sig_host_type)
+    return -1;
+  if(a->sig->sig_host_type > b->sig->sig_host_type)
+    return 1;
+  return 0;
 }
 
 static void tx_ip_check(scamper_dl_rec_t *dl)
@@ -324,7 +326,6 @@ static void sniff_check(scamper_dl_rec_t *dl)
 static void s2t_free(s2t_t *s2t)
 {
   scamper_task_sig_t *sig = s2t->sig;
-  int x;
 
   if(s2t == NULL)
     return;
@@ -334,18 +335,16 @@ static void s2t_free(s2t_t *s2t)
       if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_IP)
 	{
 	  if(sig->sig_tx_ip_dst->type == SCAMPER_ADDR_TYPE_IPV4)
-	    x = patricia_remove_node(tx_ip4, s2t->node);
+	    patricia_remove_node(tx_ip4, s2t->node);
 	  else
-	    x = patricia_remove_node(tx_ip6, s2t->node);
-	  assert(x == 0);
+	    patricia_remove_node(tx_ip6, s2t->node);
 	}
       else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_ND)
 	{
 	  if(sig->sig_tx_nd_ip->type == SCAMPER_ADDR_TYPE_IPV4)
-	    x = patricia_remove_node(tx_nd4, s2t->node);
+	    patricia_remove_node(tx_nd4, s2t->node);
 	  else
-	    x = patricia_remove_node(tx_nd6, s2t->node);
-	  assert(x == 0);
+	    patricia_remove_node(tx_nd6, s2t->node);
 	}
       else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_SNIFF)
 	dlist_node_pop(sniff, s2t->node);
@@ -373,7 +372,8 @@ char *scamper_task_sig_tostr(scamper_task_sig_t *sig, char *buf, size_t len)
 		  scamper_addr_tostr(sig->sig_sniff_src, tmp, sizeof(tmp)),
 		  sig->sig_sniff_icmp_id);
   else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST)
-    string_concat(buf, len, &off, "host %s", sig->sig_host_name);
+    string_concat(buf, len, &off, "host %s %u",
+		  sig->sig_host_name, sig->sig_host_type);
   else
     return NULL;
 

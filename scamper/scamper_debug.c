@@ -1,13 +1,13 @@
 /*
  * scamper_debug.c
  *
- * $Id: scamper_debug.c,v 1.36 2017/12/03 09:38:26 mjl Exp $
+ * $Id: scamper_debug.c,v 1.38 2020/04/08 07:55:51 mjl Exp $
  *
  * routines to reduce the impact of debugging cruft in scamper's code.
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
- * Copyright (C) 2012,2015,2017 Matthew Luckie
+ * Copyright (C) 2012-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,11 +24,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_debug.c,v 1.36 2017/12/03 09:38:26 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -74,9 +69,13 @@ void __scamper_assert(const char *file, int line, const char *func,
   char ts[16];
 
   timestamp_str(ts, sizeof(ts));
-  fprintf(stderr, "%s assertion failed: %s:%d %s `%s'\n",
-	  ts, file, line, func, expr);
-  fflush(stderr);
+
+  if(isdaemon == 0)
+    {
+      fprintf(stderr, "%s assertion failed: %s:%d %s `%s'\n",
+	      ts, file, line, func, expr);
+      fflush(stderr);
+    }
 
 #ifndef WITHOUT_DEBUGFILE
   if(debugfile != NULL)
@@ -118,10 +117,13 @@ void printerror(const char *func, const char *format, ...)
   va_start(ap, format);
   vsnprintf(message, sizeof(message), format, ap);
   va_end(ap);
-
   timestamp_str(ts, sizeof(ts));
-  fprintf(stderr, "%s %s: %s: %s\n", ts, func, message, strerror(ecode));
-  fflush(stderr);
+
+  if(isdaemon == 0)
+    {
+      fprintf(stderr, "%s %s: %s: %s\n", ts, func, message, strerror(ecode));
+      fflush(stderr);
+    }
 
 #ifndef WITHOUT_DEBUGFILE
   if(debugfile != NULL)
@@ -152,10 +154,13 @@ void printerror_gai(const char *func, int ecode, const char *format, ...)
   va_start(ap, format);
   vsnprintf(msg, sizeof(msg), format, ap);
   va_end(ap);
-
   timestamp_str(ts, sizeof(ts));
-  fprintf(stderr, "%s %s: %s: %s\n", ts, func, msg, gai_strerror(ecode));
-  fflush(stderr);
+
+  if(isdaemon == 0)
+    {
+      fprintf(stderr, "%s %s: %s: %s\n", ts, func, msg, gai_strerror(ecode));
+      fflush(stderr);
+    }
 
 #ifndef WITHOUT_DEBUGFILE
   if(debugfile != NULL)
@@ -186,10 +191,13 @@ void printerror_msg(const char *func, const char *format, ...)
   va_start(ap, format);
   vsnprintf(msg, sizeof(msg), format, ap);
   va_end(ap);
-
   timestamp_str(ts, sizeof(ts));
-  fprintf(stderr, "%s %s: %s\n", ts, func, msg);
-  fflush(stderr);
+
+  if(isdaemon == 0)
+    {
+      fprintf(stderr, "%s %s: %s\n", ts, func, msg);
+      fflush(stderr);
+    }
 
 #ifndef WITHOUT_DEBUGFILE
   if(debugfile != NULL)
@@ -239,8 +247,11 @@ void scamper_debug(const char *func, const char *format, ...)
   else             fs[0] = '\0';
 
 #ifndef NDEBUG
-  fprintf(stderr, "%s %s%s\n", ts, fs, message);
-  fflush(stderr);
+  if(isdaemon == 0)
+    {
+      fprintf(stderr, "%s %s%s\n", ts, fs, message);
+      fflush(stderr);
+    }
 #endif
 
 #ifndef WITHOUT_DEBUGFILE
@@ -315,11 +326,8 @@ void scamper_debug_close()
 }
 #endif
 
-void scamper_debug_init(void)
+void scamper_debug_daemon(void)
 {
-#ifdef HAVE_DAEMON
-  if(scamper_option_daemon())
-    isdaemon = 1;
-#endif
+  isdaemon = 1;
   return;
 }

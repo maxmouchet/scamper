@@ -1,7 +1,7 @@
 /*
  * scamper_tracelb.c
  *
- * $Id: scamper_tracelb.c,v 1.58 2019/01/13 07:02:07 mjl Exp $
+ * $Id: scamper_tracelb.c,v 1.60 2020/04/02 06:45:02 mjl Exp $
  *
  * Copyright (C) 2008-2010 The University of Waikato
  * Copyright (C) 2012      The Regents of the University of California
@@ -26,11 +26,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_tracelb.c,v 1.58 2019/01/13 07:02:07 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -895,6 +890,7 @@ void scamper_tracelb_free(scamper_tracelb_t *trace)
 
   if(trace->dst != NULL) scamper_addr_free(trace->dst);
   if(trace->src != NULL) scamper_addr_free(trace->src);
+  if(trace->rtr != NULL) scamper_addr_free(trace->rtr);
 
   if(trace->cycle != NULL) scamper_cycle_free(trace->cycle);
   if(trace->list != NULL) scamper_list_free(trace->list);

@@ -1,10 +1,10 @@
 /*
  * scamper_tracelb.h
  *
- * $Id: scamper_tracelb.h,v 1.60 2019/01/13 07:02:07 mjl Exp $
+ * $Id: scamper_tracelb.h,v 1.61 2020/04/02 06:45:02 mjl Exp $
  *
  * Copyright (C) 2008-2009 The University of Waikato
- * Copyright (C) 2018-2019 Matthew Luckie
+ * Copyright (C) 2018-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * Load-balancer traceroute technique authored by
@@ -223,6 +223,7 @@ typedef struct scamper_tracelb
   /* source and destination addresses of the load balancer trace */
   scamper_addr_t            *src;
   scamper_addr_t            *dst;
+  scamper_addr_t            *rtr;
 
   /* when the load balancer trace commenced */
   struct timeval             start;

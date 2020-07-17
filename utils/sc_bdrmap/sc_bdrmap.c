@@ -1,7 +1,7 @@
 /*
  * sc_bdrmap: driver to map first hop border routers of networks
  *
- * $Id: sc_bdrmap.c,v 1.26 2019/09/25 02:16:16 mjl Exp $
+ * $Id: sc_bdrmap.c,v 1.31 2020/06/09 20:13:10 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@caida.org / mjl@wand.net.nz
@@ -9,7 +9,8 @@
  * Copyright (C) 2014-2015 The Regents of the University of California
  * Copyright (C) 2015-2016 The University of Waikato
  * Copyright (C) 2017      The Regents of the University of California
- * Copyright (C) 2018-2019 The University of Waikato
+ * Copyright (C) 2018-2020 The University of Waikato
+ * Copyright (C) 2020      Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,11 +26,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_bdrmap.c,v 1.26 2019/09/25 02:16:16 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -532,6 +528,7 @@ static char                  *unix_name     = NULL;
 static unsigned int           port          = 0;
 static uint8_t                firsthop      = 1;
 static uint16_t               flowid        = 0x420;
+static scamper_addr_t        *srcaddr       = NULL;
 static prefixtree_t          *ip2as_pt      = NULL;
 static char                  *ip2as_fn      = NULL;
 static prefixtree_t          *ipmap_pt      = NULL;
@@ -630,6 +627,7 @@ typedef void (*sc_stree_free_t)(void *ptr);
 #define OPT_DELEGATED   0x080000
 #define OPT_FLOWID      0x100000
 #define OPT_IPMAP       0x200000
+#define OPT_SRCADDR     0x400000
 
 #define TEST_TRACE      0x00
 #define TEST_LINK       0x01
@@ -682,7 +680,7 @@ static void usage(uint32_t opts)
     "usage: sc_bdrmap [-6Di] [-a ip2as] [-A targetases] [-c allyconf]\n"
     "                 [-C flowid] [-f firsthop] [-l log] [-M ipmap]\n"
     "                 [-o warts] [-O option] [-p port] [-U unix] [-R unix]\n"
-    "                 [-v vpases] [-x ixps]\n"
+    "                 [-S srcaddr] [-v vpases] [-x ixps]\n"
     "\n"
     "       sc_bdrmap [-6] [-a ip2as] [-A targetases] [-d dump]\n"
     "                 [-g delegated] [-M ipmap] [-n names] [-r rels]\n"
@@ -895,10 +893,10 @@ static int check_options_targetases(slist_t *list)
 static int check_options(int argc, char *argv[])
 {
   int rc = -1, x = 0, ch; long lo;
-  char *opts = "?6a:A:c:C:d:Df:g:il:M:n:o:O:p:r:R:U:v:x:";
+  char *opts = "?6a:A:c:C:d:Df:g:il:M:n:o:O:p:r:R:S:U:v:x:";
   char *opt_port = NULL, *opt_firsthop = NULL, *opt_dumpid = NULL;
   char *opt_unix = NULL, *opt_allyconf = NULL, *opt_vpases = NULL;
-  char *opt_flowid = NULL;
+  char *opt_flowid = NULL, *opt_srcaddr = NULL;
   slist_t *opt_targetases = NULL;
 
   while((ch = getopt(argc, argv, opts)) != -1)
@@ -1063,6 +1061,13 @@ static int check_options(int argc, char *argv[])
 	  opt_unix = optarg;
 	  break;
 
+	case 'S':
+	  if(check_options_once(ch, OPT_SRCADDR) != 0)
+	    goto done;
+	  options |= OPT_SRCADDR;
+	  opt_srcaddr = optarg;
+	  break;
+
 	case 'U':
 	  if(check_options_once(ch, OPT_UNIX) != 0)
 	    goto done;
@@ -1219,6 +1224,13 @@ static int check_options(int argc, char *argv[])
   else
     {
       unix_name = opt_unix;
+    }
+
+  if(options & OPT_SRCADDR &&
+     (srcaddr = scamper_addr_resolve(af, opt_srcaddr)) == NULL)
+    {
+      usage(OPT_SRCADDR);
+      goto done;
     }
 
   if(logfile_fn != NULL && (logfile = fopen(logfile_fn, "w")) == NULL)
@@ -1705,7 +1717,7 @@ static int sc_prov_add(uint32_t a, uint32_t b)
 static int vp_r(uint32_t peer, uint32_t *sib_as, int *r)
 {
   int custc = 0, peerc = 0, provc = 0;
-  uint32_t custas, peeras, provas;
+  uint32_t custas = 0, peeras = 0, provas = 0;
   int i, rl;
 
   for(i=0; i<vpasc; i++)
@@ -1754,7 +1766,9 @@ static int vp_r(uint32_t peer, uint32_t *sib_as, int *r)
 static int asmap_r(sc_asmap_t *peer, uint32_t *sib, uint32_t *neigh, int *r)
 {
   int custc = 0, peerc = 0, provc = 0;
-  uint32_t cust_sib, cust_neigh, peer_sib, peer_neigh, prov_sib, prov_neigh;
+  uint32_t peer_neigh = 0, peer_sib = 0;
+  uint32_t cust_neigh = 0, cust_sib = 0;
+  uint32_t prov_sib = 0, prov_neigh = 0;
   int i, j, rl;
 
   if(peer->asc == 1)
@@ -3801,6 +3815,9 @@ static int do_method_trace(sc_test_t *test, char *cmd, size_t len)
     }
 
   string_concat(cmd, len, &off, "trace -w 1");
+  if(srcaddr != NULL)
+    string_concat(cmd, len, &off, " -S %s",
+		  scamper_addr_tostr(srcaddr, buf, sizeof(buf)));
   if(protocol == 0)
     string_concat(cmd, len, &off, " -P icmp-paris -d %u", flowid);
   else if(protocol == 1)
@@ -3841,6 +3858,10 @@ static int do_method_ping(sc_test_t *test, char *cmd, size_t len)
 
   string_concat(cmd, len, &off, "ping -i %s -c %u -o %u",
 		wait[pt->method], attempts + 2, attempts);
+
+  if(srcaddr != NULL)
+    string_concat(cmd, len, &off, " -S %s",
+		  scamper_addr_tostr(srcaddr, buf, sizeof(buf)));
 
   if(pt->method == METHOD_INDIR)
     {
@@ -4001,7 +4022,11 @@ static int do_method_link(sc_test_t *test, char *cmd, size_t len)
 
   if(lt->step == TEST_LINK_RR)
     {
-      string_concat(cmd, len, &off, "ping -R %s\n",
+      string_concat(cmd, len, &off, "ping -R");
+      if(srcaddr != NULL)
+	string_concat(cmd, len, &off, " -S %s",
+		      scamper_addr_tostr(srcaddr, b, sizeof(b)));
+      string_concat(cmd, len, &off, " %s\n",
 		    scamper_addr_tostr(link->b, b, sizeof(b)));
     }
   else if(lt->step == TEST_LINK_PSTS)
@@ -4011,7 +4036,11 @@ static int do_method_link(sc_test_t *test, char *cmd, size_t len)
       else
 	scamper_addr_tostr(lt->ab, a, sizeof(a));
       scamper_addr_tostr(link->b, b, sizeof(b));
-      string_concat(cmd, len, &off, "ping -T tsprespec=%s,%s %s\n", b, a, b);
+      string_concat(cmd, len, &off, "ping -T tsprespec=%s,%s", b, a);
+      if(srcaddr != NULL)
+	string_concat(cmd, len, &off, " -S %s",
+		      scamper_addr_tostr(srcaddr, a, sizeof(a)));
+      string_concat(cmd, len, &off, " %s\n", b);
     }
 
  done:
@@ -5447,7 +5476,6 @@ static int ip2as_line(char *line, void *param)
 
 static int ipmap_line(char *line, void *param)
 {
-  scamper_addr_t sa;
   sc_prefix_t *p = NULL;
   uint32_t ases[1];
   struct in_addr in;
@@ -5465,29 +5493,23 @@ static int ipmap_line(char *line, void *param)
   while(isspace(*a) == 0 && *a != '\0')
     a++;
   if(*a == '\0')
-    return -1;
+    goto err;
   *a = '\0'; a++;
   while(isspace(*a) != 0)
     a++;
   if(string_isnumber(a) == 0 || string_tolong(a, &lo) != 0)
-    return -1;
+    goto err;
 
   if(af == AF_INET)
     {
-      if(inet_pton(AF_INET, n, &in) != 1)
-	return -1;
-      sa.type = SCAMPER_ADDR_TYPE_IPV4;
-      sa.addr = &in;
-      if((p = sc_prefix_alloc(&in, 32)) == NULL)
+      if(inet_pton(AF_INET, n, &in) != 1 ||
+	 (p = sc_prefix_alloc(&in, 32)) == NULL)
 	goto err;
     }
   else
     {
-      if(inet_pton(AF_INET6, n, &in6) != 1)
-	return -1;
-      sa.type = SCAMPER_ADDR_TYPE_IPV6;
-      sa.addr = &in6;
-      if((p = sc_prefix_alloc(&in6, 128)) == NULL)
+      if(inet_pton(AF_INET6, n, &in6) != 1 ||
+	 (p = sc_prefix_alloc(&in6, 128)) == NULL)
 	goto err;
     }
 
@@ -7799,7 +7821,7 @@ static void finish_1(void)
   sc_asmap_t *asmap;
   sc_farrouter_t *fr;
   sc_prefix_t *pfx;
-  int r, lh, rc, owned, changed;
+  int i, r, lh, rc, owned, changed;
   sc_asc_t *asc;
   uint32_t u32, owner_as;
   uint8_t owner_reason;
@@ -8172,10 +8194,10 @@ static void finish_1(void)
 	    {
 	      asmapc = slist_head_item(y->dstases->list);
 	      asmap = asmapc->asmap;
-	      for(u32=0; u32 < asmap->asc; u32++)
-		if(asmap->ases[u32] == y->owner_as)
+	      for(i=0; i < asmap->asc; i++)
+		if(asmap->ases[i] == y->owner_as)
 		  break;
-	      if(u32 == asmap->asc)
+	      if(i == asmap->asc)
 		printf(":%s", sc_asmap_tostr(asmap, buf, sizeof(buf)));
 	    }
 

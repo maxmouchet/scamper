@@ -3,7 +3,7 @@
  *
  * the warts file format
  *
- * $Id: scamper_file_warts.h,v 1.25 2016/07/03 10:27:31 mjl Exp $
+ * $Id: scamper_file_warts.h,v 1.26 2020/06/12 22:35:03 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -174,8 +174,11 @@ int warts_str_size(const char *str);
 warts_addrtable_t *warts_addrtable_alloc_byaddr(void);
 warts_addrtable_t *warts_addrtable_alloc_byid(void);
 uint32_t warts_addr_size(warts_addrtable_t *t, scamper_addr_t *addr);
+uint32_t warts_addr_size_static(scamper_addr_t *addr);
 void warts_addrtable_free(warts_addrtable_t *t);
 
+void insert_addr_static(uint8_t *buf, uint32_t *off, const uint32_t len,
+			const scamper_addr_t *addr, void *param);
 void insert_addr(uint8_t *buf, uint32_t *off, const uint32_t len,
 			const scamper_addr_t *addr, void *param);
 void insert_uint16(uint8_t *buf, uint32_t *off, const uint32_t len,
@@ -197,7 +200,8 @@ void insert_timeval(uint8_t *buf, uint32_t *off, const uint32_t len,
 void insert_rtt(uint8_t *buf, uint32_t *off, const uint32_t len,
 		       const struct timeval *tv, void *param);
 
-
+int extract_addr_static(const uint8_t *buf, uint32_t *off,
+			const uint32_t len, scamper_addr_t **out, void *param);
 int extract_addr(const uint8_t *buf, uint32_t *off,
 			const uint32_t len, scamper_addr_t **out, void *param);
 int extract_string(const uint8_t *buf, uint32_t *off,

@@ -1,11 +1,11 @@
 /*
  * scamper_tracelb_json.c
  *
- * Copyright (C) 2018-2019 Matthew Luckie
+ * Copyright (C) 2018-2020 Matthew Luckie
  *
  * Authors: Matthew Luckie
  *
- * $Id: scamper_tracelb_json.c,v 1.11 2019/09/24 07:00:57 mjl Exp $
+ * $Id: scamper_tracelb_json.c,v 1.13 2020/04/02 06:45:02 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_tracelb_json.c,v 1.11 2019/09/24 07:00:57 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -62,6 +57,9 @@ static char *header_tostr(const scamper_tracelb_t *trace)
 		  scamper_addr_tostr(trace->src, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off, ", \"dst\":\"%s\"",
 		scamper_addr_tostr(trace->dst, tmp, sizeof(tmp)));
+  if(trace->rtr != NULL)
+    string_concat(buf, sizeof(buf), &off, ", \"rtr\":\"%s\"",
+		  scamper_addr_tostr(trace->rtr, tmp, sizeof(tmp)));
   if(SCAMPER_TRACELB_TYPE_IS_UDP(trace) || SCAMPER_TRACELB_TYPE_IS_TCP(trace))
     string_concat(buf, sizeof(buf), &off, ", \"sport\":%u, \"dport\":%u",
 		  trace->sport, trace->dport);

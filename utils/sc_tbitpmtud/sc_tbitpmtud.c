@@ -19,13 +19,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: sc_tbitpmtud.c,v 1.20 2019/07/12 21:40:13 mjl Exp $
+ * $Id: sc_tbitpmtud.c,v 1.22 2020/06/09 20:09:55 mjl Exp $
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_tbitpmtud.c,v 1.20 2019/07/12 21:40:13 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -745,7 +740,8 @@ static int parse_list(char *str, void *param)
      string_firstof_char(url, '\"') != NULL)
     return 0;
 
-  i = atoi(pos);
+  if((i = atoi(pos)) < 0)
+     return -1;
 
   if((tf.addr = scamper_addr_resolve(AF_UNSPEC, ip)) == NULL)
     return -1;
@@ -784,7 +780,7 @@ static int parse_list(char *str, void *param)
 
   scamper_addr_free(tf.addr);
 
-  if(i < target->pos)
+  if((uint32_t)i < target->pos)
     target->pos = i;
 
   if((tu = malloc_zero(sizeof(target_url_t))) == NULL ||

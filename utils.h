@@ -1,12 +1,12 @@
 /*
  * utils.h
  *
- * $Id: utils.h,v 1.118 2019/09/24 07:00:57 mjl Exp $
+ * $Id: utils.h,v 1.121 2020/04/09 22:32:18 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
- * Copyright (C) 2015-2019 Matthew Luckie
+ * Copyright (C) 2015-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -137,6 +137,8 @@ char *string_nullterm(char *str, const char *delim, char **next);
 char *string_nullterm_char(char *str, const char delim, char **next);
 int   string_isprint(const char *str, const size_t len);
 int   string_isnumber(const char *str);
+int   string_isdigit(const char *str);
+int   string_isalnum(const char *str);
 int   string_isfloat(const char *str);
 int   string_tolong(const char *str, long *l);
 int   string_tollong(const char *str, long long *ll);
@@ -203,6 +205,9 @@ int shuffle32(uint32_t *array, int len);
 
 /* count the number of bits set */
 int countbits32(uint32_t v);
+
+/* return the minimum integer in the array */
+int min_array(int *array, int len);
 
 /*
  * Functions for uuencode and uudecode.

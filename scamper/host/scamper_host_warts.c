@@ -1,10 +1,10 @@
 /*
  * scamper_host_warts.c
  *
- * Copyright (C) 2019      Matthew Luckie
+ * Copyright (C) 2019-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_host_warts.c,v 1.2 2019/08/04 09:33:06 mjl Exp $
+ * $Id: scamper_host_warts.c,v 1.5 2020/06/18 20:01:20 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,11 +20,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_host_warts.c,v 1.2 2019/08/04 09:33:06 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -199,7 +194,8 @@ static void warts_host_query_params(const scamper_host_query_t *query,
 				    warts_host_query_t *state)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   memset(state->flags, 0, host_query_vars_mfb);
   state->params_len = 0;
@@ -251,7 +247,7 @@ static void warts_host_query_write(const scamper_host_query_t *query,
 {
   warts_param_writer_t handlers[] = {
     {&query->tx,      (wpw_t)insert_timeval, NULL},
-    {&query->tx,      (wpw_t)insert_timeval, NULL},
+    {&query->rx,      (wpw_t)insert_timeval, NULL},
     {&query->id,      (wpw_t)insert_uint16,  NULL},
     {&query->ancount, (wpw_t)insert_uint16,  NULL},
     {&query->nscount, (wpw_t)insert_uint16,  NULL},
@@ -267,7 +263,8 @@ static void warts_host_rr_mx_params(const scamper_host_rr_mx_t *mx,
 				    warts_host_rr_mx_t *state)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   memset(state->flags, 0, host_rr_mx_vars_mfb);
   state->params_len = 0;
@@ -338,7 +335,8 @@ static void warts_host_rr_soa_params(const scamper_host_rr_soa_t *soa,
 				     warts_host_rr_soa_t *state)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   memset(state->flags, 0, host_rr_soa_vars_mfb);
   state->params_len = 0;
@@ -541,7 +539,8 @@ static void warts_host_rr_params(const scamper_host_rr_t *rr,
 				 warts_addrtable_t *table)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   memset(state->flags, 0, host_rr_vars_mfb);
   state->params_len = 0;
@@ -624,7 +623,8 @@ static void warts_host_params(const scamper_host_t *host,
 			      uint16_t *flags_len, uint16_t *params_len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* Unset all flags */
   memset(flags, 0, host_vars_mfb);

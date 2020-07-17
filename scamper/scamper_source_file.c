@@ -1,7 +1,7 @@
 /*
  * scamper_source_file.c
  *
- * $Id: scamper_source_file.c,v 1.24 2018/06/06 06:41:57 mjl Exp $
+ * $Id: scamper_source_file.c,v 1.26 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_source_file.c,v 1.24 2018/06/06 06:41:57 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -253,7 +248,7 @@ static void ssf_read(const int fd, void *param)
        * if probe queue for this source is sufficiently large, then
        * don't read any more for the time being
        */
-      if(scamper_source_getcommandcount(source) >= scamper_pps_get())
+      if(scamper_source_getcommandcount(source) >= scamper_option_pps_get())
 	{
 	  scamper_fd_read_pause(ssf->fd);
 	}
@@ -400,7 +395,7 @@ static int ssf_take(void *data)
   scamper_source_file_t *ssf = (scamper_source_file_t *)data;
 
   if(scamper_source_getcyclecount(ssf->source) < 2 &&
-     scamper_source_getcommandcount(ssf->source) < scamper_pps_get() &&
+     scamper_source_getcommandcount(ssf->source) < scamper_option_pps_get() &&
      ssf->cycles != 0)
     {
       scamper_fd_read_unpause(ssf->fd);

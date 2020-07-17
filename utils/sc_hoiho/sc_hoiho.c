@@ -1,7 +1,7 @@
 /*
  * sc_hoiho: Holistic Orthography of Internet Hostname Observations
  *
- * $Id: sc_hoiho.c,v 1.6 2019/11/02 03:20:07 mjl Exp $
+ * $Id: sc_hoiho.c,v 1.7 2020/03/11 21:45:45 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@luckie.org.nz
@@ -597,17 +597,6 @@ static int check_options(int argc, char *argv[])
 
   suffix_file = argv[optind + 0];
   router_file = argv[optind + 1];
-  return 0;
-}
-
-static int string_isdigit(const char *str)
-{
-  if(*str == '\0')
-    return 0;
-  while(isdigit(*str) != 0)
-    str++;
-  if(*str == '\0')
-    return 1;
   return 0;
 }
 

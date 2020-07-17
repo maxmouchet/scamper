@@ -1,9 +1,9 @@
 /*
  * scamper_neighbourdisc_warts.h
  *
- * $Id: scamper_neighbourdisc_warts.c,v 1.7 2016/12/02 09:13:42 mjl Exp $
+ * $Id: scamper_neighbourdisc_warts.c,v 1.9 2020/06/09 06:18:41 mjl Exp $
  *
- * Copyright (C) 2009-2016 Matthew Luckie
+ * Copyright (C) 2009-2020 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,11 +19,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_neighbourdisc_warts.c,v 1.7 2016/12/02 09:13:42 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -118,7 +113,8 @@ static int warts_neighbourdisc_reply_state(scamper_neighbourdisc_reply_t *reply,
 					   uint32_t *len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   memset(state->flags, 0, neighbourdisc_reply_vars_mfb);
   state->params_len = 0;
@@ -183,8 +179,8 @@ static int warts_neighbourdisc_probe_state(const scamper_file_t *sf,
 					   uint32_t *len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
-  size_t size;
+  int max_id = 0;
+  size_t i, size;
 
   memset(state->flags, 0, neighbourdisc_probe_vars_mfb);
   state->params_len = 0;
@@ -296,8 +292,9 @@ static void warts_neighbourdisc_params(const scamper_neighbourdisc_t *nd,
 				       uint8_t *flags, uint16_t *flags_len,
 				       uint16_t *params_len)
 {
-  int i, max_id = 0;
   const warts_var_t *var;
+  int max_id = 0;
+  size_t i;
 
   memset(flags, 0, neighbourdisc_vars_mfb);
   *params_len = 0;

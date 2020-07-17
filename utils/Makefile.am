@@ -12,6 +12,7 @@ endif
 
 SUBDIRS+= \
 	sc_ipiddump \
+	sc_pinger \
 	sc_prefixscan \
 	sc_radargun \
 	sc_remoted \
@@ -32,6 +33,7 @@ SUBDIRS+= \
 	sc_warts2text \
 	sc_wartscat \
 	sc_wartsdump \
+	sc_wartsfilter \
 	sc_wartsfix
 
 CLEANFILES = *~ *.core

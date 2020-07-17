@@ -6,15 +6,15 @@
 .\"
 .\" Copyright (c) 2007-2011 University of Waikato
 .\" Copyright (c) 2012-2015 The Regents of the University of California
-.\" Copyright (c) 2015      Matthew Luckie
+.\" Copyright (c) 2015-2020 Matthew Luckie
 .\"                         All rights reserved
 .\"
-.\" $Id: scamper.1,v 1.78 2019/09/16 05:33:35 mjl Exp $
+.\" $Id: scamper.1,v 1.85 2020/04/27 07:32:21 mjl Exp $
 .\"
 .\"  nroff -man scamper.1
 .\"  groff -man -Tascii scamper.1 | man2html -title scamper.1
 .\"
-.Dd July 2, 2017
+.Dd April 27, 2020
 .Dt SCAMPER 1
 .Os
 .\""""""""""""
@@ -34,6 +34,7 @@
 .Op Fl C Ar cycleid
 .Op Fl o Ar outfile
 .Op Fl F Ar firewall
+.Op Fl n Ar nameserver
 .Op Fl d Ar debugfile
 .Op Fl e Ar pidfile
 .Op Fl O Ar options
@@ -47,7 +48,7 @@ utility provides the ability to execute Internet measurement techniques
 to IPv4 and IPv6 addresses, in parallel, to fill a specified
 packets-per-second rate.  Currently,
 .Nm
-supports the well-known traceroute and ping techniques,
+supports the well-known traceroute and ping techniques, DNS,
 as well as MDA traceroute, alias resolution, some parts of tbit, sting,
 and neighbour discovery.
 .Pp
@@ -109,6 +110,8 @@ to use by default. The current choices for this option are:
 .It
 .Sy dealias
 .It
+.Sy host
+.It
 .Sy neighbourdisc
 .It
 .Sy ping
@@ -168,6 +171,12 @@ anchor for
 to use, and <num> specifies the number of rules
 .Nm
 is allowed to use.
+.It Fl n Ar nameserver
+specifies the nameserver for
+.Nm
+to use.  By default,
+.Nm
+uses the first nameserver specified in /etc/resolv.conf
 .It Fl d Ar debugfile
 specifies a filename to write debugging messages to.  By default, no
 debugfile is used, though debugging output is sent to stderr if scamper is
@@ -202,6 +211,13 @@ planetlab's safe raw sockets.
 .Sy rawtcp:
 tell scamper to use IPPROTO_RAW socket to send IPv4 TCP probes, rather than
 a datalink socket.
+.It
+.Sy icmp-rxerr:
+tell scamper to use IP_RECVERR or IPV6_RECVERR to receive ICMP
+responses, rather than raw sockets.  This is useful on Linux systems
+that have these sockets, and scamper does not have the permissions to
+obtain a raw socket.  This option currently only works with the trace
+command.
 .It
 .Sy select:
 tell scamper to use
@@ -245,8 +261,9 @@ append to the debugfile specified with the
 .Fl d
 option.  The default is to truncate the debugfile.
 .It
-.Sy tls:
-require the use of TLS with the remove controller specified with the
+.Sy notls-remote:
+do not use TLS when establishing a connection with the remove controller
+specified with the
 .Fl R
 option.
 .It
@@ -305,7 +322,7 @@ trace
 .Op Fl p Ar payload
 .Op Fl P Ar method
 .Op Fl q Ar attempts
-.Op Fl r Ar rtr-addr
+.Op Fl r Ar rtraddr
 .Op Fl s Ar sport
 .Op Fl S Ar srcaddr
 .Op Fl t Ar tos
@@ -382,7 +399,7 @@ default, a value of two is used.
 .It Fl Q
 specifies that all allocated probes are sent, regardless of how many responses
 have been received.
-.It Fl r Ar rtr-addr
+.It Fl r Ar rtraddr
 specifies the IP address of the router to use.
 .It Fl s Ar sport
 specifies the source port value to use.  For ICMP-based methods, this option
@@ -436,6 +453,7 @@ ping
 .Op Fl O Ar options
 .Op Fl p Ar pattern
 .Op Fl P Ar method
+.Op Fl r Ar rtraddr
 .Op Fl s Ar size
 .Op Fl S Ar srcaddr
 .Op Fl T Ar timestamp
@@ -507,6 +525,8 @@ specifies the type of ping packets to send.
 By default, ICMP echo requests are sent.
 Choices are: icmp-echo, icmp-time, tcp-syn, tcp-ack, tcp-ack-sport,
 tcp-synack, tcp-rst, udp, and udp-dport.
+.It Fl r Ar rtraddr
+specifies the IP address of the router to use.
 .It Fl R
 specifies that the record route IP option should be used.
 .It Fl s Ar size
@@ -652,6 +672,44 @@ specifies how long to wait in milliseconds between probes.
 .It Fl x Ar exclude
 specifies an IP address to exclude when using the prefixscan method.
 May be specified multiple times to exclude multiple addresses.
+.El
+.\""""""""""""
+.Sh HOST OPTIONS
+The host command can issue requests to a domain name server.  The following
+options are available for the
+.Nm
+host command:
+.Pp
+host
+.Bk -words
+.Op Fl r
+.Op Fl R Ar retry-count
+.Op Fl s Ar server-ip
+.Op Fl t Ar type
+.Op Fl U Ar userid
+.Op Fl W Ar wait
+.Ek
+.Bl -tag -width Ds
+.It Fl r
+specifies that this query is a non-recursive query.
+The default is to issue a recursive query.
+.It Fl R Ar retry-count
+specifies the number of retries.
+The default is to send one retry.
+.It Fl s Ar server-ip
+specifies the IP address of the name server to query instead of the
+default nameserver.
+.It Fl t Ar type
+specifies the DNS query type.  The type argument can be one of the
+following: A, AAAA, PTR, and MX.
+The default is A if a name is queried, or a PTR if an IP address is queried.
+.It Fl U Ar userid
+specifies an unsigned integer to include with the data collected; the meaning
+of the user-id is entirely up to the user and has no effect on the behaviour
+of host.
+.It Fl W Ar wait
+specifies the number of seconds to wait for a response.
+The default is to wait for five seconds.
 .El
 .\""""""""""""
 .Sh NEIGHBOUR DISCOVERY OPTIONS
@@ -830,8 +888,9 @@ tracelb command:
 .Pp
 tracelb
 .\"tracelb [-c confidence] [-d dport] [-f firsthop] [-g gaplimit]\n"
-.\"        [-O option] [-P method] [-q attempts] [-Q maxprobec] [-s sport]\n"
-.\"        [-t tos] [-U userid] [-w wait-timeout] [-W wait-probe]";
+.\"        [-O option] [-P method] [-q attempts] [-Q maxprobec]
+.\"        [-r rtraddr] [-s sport] [-t tos] [-U userid]
+.\"        [-w wait-timeout] [-W wait-probe]";
 .Bk -words
 .Op Fl c Ar confidence
 .Op Fl d Ar dport
@@ -840,6 +899,7 @@ tracelb
 .Op Fl O Ar option
 .Op Fl P Ar method
 .Op Fl q Ar attempts
+.Op Fl r Ar rtraddr
 .Op Fl Q Ar maxprobec
 .Op Fl s Ar sport
 .Op Fl t Ar tos
@@ -880,6 +940,8 @@ Defaults to 2.
 .It Fl Q Ar maxprobec
 specifies the maximum number of probes we ever want to send.
 Defaults to 3000.
+.It Fl r Ar rtraddr
+specifies the IP address of the router to use.
 .It Fl s Ar sport
 specifies to the source port to use when sending probes.
 Default based on process ID.
@@ -1040,10 +1102,11 @@ accepts and replies to commands, returning results straight over the control soc
 section below for details on which commands are accepted.
 .It Ic get Ar argument
 The get command returns the current setting for the supplied argument.
-Valid argument values are: holdtime, monitorname, pid, pps, sport, version.
+Valid argument values are: holdtime, monitorname, nameserver, pid, pps,
+sport, version.
 .It Ic set Ar argument ...
 The set command sets the current setting for the supplied argument.
-Valid argument values are: holdtime, monitorname, pps.
+Valid argument values are: holdtime, monitorname, nameserver, pps.
 .It Ic source Ar argument ...
 .Bl -tag -width "   "
 .It Ic add Ar arguments

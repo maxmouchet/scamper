@@ -1,11 +1,11 @@
 /*
  * scamper_do_tracelb.c
  *
- * $Id: scamper_tracelb_do.c,v 1.279 2019/07/12 23:37:58 mjl Exp $
+ * $Id: scamper_tracelb_do.c,v 1.283 2020/06/12 21:11:55 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012      The Regents of the University of California
- * Copyright (C) 2016,2019 Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * MDA traceroute technique authored by
@@ -26,11 +26,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_tracelb_do.c,v 1.279 2019/07/12 23:37:58 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -292,6 +287,7 @@ static scamper_task_funcs_t funcs;
 #define TRACE_OPT_USERID       11
 #define TRACE_OPT_WAITTIMEOUT  12
 #define TRACE_OPT_WAITPROBE    13
+#define TRACE_OPT_RTRADDR      14
 
 static const scamper_option_in_t opts[] = {
   {'c', NULL, TRACE_OPT_CONFIDENCE,  SCAMPER_OPTION_TYPE_NUM},
@@ -302,6 +298,7 @@ static const scamper_option_in_t opts[] = {
   {'P', NULL, TRACE_OPT_PROTOCOL,    SCAMPER_OPTION_TYPE_STR},
   {'q', NULL, TRACE_OPT_ATTEMPTS,    SCAMPER_OPTION_TYPE_NUM},
   {'Q', NULL, TRACE_OPT_PROBECMAX,   SCAMPER_OPTION_TYPE_NUM},
+  {'r', NULL, TRACE_OPT_RTRADDR,     SCAMPER_OPTION_TYPE_STR},
   {'s', NULL, TRACE_OPT_SPORT,       SCAMPER_OPTION_TYPE_NUM},
   {'t', NULL, TRACE_OPT_TOS,         SCAMPER_OPTION_TYPE_NUM},
   {'U', NULL, TRACE_OPT_USERID,      SCAMPER_OPTION_TYPE_NUM},
@@ -314,8 +311,8 @@ const char *scamper_do_tracelb_usage(void)
 {
   return "tracelb [-c confidence] [-d dport] [-f firsthop] [-g gaplimit]\n"
          "        [-O option] [-P method] [-q attempts] [-Q maxprobec]\n"
-         "        [-s sport] [-t tos] [-U userid] [-w wait-timeout]\n"
-         "        [-W wait-probe]";
+         "        [-r rtraddr] [-s sport] [-t tos] [-U userid]\n"
+         "        [-w wait-timeout] [-W wait-probe]";
 }
 
 static tracelb_state_t *tracelb_getstate(const scamper_task_t *task)
@@ -620,43 +617,52 @@ static tracelb_link_t *tracelb_isloop_addr(const tracelb_path_t *path,
   int i, j;
   uint16_t k, l;
 
-  for(i=path->linkc-1; i>=0; i--)
+  if(path->linkc > 0)
     {
-      /* a tracelb_link_t state is required at each spot in the array */
-      tlbl = path->links[i]; assert(tlbl != NULL);
-
-      /* but there does not have to be an actual link with the state */
-      if((link = tlbl->link) == NULL)
-	continue;
-
-      if(link->from->addr == NULL)
-	continue;
-
-      /* if the from address is the same, then we have a loop */
-      if(scamper_addr_cmp(link->from->addr, addr) == 0)
-	return tlbl;
-
-      /* if the link includes a clump, then check the replies in the clump */
-      for(j=0; j<link->hopc-1; j++)
+      i = path->linkc-1;
+      for(;;)
 	{
-	  set = link->sets[j];
-	  for(k=0; k<set->probec; k++)
+	  /* a tracelb_link_t state is required at each spot in the array */
+	  tlbl = path->links[i]; assert(tlbl != NULL);
+
+	  /* but there does not have to be an actual link with the state */
+	  if((link = tlbl->link) == NULL || link->from->addr == NULL)
+	    goto next;
+
+	  /* if the from address is the same, then we have a loop */
+	  if(scamper_addr_cmp(link->from->addr, addr) == 0)
+	    return tlbl;
+
+	  /*
+	   * if the link includes a clump, then check the replies in
+	   * the clump 
+	   */
+	  if(link->hopc > 0)
 	    {
-	      probe = set->probes[k];
-	      for(l=0; l<probe->rxc; l++)
-		if(scamper_addr_cmp(probe->rxs[l]->reply_from, addr) == 0)
-		  return tlbl;
+	      for(j=0; j<link->hopc-1; j++)
+		{
+		  set = link->sets[j];
+		  for(k=0; k<set->probec; k++)
+		    {
+		      probe = set->probes[k];
+		      for(l=0; l<probe->rxc; l++)
+			if(scamper_addr_cmp(probe->rxs[l]->reply_from,
+					    addr) == 0)
+			  return tlbl;
+		    }
+		}
 	    }
+
+	next:
+	  if(i == 0)
+	    break;
+	  i--;
 	}
     }
 
   for(i=0; i<path->backc; i++)
-    {
-      if((tlbl = tracelb_isloop_addr(path->back[i], addr)) != NULL)
-	{
-	  return tlbl;
-	}
-    }
+    if((tlbl = tracelb_isloop_addr(path->back[i], addr)) != NULL)
+      return tlbl;
 
   return NULL;
 }
@@ -1758,7 +1764,8 @@ static int tracelb_node_ptr(scamper_task_t *task, scamper_tracelb_node_t *node)
   tracelb_state_t *state = tracelb_getstate(task);
   tracelb_host_t *th = NULL;
 
-  if((trace->flags & SCAMPER_TRACELB_FLAG_PTR) == 0)
+  if((trace->flags & SCAMPER_TRACELB_FLAG_PTR) == 0 ||
+     node->addr == NULL)
     return 0;
 
   if((state->ths == NULL && (state->ths = dlist_alloc()) == NULL))
@@ -2447,19 +2454,25 @@ static int tracelb_path_flowid(tracelb_path_t *path,
   int i;
 
   /* check the path for a flow-id */
-  for(i=path->linkc-1; i>=0; i--)
+  if(path->linkc > 0)
     {
-      if((flowid = tracelb_link_flowid_get(path->links[i])) == NULL)
-	continue;
+      i = path->linkc - 1;
+      for(;;)
+	{
+	  if((flowid = tracelb_link_flowid_get(path->links[i])) != NULL)
+	    {
+	      probe->flowid = flowid->id;
+	      probe->ttl    = flowid->ttl + 1;
+	      free(flowid);
+	      for(i=i+1; i<path->linkc; i++)
+		probe->ttl += path->links[i]->link->hopc;
+	      return 1;
+	    }
 
-      probe->flowid = flowid->id;
-      probe->ttl    = flowid->ttl + 1;
-      free(flowid);
-
-      for(i=i+1; i<path->linkc; i++)
-	probe->ttl += path->links[i]->link->hopc;
-
-      return 1;
+	  if(i == 0)
+	    break;
+	  i--;
+	}
     }
 
   /*
@@ -2581,24 +2594,30 @@ static int tracelb_probe_vals(scamper_task_t *task, tracelb_branch_t *branch,
 		  (array_cmp_t)tracelb_bringfwd_cmp);
 
 #ifndef NDEBUG
-      for(i=branch->bringfwdc-1; i>=0; i--)
+      if(branch->bringfwdc > 0)
 	{
-	  path = branch->bringfwd[i]->path;
+	  i = branch->bringfwdc - 1;
+	  for(;;)
+	    {
+	      path = branch->bringfwd[i]->path;
+	      if(path->linkc > 0)
+		{
+		  node = path->links[0]->link->from;
+		  if(node->addr != NULL)
+		    scamper_addr_tostr(node->addr, from, sizeof(from));
+		  else
+		    snprintf(from, sizeof(from), "*");
+		  if((node = path->links[path->linkc-1]->link->to) != NULL)
+		    scamper_addr_tostr(node->addr, to, sizeof(to));
+		  else
+		    snprintf(to, sizeof(to), "*");
+		  scamper_debug(__func__, "%d %s %s",path->distance,from,to);
+		}
 
-	  if(path->linkc == 0)
-	    continue;
-
-	  node = path->links[0]->link->from;
-	  if(node->addr != NULL)
-	    scamper_addr_tostr(node->addr, from, sizeof(from));
-	  else
-	    snprintf(from, sizeof(from), "*");
-	  if((node = path->links[path->linkc-1]->link->to) != NULL)
-	    scamper_addr_tostr(node->addr, to, sizeof(to));
-	  else
-	    snprintf(to, sizeof(to), "*");
-
-	  scamper_debug(__func__, "%d %s %s", path->distance, from, to);
+	      if(i == 0)
+		break;
+	      i--;
+	    }
 	}
 #endif
     }
@@ -2608,6 +2627,7 @@ static int tracelb_probe_vals(scamper_task_t *task, tracelb_branch_t *branch,
    * and extends back to the first path segment
    */
   assert(branch->bringfwd[0]->path == path0);
+  assert(branch->bringfwdc > 0);
   assert(branch->bringfwd[branch->bringfwdc-1]->path->backc == 0);
 
   /* reset the visited members to zero */
@@ -3715,7 +3735,10 @@ static void tracelb_handle_rt(scamper_route_t *rt)
       goto done;
     }
   dl = scamper_fd_dl_get(state->dl);
-  state->dlhdr->dst = scamper_addr_use(trace->dst);
+  if(trace->rtr != NULL)
+    state->dlhdr->dst = scamper_addr_use(trace->rtr);
+  else
+    state->dlhdr->dst = scamper_addr_use(trace->dst);
   state->dlhdr->gw = rt->gw != NULL ? scamper_addr_use(rt->gw) : NULL;
   state->dlhdr->ifindex = rt->ifindex;
   state->dlhdr->txtype = scamper_dl_tx_type(dl);
@@ -3942,7 +3965,7 @@ static int tracelb_state_alloc(scamper_task_t *task)
       goto err;
     }
 
-  if(SCAMPER_TRACELB_TYPE_VARY_SPORT(trace))
+  if(SCAMPER_TRACELB_TYPE_VARY_SPORT(trace) || trace->rtr != NULL)
     {
       branch->mode = MODE_RTSOCK;
 
@@ -4085,7 +4108,10 @@ static void do_tracelb_probe(scamper_task_t *task)
 
   if(branch->mode == MODE_RTSOCK)
     {
-      state->route = scamper_route_alloc(trace->dst, task, tracelb_handle_rt);
+      if(trace->rtr != NULL)
+	state->route = scamper_route_alloc(trace->rtr,task,tracelb_handle_rt);
+      else
+	state->route = scamper_route_alloc(trace->dst,task,tracelb_handle_rt);
       if(state->route == NULL)
 	goto err;
 
@@ -4273,7 +4299,7 @@ static void do_tracelb_probe(scamper_task_t *task)
 	probe.pr_tcp_flags = TH_ACK;
     }
 
-  if(SCAMPER_TRACELB_TYPE_VARY_SPORT(trace))
+  if(state->dl != NULL)
     {
       probe.pr_dl        = scamper_fd_dl_get(state->dl);
       probe.pr_dl_buf    = state->dlhdr->buf;
@@ -4320,7 +4346,7 @@ static void do_tracelb_probe(scamper_task_t *task)
 
 static int tracelb_arg_param_validate(int optid, char *param, long long *out)
 {
-  long tmp;
+  long tmp = 0;
 
   switch(optid)
     {
@@ -4360,7 +4386,6 @@ static int tracelb_arg_param_validate(int optid, char *param, long long *out)
       break;
 
     case TRACE_OPT_OPTION:
-      tmp = 0;
       if(strcasecmp(param, "ptr") != 0)
 	goto err;
       break;
@@ -4431,6 +4456,10 @@ static int tracelb_arg_param_validate(int optid, char *param, long long *out)
 	}
       break;
 
+      /* these parameters are validated at execution time */
+    case TRACE_OPT_RTRADDR:
+      break;
+
     default:
       return -1;
     }
@@ -4468,8 +4497,9 @@ void *scamper_do_tracelb_alloc(char *str)
   uint8_t  gaplimit     = SCAMPER_DO_TRACELB_GAPLIMIT_DEF;
   uint32_t userid       = 0;
   uint8_t  flags        = 0;
-  char *addr;
+  char *rtr = NULL, *addr;
   long long tmp = 0;
+  int af;
 
   /* try and parse the string passed in */
   if(scamper_options_parse(str, opts, opts_cnt, &opts_out, &addr) != 0)
@@ -4547,6 +4577,12 @@ void *scamper_do_tracelb_alloc(char *str)
 	case TRACE_OPT_WAITTIMEOUT:
 	  wait_timeout = (uint8_t)tmp;
 	  break;
+
+	case TRACE_OPT_RTRADDR:
+	  if(rtr != NULL)
+	    goto err;
+	  rtr = opt->str;
+	  break;
 	}
     }
 
@@ -4567,6 +4603,14 @@ void *scamper_do_tracelb_alloc(char *str)
     {
       goto err;
     }
+
+  af = scamper_addr_af(trace->dst);
+  if(af != AF_INET && af != AF_INET6)
+    goto err;
+
+  if(rtr != NULL &&
+     (trace->rtr = scamper_addr_resolve(af, rtr)) == NULL)
+    goto err;
 
   trace->sport        = sport;
   trace->dport        = dport;

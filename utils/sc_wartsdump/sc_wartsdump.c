@@ -1,7 +1,7 @@
 /*
  * sc_wartsdump
  *
- * $Id: sc_wartsdump.c,v 1.221 2019/07/28 09:24:53 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.228 2020/06/12 23:29:25 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -9,7 +9,7 @@
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2019      Matthew Luckie
+ * Copyright (C) 2019-2020 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,11 +25,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_wartsdump.c,v 1.221 2019/07/28 09:24:53 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -156,6 +151,7 @@ static void dump_trace_hop(const scamper_trace_t *trace,
   uint32_t u32;
   char addr[256];
   int i;
+  char *comma = "";
 
   printf("hop %2d  %s\n",
 	 hop->hop_probe_ttl,
@@ -171,13 +167,25 @@ static void dump_trace_hop(const scamper_trace_t *trace,
 	 (int)hop->hop_rtt.tv_sec, (int)hop->hop_rtt.tv_usec,
 	 hop->hop_probe_size);
 
-  printf(" reply-size: %d", hop->hop_reply_size);
   if(hop->hop_flags & SCAMPER_TRACE_HOP_FLAG_REPLY_TTL)
-    printf(", reply-ttl: %d", hop->hop_reply_ttl);
+    {
+      printf("%s reply-ttl: %d", comma, hop->hop_reply_ttl);
+      comma = ",";
+    }
+
+  if((trace->flags & SCAMPER_TRACE_FLAG_RXERR) == 0)
+    {
+      printf("%s reply-size: %d", comma, hop->hop_reply_size);
+      comma = ",";
+      if(hop->hop_addr->type == SCAMPER_ADDR_TYPE_IPV4)
+	printf("%s reply-ipid: 0x%04x", comma, hop->hop_reply_ipid);
+    }
+
   if(hop->hop_addr->type == SCAMPER_ADDR_TYPE_IPV4)
-    printf(", reply-ipid: 0x%04x, reply-tos 0x%02x",
-	   hop->hop_reply_ipid, hop->hop_reply_tos);
-  printf("\n");
+    printf("%s reply-tos 0x%02x", comma, hop->hop_reply_tos);
+
+  if(comma[0] != '\0')
+    printf("\n");
 
   if(SCAMPER_TRACE_HOP_IS_ICMP(hop))
     {
@@ -264,6 +272,8 @@ static void dump_trace(scamper_trace_t *trace)
   dump_list_summary(trace->list);
   dump_cycle_summary(trace->cycle);
   printf(" user-id: %d\n", trace->userid);
+  if(trace->rtr != NULL)
+    printf(" rtr: %s\n", scamper_addr_tostr(trace->rtr, buf, sizeof(buf)));
   dump_timeval("start", &trace->start);
 
   printf(" type: ");
@@ -360,6 +370,8 @@ static void dump_trace(scamper_trace_t *trace)
 	printf(" icmp-csum-dport");
       if(trace->flags & SCAMPER_TRACE_FLAG_CONSTPAYLOAD)
 	printf(" const-payload");
+      if(trace->flags & SCAMPER_TRACE_FLAG_RXERR)
+	printf(" rxerr");
       printf(" )");
     }
   printf("\n");
@@ -564,6 +576,8 @@ static void dump_tracelb(scamper_tracelb_t *trace)
   dump_list_summary(trace->list);
   dump_cycle_summary(trace->cycle);
   printf(" user-id: %d\n", trace->userid);
+  if(trace->rtr != NULL)
+    printf(" rtr: %s\n", scamper_addr_tostr(trace->rtr, src, sizeof(src)));
   dump_timeval("start", &trace->start);
 
   printf(" type: ");
@@ -791,6 +805,8 @@ static void dump_ping(scamper_ping_t *ping)
   dump_list_summary(ping->list);
   dump_cycle_summary(ping->cycle);
   printf(" user-id: %d\n", ping->userid);
+  if(ping->rtr != NULL)
+    printf(" rtr: %s\n", scamper_addr_tostr(ping->rtr, buf, sizeof(buf)));
   dump_timeval("start", &ping->start);
 
   printf(" probe-count: %d", ping->probe_count);

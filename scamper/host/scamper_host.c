@@ -1,7 +1,7 @@
 /*
  * scamper_host
  *
- * $Id: scamper_host.c,v 1.4 2019/07/28 09:24:53 mjl Exp $
+ * $Id: scamper_host.c,v 1.5 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2018 Matthew Luckie
  *
@@ -19,11 +19,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_host.c,v 1.4 2019/07/28 09:24:53 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

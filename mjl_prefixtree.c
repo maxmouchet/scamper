@@ -31,14 +31,9 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_prefixtree.c,v 1.13 2018/09/18 00:25:57 mjl Exp $
+ * $Id: mjl_prefixtree.c,v 1.14 2020/03/17 07:32:15 mjl Exp $
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: mjl_prefixtree.c,v 1.13 2018/09/18 00:25:57 mjl Exp $";
-#endif
 
 #include <sys/types.h>
 #include <sys/socket.h>

@@ -3,10 +3,10 @@
  *
  * Copyright (C) 2010-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_sting_warts.c,v 1.9 2016/12/02 09:13:42 mjl Exp $
+ * $Id: scamper_sting_warts.c,v 1.11 2020/06/09 06:18:41 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_sting_warts.c,v 1.9 2016/12/02 09:13:42 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -118,7 +113,7 @@ static void warts_sting_pkt_params(const scamper_sting_pkt_t *pkt,
 {
   const warts_var_t *var;
   int max_id = 0;
-  uint16_t i;
+  size_t i;
 
   memset(state->flags, 0, sting_pkt_vars_mfb);
   state->params_len = 0;
@@ -202,7 +197,8 @@ static void warts_sting_params(const scamper_sting_t *sting,
 			       uint16_t *flags_len, uint16_t *params_len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* Unset all flags */
   memset(flags, 0, sting_vars_mfb);

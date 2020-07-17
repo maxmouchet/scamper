@@ -1,12 +1,12 @@
 /*
  * scamper_addr.h
  *
- * $Id: scamper_addr.h,v 1.28 2016/08/21 09:38:38 mjl Exp $
+ * $Id: scamper_addr.h,v 1.29 2020/04/02 05:35:24 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2013      The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -104,7 +104,16 @@ typedef struct scamper_addr
  * scamper_addr_netaddr:
  *  return the network address for the supplied address given prefix length.
  */
+
+#ifndef DMALLOC
 scamper_addr_t *scamper_addr_alloc(const int type, const void *addr);
+#else
+scamper_addr_t *scamper_addr_alloc_dm(const int type, const void *addr,
+				      const char *file, const int line);
+#define scamper_addr_alloc(type, addr) \
+  scamper_addr_alloc_dm((type), (addr), __FILE__, __LINE__)
+#endif
+
 scamper_addr_t *scamper_addr_use(scamper_addr_t *sa);
 void scamper_addr_free(scamper_addr_t *sa);
 scamper_addr_t *scamper_addr_resolve(const int af, const char *str);

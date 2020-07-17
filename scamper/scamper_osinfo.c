@@ -1,7 +1,7 @@
 /*
  * scamper_osinfo.c
  *
- * $Id: scamper_osinfo.c,v 1.5 2017/12/03 09:38:27 mjl Exp $
+ * $Id: scamper_osinfo.c,v 1.6 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2006 Matthew Luckie
  * Copyright (C) 2014 The Regents of the University of California
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_osinfo.c,v 1.5 2017/12/03 09:38:27 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

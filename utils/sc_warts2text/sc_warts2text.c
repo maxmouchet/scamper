@@ -1,7 +1,7 @@
 /*
  * warts2traceroute
  *
- * $Id: sc_warts2text.c,v 1.26 2018/01/26 07:11:48 mjl Exp $
+ * $Id: sc_warts2text.c,v 1.27 2020/03/17 07:32:17 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_warts2text.c,v 1.26 2018/01/26 07:11:48 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

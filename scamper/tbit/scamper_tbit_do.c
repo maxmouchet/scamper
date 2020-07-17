@@ -1,7 +1,7 @@
 /*
  * scamper_do_tbit.c
  *
- * $Id: scamper_tbit_do.c,v 1.183 2019/07/12 23:37:57 mjl Exp $
+ * $Id: scamper_tbit_do.c,v 1.185 2020/06/09 09:45:04 mjl Exp $
  *
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2009-2010 Stephen Eichler
@@ -35,11 +35,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_tbit_do.c,v 1.183 2019/07/12 23:37:57 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -1054,7 +1049,7 @@ static int tbit_ssl_wbio_write(tbit_state_t *state)
 
   while(off < pending)
     {
-      if(pending - off > sizeof(buf))
+      if((size_t)(pending - off) > sizeof(buf))
 	size = sizeof(buf);
       else
 	size = pending - off;

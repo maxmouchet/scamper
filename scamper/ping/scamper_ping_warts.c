@@ -4,10 +4,10 @@
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
- * Copyright (C) 2016-2019 Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping_warts.c,v 1.18 2019/07/12 23:08:22 mjl Exp $
+ * $Id: scamper_ping_warts.c,v 1.22 2020/06/12 22:35:03 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_ping_warts.c,v 1.18 2019/07/12 23:08:22 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -79,6 +74,7 @@ static const char rcsid[] =
 #define WARTS_PING_PROBE_TCPACK   29
 #define WARTS_PING_FLAGS          30
 #define WARTS_PING_PROBE_TCPSEQ   31
+#define WARTS_PING_ADDR_RTR       32
 
 static const warts_var_t ping_vars[] =
 {
@@ -113,6 +109,7 @@ static const warts_var_t ping_vars[] =
   {WARTS_PING_PROBE_TCPACK,   4, -1},
   {WARTS_PING_FLAGS,          4, -1},
   {WARTS_PING_PROBE_TCPSEQ,   4, -1},
+  {WARTS_PING_ADDR_RTR,      -1, -1},
 };
 #define ping_vars_mfb WARTS_VAR_MFB(ping_vars)
 
@@ -306,7 +303,8 @@ static void warts_ping_reply_params(const scamper_ping_t *ping,
 				    uint16_t *params_len)
 {
   const warts_var_t *var;
-  int i, j, max_id = 0;
+  int j, max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(flags, 0, ping_reply_vars_mfb);
@@ -507,7 +505,8 @@ static void warts_ping_params(const scamper_ping_t *ping,
 			      uint16_t *flags_len, uint16_t *params_len)
 {
   const warts_var_t *var;
-  int i, j, max_id = 0;
+  int j, max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(flags, 0, ping_vars_mfb);
@@ -521,6 +520,7 @@ static void warts_ping_params(const scamper_ping_t *ping,
 	 var->id == WARTS_PING_ADDR_DST_GID ||
 	 (var->id == WARTS_PING_ADDR_SRC      && ping->src == NULL) ||
 	 (var->id == WARTS_PING_ADDR_DST      && ping->dst == NULL) ||
+	 (var->id == WARTS_PING_ADDR_RTR      && ping->rtr == NULL) ||
 	 (var->id == WARTS_PING_LIST_ID       && ping->list == NULL) ||
 	 (var->id == WARTS_PING_CYCLE_ID      && ping->cycle == NULL) ||
 	 (var->id == WARTS_PING_USERID        && ping->userid == 0) ||
@@ -579,6 +579,11 @@ static void warts_ping_params(const scamper_ping_t *ping,
       else if(var->id == WARTS_PING_ADDR_DST)
 	{
 	  *params_len += warts_addr_size(table, ping->dst);
+	  continue;
+	}
+      else if(var->id == WARTS_PING_ADDR_RTR)
+	{
+	  *params_len += warts_addr_size_static(ping->rtr);
 	  continue;
 	}
 
@@ -668,6 +673,7 @@ static int warts_ping_params_read(scamper_ping_t *ping, warts_state_t *state,
     {&ping->probe_tcpack,  (wpr_t)extract_uint32,          NULL},
     {&ping->flags,         (wpr_t)extract_uint32,          NULL},
     {&ping->probe_tcpseq,  (wpr_t)extract_uint32,          NULL},
+    {&ping->rtr,           (wpr_t)extract_addr_static,     NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
   uint32_t o = *off;
@@ -729,6 +735,7 @@ static int warts_ping_params_write(const scamper_ping_t *ping,
     {&ping->probe_tcpack,  (wpw_t)insert_uint32,          NULL},
     {&ping->flags,         (wpw_t)insert_uint32,          NULL},
     {&ping->probe_tcpseq,  (wpw_t)insert_uint32,          NULL},
+    {ping->rtr,            (wpw_t)insert_addr_static,     NULL},
   };
 
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);

@@ -1,11 +1,11 @@
 /*
  * scamper_fds: manage events for file descriptors
  *
- * $Id: scamper_fds.h,v 1.22 2015/01/04 06:20:15 mjl Exp $
+ * $Id: scamper_fds.h,v 1.24 2020/04/27 07:32:21 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
- * Copyright (C) 2014      Matthew Luckie
+ * Copyright (C) 2014-2020 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,9 +33,11 @@ typedef void (*scamper_fd_cb_t)(const int fd, void *param);
 
 /* these functions allocate reference to a socket shared throughout scamper */
 scamper_fd_t *scamper_fd_icmp4(void *addr);
+scamper_fd_t *scamper_fd_icmp4_err(void *addr);
 scamper_fd_t *scamper_fd_icmp6(void *addr);
 scamper_fd_t *scamper_fd_udp4(void *addr, uint16_t sport);
 scamper_fd_t *scamper_fd_udp6(void *addr, uint16_t sport);
+scamper_fd_t *scamper_fd_udp6_err(void *addr, uint16_t sport);
 scamper_fd_t *scamper_fd_tcp4(void *addr, uint16_t sport);
 scamper_fd_t *scamper_fd_tcp6(void *addr, uint16_t sport);
 scamper_fd_t *scamper_fd_dl(int ifindex);

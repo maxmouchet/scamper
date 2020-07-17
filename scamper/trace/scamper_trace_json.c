@@ -6,11 +6,11 @@
  * Copyright (C) 2011-2013 Internap Network Services Corporation
  * Copyright (C) 2013-2014 The Regents of the University of California
  * Copyright (C) 2015      The University of Waikato
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  *
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_trace_json.c,v 1.17 2018/05/03 20:44:52 mjl Exp $
+ * $Id: scamper_trace_json.c,v 1.21 2020/06/12 23:29:25 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,11 +27,6 @@
  *
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_trace_json.c,v 1.17 2018/05/03 20:44:52 mjl Exp $";
-#endif
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -46,7 +41,7 @@ static const char rcsid[] =
 #include "scamper_trace_json.h"
 #include "utils.h"
 
-static char *hop_tostr(scamper_trace_hop_t *hop)
+static char *hop_tostr(const scamper_trace_t *trace, scamper_trace_hop_t *hop)
 {
   char buf[1024], tmp[128];
   scamper_icmpext_t *ie;
@@ -66,17 +61,23 @@ static char *hop_tostr(scamper_trace_hop_t *hop)
   string_concat(buf, sizeof(buf), &off, ", \"rtt\":%s",
 		timeval_tostr_us(&hop->hop_rtt, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off,
-		", \"reply_ttl\":%u, \"reply_tos\":%u, \"reply_size\":%u",
-		hop->hop_reply_ttl, hop->hop_reply_tos, hop->hop_reply_size);
-  string_concat(buf, sizeof(buf), &off,	", \"reply_ipid\":%u",
-		hop->hop_reply_ipid);
+		", \"reply_ttl\":%u, \"reply_tos\":%u",
+		hop->hop_reply_ttl, hop->hop_reply_tos);
+
+  if((trace->flags & SCAMPER_TRACE_FLAG_RXERR) == 0)
+    {
+      string_concat(buf, sizeof(buf), &off,
+		    ", \"reply_ipid\":%u, \"reply_size\":%u",
+		    hop->hop_reply_ipid, hop->hop_reply_size);
+    }
 
   if(SCAMPER_TRACE_HOP_IS_ICMP(hop))
     {
       string_concat(buf, sizeof(buf), &off,
 		    ", \"icmp_type\":%u, \"icmp_code\":%u",
 		    hop->hop_icmp_type, hop->hop_icmp_code);
-      if(SCAMPER_TRACE_HOP_IS_ICMP_Q(hop))
+      if(SCAMPER_TRACE_HOP_IS_ICMP_Q(hop) &&
+	 (trace->flags & SCAMPER_TRACE_FLAG_RXERR) == 0)
 	{
 	  string_concat(buf, sizeof(buf), &off,
 			", \"icmp_q_ttl\":%u, \"icmp_q_ipl\":%u",
@@ -147,6 +148,9 @@ static char *header_tostr(const scamper_trace_t *trace)
 		  scamper_addr_tostr(trace->src, tmp, sizeof(tmp)));
   string_concat(buf, sizeof(buf), &off, ", \"dst\":\"%s\"",
 		scamper_addr_tostr(trace->dst, tmp, sizeof(tmp)));
+  if(trace->rtr != NULL)
+    string_concat(buf, sizeof(buf), &off, ", \"rtr\":\"%s\"",
+		  scamper_addr_tostr(trace->rtr, tmp, sizeof(tmp)));
   if(SCAMPER_TRACE_TYPE_IS_UDP(trace) || SCAMPER_TRACE_TYPE_IS_TCP(trace))
     string_concat(buf, sizeof(buf), &off, ", \"sport\":%u, \"dport\":%u",
 		  trace->sport, trace->dport);
@@ -198,7 +202,7 @@ int scamper_file_json_trace_write(const scamper_file_t *sf,
 	  for(hop = trace->hops[i]; hop != NULL; hop = hop->hop_next)
 	    {
 	      if(j > 0) len++; /* , */
-	      if((hops[j] = hop_tostr(hop)) == NULL)
+	      if((hops[j] = hop_tostr(trace, hop)) == NULL)
 		goto cleanup;
 	      len += strlen(hops[j]);
 	      j++;

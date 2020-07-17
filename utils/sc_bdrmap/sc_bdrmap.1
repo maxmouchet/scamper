@@ -6,7 +6,7 @@
 .\" Copyright (c) 2016 The University of Waikato
 .\"                    All rights reserved
 .\"
-.\" $Id: sc_bdrmap.1,v 1.9 2019/09/25 00:22:17 mjl Exp $
+.\" $Id: sc_bdrmap.1,v 1.10 2020/02/23 06:37:20 mjl Exp $
 .\"
 .Dd September 24, 2019
 .Dt SC_BDRMAP 1
@@ -29,6 +29,7 @@
 .Op Fl p Ar port
 .Op Fl U Ar unix
 .Op Fl R Ar unix
+.Op Fl S Ar srcaddr
 .Op Fl v Ar vpases
 .Op Fl x Ar ixp-file
 .Ek
@@ -208,6 +209,10 @@ to reason about who owns each router in the observed topology.
 specifies the name of a unix domain socket where a remote
 .Xr scamper 1
 instance is accepting remote control socket connections.
+.It Fl S Ar srcaddr
+specifies the source address that
+.Xr scamper 1
+should use in probes.
 .It Fl U Ar unix
 specifies the name of a unix domain socket where a local
 .Xr scamper 1

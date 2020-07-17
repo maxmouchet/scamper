@@ -1,12 +1,12 @@
 /*
  * scamper_addr.c
  *
- * $Id: scamper_addr.c,v 1.70 2019/05/25 23:34:28 mjl Exp $
+ * $Id: scamper_addr.c,v 1.73 2020/06/09 07:33:15 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2013-2014 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_addr.c,v 1.70 2019/05/25 23:34:28 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -865,7 +860,12 @@ const char *scamper_addr_tostr(const scamper_addr_t *sa,
   return dst;
 }
 
+#ifndef DMALLOC
 scamper_addr_t *scamper_addr_alloc(const int type, const void *addr)
+#else
+scamper_addr_t *scamper_addr_alloc_dm(const int type, const void *addr,
+				      const char *file, const int line)
+#endif
 {
   scamper_addr_t *sa;
 
@@ -873,19 +873,24 @@ scamper_addr_t *scamper_addr_alloc(const int type, const void *addr)
   assert(type-1 >= 0);
   assert((size_t)(type-1) < sizeof(handlers)/sizeof(struct handler));
 
-  if((sa = malloc_zero(sizeof(scamper_addr_t))) != NULL)
-    {
-      if((sa->addr = memdup(addr, handlers[type-1].size)) == NULL)
-	{
-	  free(sa);
-	  return NULL;
-	}
+#ifndef DMALLOC
+  sa = malloc_zero(sizeof(scamper_addr_t));
+#else
+  sa = malloc_zero_dm(sizeof(scamper_addr_t), file, line);
+#endif
 
-      sa->type = type;
-      sa->refcnt = 1;
-      sa->internal = NULL;
+  if(sa == NULL)
+    return NULL;
+
+  if((sa->addr = memdup(addr, handlers[type-1].size)) == NULL)
+    {
+      free(sa);
+      return NULL;
     }
 
+  sa->type = type;
+  sa->refcnt = 1;
+  sa->internal = NULL;
   return sa;
 }
 
@@ -1145,8 +1150,10 @@ void scamper_addr_free(scamper_addr_t *sa)
 
 int scamper_addr_cmp(const scamper_addr_t *a, const scamper_addr_t *b)
 {
-  assert(a->type > 0 && a->type <= sizeof(handlers)/sizeof(struct handler));
-  assert(b->type > 0 && b->type <= sizeof(handlers)/sizeof(struct handler));
+  assert(a->type > 0);
+  assert((size_t)a->type <= sizeof(handlers)/sizeof(struct handler));
+  assert(b->type > 0);
+  assert((size_t)b->type <= sizeof(handlers)/sizeof(struct handler));
 
   /*
    * if the two address structures point to the same memory, then they are
@@ -1179,8 +1186,10 @@ int scamper_addr_cmp(const scamper_addr_t *a, const scamper_addr_t *b)
 
 int scamper_addr_human_cmp(const scamper_addr_t *a, const scamper_addr_t *b)
 {
-  assert(a->type > 0 && a->type <= sizeof(handlers)/sizeof(struct handler));
-  assert(b->type > 0 && b->type <= sizeof(handlers)/sizeof(struct handler));
+  assert(a->type > 0);
+  assert((size_t)a->type <= sizeof(handlers)/sizeof(struct handler));
+  assert(b->type > 0);
+  assert((size_t)b->type <= sizeof(handlers)/sizeof(struct handler));
 
   /*
    * if the two address structures point to the same memory, then they are

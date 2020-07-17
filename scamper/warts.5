@@ -1,4 +1,4 @@
-.Dd May 16, 2011
+.Dd April 2, 2020
 .Dt WARTS 5
 .Os
 .Sh NAME
@@ -317,6 +317,8 @@ address: Destination address used in probes, included if flag 27 is set
 uint32_t: User ID assigned to the traceroute, included if flag 28 is set
 .It
 uint16_t: IP offset value used in probes, included if flag 29 is set
+.It
+address: Router address used to send probes, included if flag 30 is set
 .El
 .Pp
 The traceroute flags field has the following fields:
@@ -574,6 +576,14 @@ uint16_t: Reply psuedo Path MTU, included if flag 26 is set
 uint8_t: Probe timeout, included if flag 27 is set
 .It
 uint32_t: Probe wait (microseconds), included if flag 28 is set
+.It
+uint32_t: Probe TCP acknowledgment value, included if flag 29 is set
+.It
+uint16_t: Ping flags, included if flag 30 is set.
+.It
+uint32_t: Probe TCP sequence number value, included if flag 31 is set
+.It
+address: Router address used to send probes, included if flag 32 is set
 .El
 .Pp
 Ping response records are written in series.  Each record takes the following

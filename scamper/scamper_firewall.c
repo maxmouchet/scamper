@@ -1,7 +1,7 @@
 /*
  * scamper_firewall.c
  *
- * $Id: scamper_firewall.c,v 1.53 2017/12/03 09:42:27 mjl Exp $
+ * $Id: scamper_firewall.c,v 1.54 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2016      Matthew Luckie
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_firewall.c,v 1.53 2017/12/03 09:42:27 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

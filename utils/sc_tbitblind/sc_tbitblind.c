@@ -22,11 +22,6 @@
  *
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_tbitblind.c,v 1.5 2019/07/12 21:40:13 mjl Exp $";
-#endif
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif

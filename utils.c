@@ -1,13 +1,13 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.191 2019/09/24 07:00:57 mjl Exp $
+ * $Id: utils.c,v 1.196.2.1 2020/07/16 22:57:26 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2011      Matthew Luckie
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2015-2019 Matthew Luckie
+ * Copyright (C) 2015-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,11 +24,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: utils.c,v 1.191 2019/09/24 07:00:57 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -1006,14 +1001,17 @@ int string_tolong(const char *str, long *l)
 {
   char *endptr;
 
+  errno = 0;
   *l = strtol(str, &endptr, 0);
   if(*l == 0)
     {
-      if(errno == EINVAL) return -1;
+      if(errno == EINVAL)
+	return -1;
     }
   else if(*l == LONG_MIN || *l == LONG_MAX)
     {
-      if(errno == ERANGE) return -1;
+      if(errno == ERANGE)
+	return -1;
     }
 
   return 0;
@@ -1023,16 +1021,53 @@ int string_tollong(const char *str, long long *l)
 {
   char *endptr;
 
+  errno = 0;
   *l = strtoll(str, &endptr, 0);
   if(*l == 0)
     {
-      if(errno == EINVAL) return -1;
+      if(errno == EINVAL)
+	return -1;
     }
   else if(*l == LLONG_MIN || *l == LLONG_MAX)
     {
-      if(errno == ERANGE) return -1;
+      if(errno == ERANGE)
+	return -1;
     }
 
+  return 0;
+}
+
+/*
+ * string_isalnum
+ *
+ * scan the word to establish if it is made up entirely of
+ * alphanumeric characters.
+ */
+int string_isalnum(const char *str)
+{
+  if(*str == '\0')
+    return 0;
+  while(isalnum(*str) != 0)
+    str++;
+  if(*str == '\0')
+    return 1;
+  return 0;
+}
+
+/*
+ * string_isdigit
+ *
+ * scan the word to establish if it is made up entirely of digits,
+ * with no + or - at the start.
+ */
+int string_isdigit(const char *str)
+{
+  if(*str == '\0')
+    return 0;
+  while(isdigit(*str) != 0)
+    str++;
+  if(*str == '\0')
+    return 1;
   return 0;
 }
 
@@ -1764,6 +1799,16 @@ int shuffle32(uint32_t *array, int len)
     }
 
   return 0;
+}
+
+int min_array(int *array, int len)
+{
+  int x, i;
+  x = array[0];
+  for(i=1; i<len; i++)
+    if(x > array[i])
+      x = array[i];
+  return x;
 }
 
 uint16_t in_cksum(const void *buf, size_t len)

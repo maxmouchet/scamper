@@ -5,7 +5,7 @@
  * Copyright (C) 2013      Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_text.c,v 1.3 2013/01/05 22:00:38 mjl Exp $
+ * $Id: scamper_dealias_text.c,v 1.4 2020/03/17 07:32:16 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_dealias_text.c,v 1.3 2013/01/05 22:00:38 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

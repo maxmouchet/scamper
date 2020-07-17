@@ -1,9 +1,9 @@
 /*
  * scamper_do_host
  *
- * $Id: scamper_host_do.c,v 1.28 2019/10/12 21:49:05 mjl Exp $
+ * $Id: scamper_host_do.c,v 1.41 2020/06/10 09:28:35 mjl Exp $
  *
- * Copyright (C) 2018-2019 Matthew Luckie
+ * Copyright (C) 2018-2020 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,11 +19,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_host_do.c,v 1.28 2019/10/12 21:49:05 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -80,9 +75,13 @@ typedef struct host_state
 
 struct scamper_host_do
 {
+  int             type;
   scamper_task_t *task;
   void           *param;
-  void          (*cb)(void *, const char *name);
+  union {
+    scamper_host_do_ptr_cb_t ptr_cb;
+    scamper_host_do_a_cb_t a_cb;
+  } un;
   dlist_node_t   *node;
 };
 
@@ -96,7 +95,7 @@ struct scamper_host_do
 static const scamper_option_in_t opts[] = {
   {'r', NULL, HOST_OPT_NORECURSE, SCAMPER_OPTION_TYPE_NULL},
   {'R', NULL, HOST_OPT_RETRIES,   SCAMPER_OPTION_TYPE_NUM},
-  {'S', NULL, HOST_OPT_SERVER,    SCAMPER_OPTION_TYPE_STR},
+  {'s', NULL, HOST_OPT_SERVER,    SCAMPER_OPTION_TYPE_STR},
   {'t', NULL, HOST_OPT_TYPE,      SCAMPER_OPTION_TYPE_STR},
   {'U', NULL, HOST_OPT_USERID,    SCAMPER_OPTION_TYPE_NUM},
   {'W', NULL, HOST_OPT_WAIT,      SCAMPER_OPTION_TYPE_NUM},
@@ -106,7 +105,7 @@ static const int opts_cnt = SCAMPER_OPTION_COUNT(opts);
 const char *scamper_do_host_usage(void)
 {
   return
-    "host [-r] [-R number] [-S server] [-t type] [-U userid] [-W wait] name\n";
+    "host [-r] [-R number] [-s server] [-t type] [-U userid] [-W wait] name\n";
 }
 
 static int host_fd_close(void *param)
@@ -362,9 +361,10 @@ static host_state_t *host_state_alloc(scamper_task_t *task)
 static int extract_name(char *name, size_t namelen,
 			uint8_t *pktbuf, size_t pktlen, size_t off)
 {
-  int ptr_used = 0, i = 0, rc = 0;
+  int ptr_used = 0, rc = 0;
   uint16_t u16;
   uint8_t u8;
+  size_t i = 0;
 
   for(;;)
     {
@@ -431,11 +431,15 @@ static int extract_soa(scamper_host_rr_t *rr, uint8_t *pktbuf, size_t pktlen,
     return -1;
   off += i;
 
+  /* need to have at least 20 bytes for the next five fields */
+  if(pktlen - off < 20)
+    return -1;
   serial = bytes_ntohl(pktbuf+off); off += 4;
   refresh = bytes_ntohl(pktbuf+off); off += 4;
   retry = bytes_ntohl(pktbuf+off); off += 4;
   expire = bytes_ntohl(pktbuf+off); off += 4;
   minimum = bytes_ntohl(pktbuf+off); off += 4;
+  assert(off <= pktlen);
 
   if((soa = scamper_host_rr_soa_alloc(mname, rname)) == NULL)
     return -1;
@@ -455,6 +459,10 @@ static int extract_mx(scamper_host_rr_t *rr, uint8_t *pktbuf, size_t pktlen,
   scamper_host_rr_mx_t *mx = NULL;
   char exchange[256];
   uint16_t preference;
+
+  /* need to have at least two bytes for preference */
+  if(pktlen - off < 2)
+    return -1;
 
   preference = bytes_ntohs(pktbuf+off); off += 2;
   if(extract_name(exchange, sizeof(exchange), pktbuf, pktlen, off) <= 0)
@@ -654,9 +662,6 @@ static void do_host_read(const int fd, void *param)
     }
 
   slist_free(rr_list); rr_list = NULL;
-
-  scamper_debug(__func__, "received %d bytes, %u %04x %u %u %u %u", len,
-		id, flags, qdcount, ancount, nscount, arcount);
 
   host_stop(task, SCAMPER_HOST_STOP_DONE);
   return;
@@ -918,6 +923,7 @@ scamper_task_t *scamper_do_host_alloctask(void *data, scamper_list_t *list,
 
   if((sig = scamper_task_sig_alloc(SCAMPER_TASK_SIG_TYPE_HOST)) == NULL)
     goto err;
+  sig->sig_host_type = host->qtype;
   sig->sig_host_name = strdup(host->qname);
   if((host->src = scamper_getsrc(host->dst, 0)) == NULL)
     goto err;
@@ -1088,8 +1094,7 @@ void scamper_host_do_free(scamper_host_do_t *hostdo)
  * scamper_host_do_add
  *
  */
-static scamper_host_do_t *scamper_host_do_add(
-  scamper_task_t *task, void *param, void (*cb)(void *,const char *name))
+static scamper_host_do_t *scamper_host_do_add(scamper_task_t *task,void *param)
 {
   scamper_host_do_t *hostdo = NULL;
   host_state_t *state = host_getstate(task);
@@ -1106,7 +1111,6 @@ static scamper_host_do_t *scamper_host_do_add(
     }
 
   hostdo->task = task;
-  hostdo->cb = cb;
   hostdo->param = param;
   if((hostdo->node = dlist_tail_push(state->cbs, hostdo)) == NULL)
     {
@@ -1118,31 +1122,13 @@ static scamper_host_do_t *scamper_host_do_add(
   return hostdo;
 }
 
-/*
- * scamper_do_host_do_ptr
- *
- * do a PTR lookup on the IP address.  the supplied callback will be called
- * when the hostname lookup has completed.
- */
-scamper_host_do_t *scamper_do_host_do_ptr(scamper_addr_t *ip, void *param,
-					  void (*cb)(void *,const char *name))
+static scamper_host_do_t *scamper_do_host_do_host(const char *qname,
+						  uint16_t qtype, void *param)
 {
-  scamper_task_t *task = NULL;
+  scamper_host_do_t *hostdo = NULL;
   scamper_host_t *host = NULL;
-  scamper_task_sig_t sig;
-  char qname[128];
+  scamper_task_t *task = NULL;
 
-  scamper_addr_tostr(ip, qname, sizeof(qname));
-
-  memset(&sig, 0, sizeof(sig));
-  sig.sig_type = SCAMPER_TASK_SIG_TYPE_TX_ND;
-  sig.sig_host_name = qname;
-
-  /* piggy back on existing host task if there is one */
-  if((task = scamper_task_find(&sig)) != NULL)
-    return scamper_host_do_add(task, param, cb);
-
-  /* build a new host task */
   if((host = scamper_host_alloc()) == NULL ||
      (host->qname = strdup(qname)) == NULL)
     {
@@ -1152,7 +1138,7 @@ scamper_host_do_t *scamper_do_host_do_ptr(scamper_addr_t *ip, void *param,
   host->wait = 5000;
   host->retries = 1;
   host->qclass = 1;
-  host->qtype = SCAMPER_HOST_TYPE_PTR;
+  host->qtype = qtype;
   host->dst = scamper_addr_use(default_ns);
 
   if((task = scamper_do_host_alloctask(host, NULL, NULL)) == NULL)
@@ -1177,11 +1163,87 @@ scamper_host_do_t *scamper_do_host_do_ptr(scamper_addr_t *ip, void *param,
       printerror(__func__, "done");
       goto err;
     }
-  return scamper_host_do_add(task, param, cb);
+
+  if((hostdo = scamper_host_do_add(task, param)) == NULL)
+    goto err;
+
+  return hostdo;
 
  err:
   if(host != NULL) scamper_host_free(host);
+  if(task != NULL) scamper_task_free(task);
   return NULL;
+}
+
+/*
+ * scamper_do_host_do_a
+ *
+ * do an A lookup on the name.  the supplied callback will be called when
+ * the hostname lookup has completed.
+ */
+scamper_host_do_t *scamper_do_host_do_a(const char *qname, void *param,
+					scamper_host_do_a_cb_t cb)
+{
+  scamper_task_sig_t sig;
+  scamper_host_do_t *hostdo;
+  scamper_task_t *task;
+
+  memset(&sig, 0, sizeof(sig));
+  sig.sig_type = SCAMPER_TASK_SIG_TYPE_HOST;
+  sig.sig_host_type = SCAMPER_HOST_TYPE_A;
+  sig.sig_host_name = (char *)qname;
+
+  /* piggy back on existing host task if there is one */
+  if((task = scamper_task_find(&sig)) != NULL)
+    {
+      if((hostdo = scamper_host_do_add(task, param)) == NULL)
+	return NULL;
+      hostdo->un.a_cb = cb;
+      return hostdo;
+    }
+
+  hostdo = scamper_do_host_do_host(qname, SCAMPER_HOST_TYPE_A, param);
+  if(hostdo == NULL)
+    return NULL;
+  hostdo->un.a_cb = cb;
+  return hostdo;
+}
+
+/*
+ * scamper_do_host_do_ptr
+ *
+ * do a PTR lookup on the IP address.  the supplied callback will be called
+ * when the hostname lookup has completed.
+ */
+scamper_host_do_t *scamper_do_host_do_ptr(scamper_addr_t *ip, void *param,
+					  scamper_host_do_ptr_cb_t cb)
+{
+  scamper_task_sig_t sig;
+  scamper_host_do_t *hostdo;
+  scamper_task_t *task;
+  char qname[128];
+
+  scamper_addr_tostr(ip, qname, sizeof(qname));
+
+  memset(&sig, 0, sizeof(sig));
+  sig.sig_type = SCAMPER_TASK_SIG_TYPE_HOST;
+  sig.sig_host_type = SCAMPER_HOST_TYPE_PTR;
+  sig.sig_host_name = qname;
+
+  /* piggy back on existing host task if there is one */
+  if((task = scamper_task_find(&sig)) != NULL)
+    {
+      if((hostdo = scamper_host_do_add(task, param)) == NULL)
+	return NULL;
+      hostdo->un.ptr_cb = cb;
+      return hostdo;
+    }
+
+  hostdo = scamper_do_host_do_host(qname, SCAMPER_HOST_TYPE_PTR, param);
+  if(hostdo == NULL)
+    return NULL;
+  hostdo->un.ptr_cb = cb;
+  return hostdo;
 }
 
 void scamper_do_host_free(void *data)
@@ -1253,37 +1315,95 @@ static void do_host_halt(scamper_task_t *task)
   return;
 }
 
-static void do_host_free(scamper_task_t *task)
+static void do_host_ptr_cb(scamper_host_t *host, host_state_t *state)
 {
   scamper_host_do_t *hostdo;
-  scamper_host_t *host = host_getdata(task);
   scamper_host_rr_t *rr;
-  host_state_t *state = host_getstate(task);
   char *name = NULL;
   int i, j;
 
-  if(state != NULL && state->cbs != NULL && host != NULL)
+  for(i=0; i<host->qcount && name == NULL; i++)
     {
-      for(i=0; i<host->qcount && name == NULL; i++)
+      for(j=0; j<host->queries[i]->ancount; j++)
+	{
+	  rr = host->queries[i]->an[j];
+	  if(rr->type == SCAMPER_HOST_TYPE_PTR)
+	    {
+	      name = rr->un.str;
+	      break;
+	    }
+	}
+    }
+
+  while((hostdo = dlist_head_pop(state->cbs)) != NULL)
+    {
+      hostdo->node = NULL;
+      hostdo->un.ptr_cb(hostdo->param, name);
+      free(hostdo);
+    }
+
+  return;
+}
+
+static void do_host_a_cb(scamper_host_t *host, host_state_t *state)
+{
+  scamper_host_do_t *hostdo;
+  scamper_host_rr_t *rr;
+  scamper_addr_t **a = NULL;
+  int ac = 0, i, j, x;
+
+  for(i=0; i<host->qcount; i++)
+    {
+      for(j=0; j<host->queries[i]->ancount; j++)
+	{
+	  rr = host->queries[i]->an[j];
+	  if(rr->type == SCAMPER_HOST_TYPE_A)
+	    ac++;
+	}
+    }
+
+  if(ac > 0 && (a = malloc(sizeof(scamper_addr_t *) * ac)) != NULL)
+    {
+      x = 0;
+      for(i=0; i<host->qcount; i++)
 	{
 	  for(j=0; j<host->queries[i]->ancount; j++)
 	    {
 	      rr = host->queries[i]->an[j];
-	      if(rr->type == SCAMPER_HOST_TYPE_PTR)
-		{
-		  name = rr->un.str;
-		  break;
-		}
+	      if(rr->type == SCAMPER_HOST_TYPE_A)
+		a[x++] = rr->un.addr;
 	    }
 	}
+      assert(x == ac);
+    }
+  else
+    {
+      ac = 0;
+    }
 
-      while((hostdo = dlist_head_pop(state->cbs)) != NULL)
-	{
-	  hostdo->node = NULL;
-	  hostdo->cb(hostdo->param, name);
-	  free(hostdo);
-	}
-      dlist_free(state->cbs);
+  while((hostdo = dlist_head_pop(state->cbs)) != NULL)
+    {
+      hostdo->node = NULL;
+      hostdo->un.a_cb(hostdo->param, a, ac);
+      free(hostdo);
+    }
+
+  if(a != NULL) free(a);
+  return;
+}
+
+static void do_host_free(scamper_task_t *task)
+{
+  scamper_host_t *host = host_getdata(task);
+  host_state_t *state = host_getstate(task);
+
+  if(state != NULL && state->cbs != NULL && host != NULL)
+    {
+      if(host->qtype == SCAMPER_HOST_TYPE_PTR)
+	do_host_ptr_cb(host, state);
+      else if(host->qtype == SCAMPER_HOST_TYPE_A)
+	do_host_a_cb(host, state);
+      dlist_free_cb(state->cbs, free);
       state->cbs = NULL;
     }
 
@@ -1359,15 +1479,48 @@ static int etc_resolv(void)
   return -1;
 }
 
+/*
+ * scamper_do_host_setns
+ *
+ * external hook to change the nameserver
+ */
+int scamper_do_host_setns(const char *nsip)
+{
+  scamper_addr_t *sa;
+  if((sa = scamper_addr_resolve(AF_UNSPEC, nsip)) == NULL)
+    {
+      printerror(__func__, "could not resolve %s", nsip);
+      return -1;
+    }
+
+  if(default_ns != NULL)
+    scamper_addr_free(default_ns);
+  default_ns = sa;
+
+  return 0;
+}
+
+const scamper_addr_t *scamper_do_host_getns(void)
+{
+  return default_ns;
+}
+
 int scamper_do_host_init()
 {
+  const char *nsip = NULL;
+
   host_funcs.probe          = do_host_probe;
   host_funcs.handle_timeout = do_host_handle_timeout;
   host_funcs.write          = do_host_write;
   host_funcs.task_free      = do_host_free;
   host_funcs.halt           = do_host_halt;
 
-  if(etc_resolv() != 0)
+  if((nsip = scamper_option_nameserver_get()) != NULL)
+    {
+      if(scamper_do_host_setns(nsip) != 0)
+	return -1;
+    }
+  else if(etc_resolv() != 0)
     return -1;
 
   if((queries = splaytree_alloc((splaytree_cmp_t)host_id_cmp)) == NULL)

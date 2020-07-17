@@ -21,11 +21,6 @@
  *
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_erosprober.c,v 1.9 2019/09/08 00:34:01 mjl Exp $";
-#endif
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -574,7 +569,7 @@ static int do_method(void)
 
   scamper_addr_tostr(ep->addr, buf, sizeof(buf));
   if((bc = snprintf(cmd, sizeof(cmd), "%s %s\n", command, buf)) < 0 ||
-     bc >= sizeof(cmd))
+     (size_t)bc >= sizeof(cmd))
     {
       fprintf(stderr, "%s: could not form command %s: %s\n", __func__, buf,
 	      strerror(errno));

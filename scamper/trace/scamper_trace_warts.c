@@ -5,10 +5,10 @@
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2014      The Regents of the University of California
  * Copyright (C) 2015      The University of Waikato
- * Copyright (C) 2015-2016 Matthew Luckie
+ * Copyright (C) 2015-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_warts.c,v 1.23 2018/05/03 19:17:08 mjl Exp $
+ * $Id: scamper_trace_warts.c,v 1.27 2020/06/12 22:35:03 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,11 +24,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_trace_warts.c,v 1.23 2018/05/03 19:17:08 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -90,6 +85,7 @@ static const char rcsid[] =
 #define WARTS_TRACE_ADDR_DST       27  /* destination address key */
 #define WARTS_TRACE_USERID         28  /* user id */
 #define WARTS_TRACE_OFFSET         29  /* IP offset to use in fragments */
+#define WARTS_TRACE_ADDR_RTR       30  /* destination address key */
 
 static const warts_var_t trace_vars[] =
 {
@@ -122,6 +118,7 @@ static const warts_var_t trace_vars[] =
   {WARTS_TRACE_ADDR_DST,    -1, -1},
   {WARTS_TRACE_USERID,       4, -1},
   {WARTS_TRACE_OFFSET,       2, -1},
+  {WARTS_TRACE_ADDR_RTR,    -1, -1},
 };
 #define trace_vars_mfb WARTS_VAR_MFB(trace_vars)
 
@@ -274,21 +271,12 @@ static void warts_trace_params(const scamper_trace_t *trace,
       var = &trace_vars[i];
 
       if(var->id == WARTS_TRACE_ADDR_SRC_GID ||
-	 var->id == WARTS_TRACE_ADDR_DST_GID)
+	 var->id == WARTS_TRACE_ADDR_DST_GID ||
+	 (var->id == WARTS_TRACE_USERID && trace->userid == 0) ||
+	 (var->id == WARTS_TRACE_OFFSET && trace->offset == 0) ||
+	 (var->id == WARTS_TRACE_ADDR_RTR && trace->rtr == NULL))
 	{
 	  continue;
-	}
-
-      if(var->id == WARTS_TRACE_USERID)
-	{
-	  if(trace->userid == 0)
-	    continue;
-	}
-
-      if(var->id == WARTS_TRACE_OFFSET)
-	{
-	  if(trace->offset == 0)
-	    continue;
 	}
 
       flag_set(flags, var->id, &max_id);
@@ -301,6 +289,11 @@ static void warts_trace_params(const scamper_trace_t *trace,
       else if(var->id == WARTS_TRACE_ADDR_DST)
 	{
 	  *params_len += warts_addr_size(table, trace->dst);
+	  continue;
+	}
+      else if(var->id == WARTS_TRACE_ADDR_RTR)
+	{
+	  *params_len += warts_addr_size_static(trace->rtr);
 	  continue;
 	}
 
@@ -346,6 +339,7 @@ static int warts_trace_params_read(scamper_trace_t *trace,warts_state_t *state,
     {&trace->dst,         (wpr_t)extract_addr,     table},
     {&trace->userid,      (wpr_t)extract_uint32,   NULL},
     {&trace->offset,      (wpr_t)extract_uint16,   NULL},
+    {&trace->rtr,         (wpr_t)extract_addr_static, NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
   int rc;
@@ -400,6 +394,7 @@ static int warts_trace_params_write(const scamper_trace_t *trace,
     {trace->dst,          (wpw_t)insert_addr,    table},
     {&trace->userid,      (wpw_t)insert_uint32,  NULL},
     {&trace->offset,      (wpw_t)insert_uint16,  NULL},
+    {trace->rtr,          (wpw_t)insert_addr_static, NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);
 
@@ -477,7 +472,8 @@ static void warts_trace_hop_params(const scamper_trace_t *trace,
 {
   scamper_icmpext_t *ie;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(flags, 0, hop_vars_mfb);
@@ -723,7 +719,8 @@ static void warts_trace_pmtud_n_params(const scamper_trace_pmtud_t *pmtud,
   const scamper_trace_hop_t *hop;
   const warts_var_t *var;
   uint16_t u16;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   memset(state->flags, 0, pmtud_n_vars_mfb);
   state->params_len = 0;
@@ -822,7 +819,8 @@ static void warts_trace_pmtud_params(const scamper_trace_t *trace,
 {
   const scamper_trace_pmtud_t *pmtud = trace->pmtud;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, pmtud_vars_mfb);
@@ -1054,7 +1052,8 @@ static int warts_trace_dtree_params(const scamper_file_t *sf,
 {
   scamper_trace_dtree_t *dtree = trace->dtree;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, trace_dtree_vars_mfb);

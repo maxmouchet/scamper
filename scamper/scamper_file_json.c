@@ -1,7 +1,7 @@
 /*
  * scamper_file_json.c
  *
- * $Id: scamper_file_json.c,v 1.2 2018/05/08 06:47:19 mjl Exp $
+ * $Id: scamper_file_json.c,v 1.3 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2017 Matthew Luckie
  * Author: Matthew Luckie
@@ -20,11 +20,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_file_json.c,v 1.2 2018/05/08 06:47:19 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

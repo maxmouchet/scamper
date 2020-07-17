@@ -1,7 +1,7 @@
 /*
  * scamper_linepoll
  *
- * $Id: scamper_linepoll.c,v 1.23 2015/01/16 06:11:50 mjl Exp $
+ * $Id: scamper_linepoll.c,v 1.24 2020/03/17 07:32:16 mjl Exp $
  *
  * this code takes a string chunk and splits it up into lines, calling
  * the callback for each line.  It buffers any partial lines in the
@@ -27,11 +27,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_linepoll.c,v 1.23 2015/01/16 06:11:50 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

@@ -4,9 +4,10 @@
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
+ * Copyright (C) 2020      Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping.c,v 1.35 2019/07/12 23:08:22 mjl Exp $
+ * $Id: scamper_ping.c,v 1.37 2020/04/02 08:46:51 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_ping.c,v 1.35 2019/07/12 23:08:22 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -255,6 +251,7 @@ void scamper_ping_free(scamper_ping_t *ping)
 
   if(ping->dst != NULL) scamper_addr_free(ping->dst);
   if(ping->src != NULL) scamper_addr_free(ping->src);
+  if(ping->rtr != NULL) scamper_addr_free(ping->rtr);
 
   if(ping->cycle != NULL) scamper_cycle_free(ping->cycle);
   if(ping->list != NULL) scamper_list_free(ping->list);

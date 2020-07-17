@@ -27,14 +27,9 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_patricia.c,v 1.4 2019/05/25 09:16:32 mjl Exp $
+ * $Id: mjl_patricia.c,v 1.5 2020/03/17 07:32:15 mjl Exp $
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: mjl_patricia.c,v 1.4 2019/05/25 09:16:32 mjl Exp $";
-#endif
 
 #include <stdlib.h>
 #include <assert.h>

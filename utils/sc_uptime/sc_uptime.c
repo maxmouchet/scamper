@@ -22,11 +22,6 @@
  *
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_uptime.c,v 1.74 2019/09/24 06:29:59 mjl Exp $";
-#endif
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif

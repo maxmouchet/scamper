@@ -1,7 +1,7 @@
 /*
  * scamper_rtsock.h
  *
- * $Id: scamper_rtsock.h,v 1.18 2012/05/08 17:01:11 mjl Exp $
+ * $Id: scamper_rtsock.h,v 1.19 2020/06/10 08:59:15 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
@@ -28,7 +28,7 @@
 int scamper_rtsock_init(void);
 void scamper_rtsock_cleanup(void);
 
-int scamper_rtsock_roundup(size_t len);
+size_t scamper_rtsock_roundup(size_t len);
 
 typedef struct scamper_route scamper_route_t;
 

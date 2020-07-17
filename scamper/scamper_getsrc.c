@@ -1,7 +1,7 @@
 /*
  * scamper_getsrc.c
  *
- * $Id: scamper_getsrc.c,v 1.19 2017/12/03 09:38:26 mjl Exp $
+ * $Id: scamper_getsrc.c,v 1.20 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2005 Matthew Luckie
  * Copyright (C) 2007-2010 The University of Waikato
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_getsrc.c,v 1.19 2017/12/03 09:38:26 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

@@ -1,11 +1,11 @@
 /*
  * scamper_debug.h
  *
- * $Id: scamper_debug.h,v 1.19 2017/12/03 09:38:26 mjl Exp $
+ * $Id: scamper_debug.h,v 1.20 2020/04/08 07:55:51 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2009 The University of Waikato
- * Copyright (C) 2015,2017 Matthew Luckie
+ * Copyright (C) 2015-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -52,6 +52,6 @@ int scamper_debug_open(const char *debugfile);
 void scamper_debug_close(void);
 #endif
 
-void scamper_debug_init(void);
+void scamper_debug_daemon(void);
 
 #endif /* scamper_debug.h */

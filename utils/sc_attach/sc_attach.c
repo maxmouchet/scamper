@@ -6,7 +6,7 @@
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012-2015 Regents of the University of California
- * Copyright (C) 2015-2019 Matthew Luckie
+ * Copyright (C) 2015-2020 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_attach.c,v 1.25 2019/07/12 21:38:23 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -259,7 +254,7 @@ static int check_options(int argc, char *argv[])
 	  break;
 
 	case 'v':
-	  printf("$Id: sc_attach.c,v 1.25 2019/07/12 21:38:23 mjl Exp $\n");
+	  printf("$Id: sc_attach.c,v 1.27 2020/03/17 07:32:16 mjl Exp $\n");
 	  return -1;
 
 	case '?':
@@ -354,13 +349,13 @@ static int command_new(char *line, void *param)
  */
 static int do_outfile(void)
 {
-  mode_t mode   = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
-  int    flags  = O_WRONLY | O_CREAT | O_TRUNC;
+  mode_t mode  = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
+  int fd_flags = O_WRONLY | O_CREAT | O_TRUNC;
 
   if(outfile_name == NULL)
     return 0;
 
-  if((outfile_fd = open(outfile_name, flags, mode)) == -1)
+  if((outfile_fd = open(outfile_name, fd_flags, mode)) == -1)
     {
       fprintf(stderr, "%s: could not open %s: %s\n",
 	      __func__, outfile_name, strerror(errno));

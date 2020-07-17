@@ -3,12 +3,12 @@
  *
  * the warts file format
  *
- * $Id: scamper_file_warts.c,v 1.254 2019/07/28 09:24:53 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.257 2020/06/12 22:35:03 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2015-2016 Matthew Luckie
+ * Copyright (C) 2015-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,11 +25,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_file_warts.c,v 1.254 2019/07/28 09:24:53 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -212,6 +207,11 @@ static void warts_addr_free(warts_addr_t *wa)
   return;
 }
 
+uint32_t warts_addr_size_static(scamper_addr_t *addr)
+{
+  return 1 + 1 + scamper_addr_size(addr);
+}
+
 uint32_t warts_addr_size(warts_addrtable_t *t, scamper_addr_t *addr)
 {
   warts_addr_t fm, *wa;
@@ -269,6 +269,17 @@ void warts_addrtable_free(warts_addrtable_t *table)
       free(table->addrs);
     }
   free(table);
+  return;
+}
+
+void insert_addr_static(uint8_t *buf, uint32_t *off, const uint32_t len,
+			const scamper_addr_t *addr, void *param)
+{
+  size_t size = scamper_addr_size(addr);
+  buf[(*off)++] = (uint8_t)size;
+  buf[(*off)++] = addr->type;
+  memcpy(&buf[*off], addr->addr, size);
+  *off += size;
   return;
 }
 
@@ -416,6 +427,27 @@ void insert_rtt(uint8_t *buf, uint32_t *off, const uint32_t len,
   return;
 }
 
+int extract_addr_static(const uint8_t *buf, uint32_t *off, const uint32_t len,
+			scamper_addr_t **out, void *param)
+{
+  scamper_addr_t *addr;
+  uint8_t size, type;
+
+  /* make sure the offset is sane */
+  if(*off >= len || len - *off < 2)
+    return -1;
+
+  size = buf[(*off)++];
+  type = buf[(*off)++];
+  if(type == 0 || size == 0 || type > SCAMPER_ADDR_TYPE_MAX ||
+     (addr = scamper_addr_alloc(type, &buf[*off])) == NULL)
+    return -1;
+
+  *out = addr;
+  *off += size;
+  return 0;
+}
+
 int extract_addr(const uint8_t *buf, uint32_t *off,
 		 const uint32_t len, scamper_addr_t **out, void *param)
 {
@@ -449,7 +481,7 @@ int extract_addr(const uint8_t *buf, uint32_t *off,
 
       /* load the index value out, and sanity check it */
       memcpy(&u32, &buf[*off], 4); u32 = ntohl(u32);
-      if(u32 >= table->addrc)
+      if(table->addrc < 0 || u32 >= (uint32_t)table->addrc)
 	return -1;
 
       *out = scamper_addr_use(table->addrs[u32]->addr);
@@ -1146,7 +1178,8 @@ void warts_list_params(const scamper_list_t *list, uint8_t *flags,
 		       uint16_t *flags_len, uint16_t *params_len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags */
   memset(flags, 0, list_vars_mfb);
@@ -1452,7 +1485,8 @@ void warts_cycle_params(const scamper_cycle_t *cycle, uint8_t *flags,
 			       uint16_t *flags_len, uint16_t *params_len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags, reset max_id */
   memset(flags, 0, cycle_vars_mfb);

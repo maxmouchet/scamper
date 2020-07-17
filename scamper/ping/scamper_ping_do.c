@@ -1,12 +1,12 @@
 /*
  * scamper_do_ping.c
  *
- * $Id: scamper_ping_do.c,v 1.154 2019/07/28 08:42:37 mjl Exp $
+ * $Id: scamper_ping_do.c,v 1.156 2020/04/02 08:46:51 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2016-2019 Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_ping_do.c,v 1.154 2019/07/28 08:42:37 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -147,6 +142,7 @@ typedef struct ping_state
 #define PING_OPT_REPLYPMTU    18
 #define PING_OPT_PROBETIMEOUT 19
 #define PING_OPT_PROBETCPACK  20
+#define PING_OPT_RTRADDR      21
 
 #define PING_MODE_PROBE       0
 #define PING_MODE_PTB         1
@@ -165,6 +161,7 @@ static const scamper_option_in_t opts[] = {
   {'O', NULL, PING_OPT_OPTION,       SCAMPER_OPTION_TYPE_STR},
   {'p', NULL, PING_OPT_PATTERN,      SCAMPER_OPTION_TYPE_STR},
   {'P', NULL, PING_OPT_PROBEMETHOD,  SCAMPER_OPTION_TYPE_STR},
+  {'r', NULL, PING_OPT_RTRADDR,      SCAMPER_OPTION_TYPE_STR},
   {'R', NULL, PING_OPT_RECORDROUTE,  SCAMPER_OPTION_TYPE_NULL},
   {'s', NULL, PING_OPT_PROBESIZE,    SCAMPER_OPTION_TYPE_NUM},
   {'S', NULL, PING_OPT_SRCADDR,      SCAMPER_OPTION_TYPE_STR},
@@ -182,8 +179,8 @@ const char *scamper_do_ping_usage(void)
     "ping [-R] [-A tcp-ack] [-B payload] [-c count] [-C icmp-sum]\n"
     "     [-d dport] [-F sport] [-i wait-probe] [-m ttl] [-M pmtu]\n"
     "     [-o reply-count] [-O option] [-p pattern] [-P method]\n"
-    "     [-U userid] [-s probe-size] [-S srcaddr]\n"
-    "     [-T timestamp-option] [-W timeout] [-z tos]";
+    "     [-r rtraddr] [-s probe-size] [-S srcaddr]\n"
+    "     [-T timestamp-option] [-U userid] [-W timeout] [-z tos]";
 }
 
 static scamper_ping_t *ping_getdata(const scamper_task_t *task)
@@ -1004,6 +1001,7 @@ static void do_ping_probe(scamper_task_t *task)
   memset(&probe, 0, sizeof(probe));
   probe.pr_ip_src = ping->src;
   probe.pr_ip_dst = ping->dst;
+  probe.pr_rtr = ping->rtr;
 
   if(ping->flags & SCAMPER_PING_FLAG_DL)
     probe.pr_flags |= SCAMPER_PROBE_FLAG_DL;
@@ -1388,6 +1386,7 @@ static int ping_arg_param_validate(int optid, char *param, long long *out)
 
     case PING_OPT_SRCADDR:
     case PING_OPT_TIMESTAMP:
+    case PING_OPT_RTRADDR:
       break;
 
     /* the tos bits to include in each probe */
@@ -1524,6 +1523,7 @@ void *scamper_do_ping_alloc(char *str)
   uint32_t  userid        = 0;
   uint32_t  flags         = 0;
   char     *src           = NULL;
+  char     *rtr           = NULL;
   char     *tsopt         = NULL;
   int       af;
 
@@ -1656,6 +1656,12 @@ void *scamper_do_ping_alloc(char *str)
 
 	case PING_OPT_USERID:
 	  userid = (uint32_t)tmp;
+	  break;
+
+	case PING_OPT_RTRADDR:
+	  if(rtr != NULL)
+	    goto err;
+	  rtr = opt->str;
 	  break;
 
 	case PING_OPT_RECORDROUTE:
@@ -1812,14 +1818,17 @@ void *scamper_do_ping_alloc(char *str)
       goto err;
     }
 
-  if(src != NULL)
-    {
-      af = scamper_addr_af(ping->dst);
-      if(af != AF_INET && af != AF_INET6)
-	goto err;
-      if((ping->src = scamper_addr_resolve(af, src)) == NULL)
-	goto err;
-    }
+  af = scamper_addr_af(ping->dst);
+  if(af != AF_INET && af != AF_INET6)
+    goto err;
+
+  if(src != NULL &&
+     (ping->src = scamper_addr_resolve(af, src)) == NULL)
+    goto err;
+
+  if(rtr != NULL &&
+     (ping->rtr = scamper_addr_resolve(af, rtr)) == NULL)
+    goto err;
 
   /* copy in the data bytes, if any */
   if(pattern_len != 0)

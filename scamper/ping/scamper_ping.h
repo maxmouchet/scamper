@@ -1,11 +1,12 @@
 /*
  * scamper_ping.h
  *
- * $Id: scamper_ping.h,v 1.51 2019/07/12 23:08:22 mjl Exp $
+ * $Id: scamper_ping.h,v 1.52 2020/04/02 08:46:51 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
+ * Copyright (C) 2020      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -241,6 +242,7 @@ typedef struct scamper_ping
   /* source and destination addresses of the ping */
   scamper_addr_t        *src;          /* -S option */
   scamper_addr_t        *dst;
+  scamper_addr_t        *rtr;          /* -r option */
 
   /* when the ping started */
   struct timeval         start;

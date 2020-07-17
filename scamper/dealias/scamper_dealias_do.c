@@ -1,12 +1,12 @@
 /*
  * scamper_do_dealias.c
  *
- * $Id: scamper_dealias_do.c,v 1.162 2019/07/12 23:37:57 mjl Exp $
+ * $Id: scamper_dealias_do.c,v 1.167 2020/06/12 23:26:53 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012-2013 Matthew Luckie
  * Copyright (C) 2012-2014 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This code implements alias resolution techniques published by others
@@ -27,11 +27,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_dealias_do.c,v 1.162 2019/07/12 23:37:57 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -155,7 +150,7 @@ typedef struct dealias_probe
 typedef struct dealias_prefixscan
 {
   scamper_dealias_probedef_t  *probedefs;
-  int                          probedefc;
+  uint32_t                     probedefc;
   scamper_addr_t             **aaliases;
   int                          aaliasc;
   int                          attempt;
@@ -254,7 +249,7 @@ static void dealias_state_assert(const dealias_state_t *state)
   for(i=0; i<state->pdc; i++)
     {
       assert(state->pds[i] != NULL);
-      assert(state->pds[i]->def->id == i);
+      assert(state->pds[i]->def->id == (uint32_t)i);
     }
   return;
 }
@@ -1972,7 +1967,8 @@ static int dealias_state_probe(dealias_state_t *state,
 static void dealias_prefixscan_free(void *data)
 {
   dealias_prefixscan_t *pfstate = data;
-  int j;
+  uint32_t j;
+  int k;
 
   if(pfstate->probedefs != NULL)
     {
@@ -1987,9 +1983,9 @@ static void dealias_prefixscan_free(void *data)
     }
   if(pfstate->aaliases != NULL)
     {
-      for(j=0; j<pfstate->aaliasc; j++)
-	if(pfstate->aaliases[j] != NULL)
-	  scamper_addr_free(pfstate->aaliases[j]);
+      for(k=0; k<pfstate->aaliasc; k++)
+	if(pfstate->aaliases[k] != NULL)
+	  scamper_addr_free(pfstate->aaliases[k]);
       free(pfstate->aaliases);
     }
   free(pfstate);
@@ -2442,7 +2438,7 @@ static int dealias_probedef_args(scamper_dealias_probedef_t *def, char *str)
   uint16_t dport = 33435;
   uint16_t sport = scamper_sport_default();
   uint16_t csum  = 0;
-  uint16_t opts  = 0;
+  uint16_t options = 0;
   uint8_t  ttl   = 255;
   uint8_t  tos   = 0;
   uint16_t size  = 0;
@@ -2461,13 +2457,13 @@ static int dealias_probedef_args(scamper_dealias_probedef_t *def, char *str)
   for(opt = opts_out; opt != NULL; opt = opt->next)
     {
       /* check for an option being used multiple times */
-      if(opts & (1<<(opt->id-1)))
+      if(options & (1<<(opt->id-1)))
 	{
 	  scamper_debug(__func__,"option %d specified multiple times",opt->id);
 	  goto err;
 	}
 
-      opts |= (1 << (opt->id-1));
+      options |= (1 << (opt->id-1));
 
       switch(opt->id)
 	{
@@ -2579,13 +2575,13 @@ static int dealias_probedef_args(scamper_dealias_probedef_t *def, char *str)
   def->mtu  = mtu;
 
   /* if no protocol type is defined, choose UDP */
-  if((opts & (1<<(DEALIAS_PROBEDEF_OPT_PROTO-1))) == 0)
+  if((options & (1<<(DEALIAS_PROBEDEF_OPT_PROTO-1))) == 0)
     def->method = SCAMPER_DEALIAS_PROBEDEF_METHOD_UDP;
 
   if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_UDP(def))
     {
       /* don't provide the choice of the checksum value in a UDP probe */
-      if(opts & (1<<(DEALIAS_PROBEDEF_OPT_CSUM-1)))
+      if(options & (1<<(DEALIAS_PROBEDEF_OPT_CSUM-1)))
 	{
 	  scamper_debug(__func__, "csum option not permitted for udp");
 	  goto err;
@@ -2597,12 +2593,12 @@ static int dealias_probedef_args(scamper_dealias_probedef_t *def, char *str)
   else if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_ICMP(def))
     {
       /* ICMP probes don't have source or destination ports */
-      if(opts & (1<<(DEALIAS_PROBEDEF_OPT_SPORT-1)))
+      if(options & (1<<(DEALIAS_PROBEDEF_OPT_SPORT-1)))
 	{
 	  scamper_debug(__func__, "sport option not permitted for icmp");
 	  goto err;
 	}
-      if(opts & (1<<(DEALIAS_PROBEDEF_OPT_DPORT-1)))
+      if(options & (1<<(DEALIAS_PROBEDEF_OPT_DPORT-1)))
 	{
 	  scamper_debug(__func__, "dport option not permitted for icmp");
 	  goto err;
@@ -2613,7 +2609,7 @@ static int dealias_probedef_args(scamper_dealias_probedef_t *def, char *str)
   else if(SCAMPER_DEALIAS_PROBEDEF_PROTO_IS_TCP(def))
     {
       /* don't provide the choice of the checksum value in a TCP probe */
-      if(opts & (1<<(DEALIAS_PROBEDEF_OPT_CSUM-1)))
+      if(options & (1<<(DEALIAS_PROBEDEF_OPT_CSUM-1)))
 	{
 	  scamper_debug(__func__, "csum option not permitted for tcp");
 	  goto err;
@@ -3474,11 +3470,9 @@ scamper_task_t *scamper_do_dealias_alloctask(void *data,
       state->probedefc = pfxscan->probedefc;
 
       pfstate = state->methodstate;
-      for(i=0; i<pfstate->probedefc; i++)
-	{
-	  if(probedef2sig(task, &pfstate->probedefs[i]) != 0)
-	    goto err;
-	}
+      for(p=0; p<pfstate->probedefc; p++)
+	if(probedef2sig(task, &pfstate->probedefs[p]) != 0)
+	  goto err;
     }
   else if(dealias->method == SCAMPER_DEALIAS_METHOD_BUMP)
     {

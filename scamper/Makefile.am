@@ -1,4 +1,4 @@
-# $Id: Makefile.am,v 1.34 2019/07/28 09:24:53 mjl Exp $
+# $Id: Makefile.am,v 1.35 2020/07/16 21:29:32 mjl Exp $
 
 AUTOMAKE_OPTIONS = subdir-objects
 
@@ -8,7 +8,7 @@ bin_PROGRAMS = scamper
 
 lib_LTLIBRARIES = libscamperfile.la
 
-libscamperfile_la_LDFLAGS = -version-info 0:0:0
+libscamperfile_la_LDFLAGS = -version-info 1:0:0
 
 libscamperfile_la_SOURCES = \
 	../mjl_splaytree.c \

@@ -2,7 +2,7 @@
  * sc_prefixscan : scamper driver to collect evidence of pt2pt links
  *                 using the prefixscan method
  *
- * $Id: sc_prefixscan.c,v 1.8 2019/07/12 21:40:13 mjl Exp $
+ * $Id: sc_prefixscan.c,v 1.9 2020/03/17 07:32:17 mjl Exp $
  *
  * Copyright (C) 2011, 2016 The University of Waikato
  * Copyright (C) 2019       Matthew Luckie
@@ -21,10 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_prefixscan.c,v 1.8 2019/07/12 21:40:13 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

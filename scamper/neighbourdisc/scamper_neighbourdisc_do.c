@@ -1,7 +1,7 @@
 /*
  * scamper_do_neighbourdisc
  *
- * $Id: scamper_neighbourdisc_do.c,v 1.39 2019/08/04 05:08:40 mjl Exp $
+ * $Id: scamper_neighbourdisc_do.c,v 1.40 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2009-2011 Matthew Luckie
  *
@@ -19,11 +19,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_neighbourdisc_do.c,v 1.39 2019/08/04 05:08:40 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

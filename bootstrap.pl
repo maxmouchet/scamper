@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# $Id: bootstrap.pl,v 1.17 2019/11/02 03:26:19 mjl Exp $
+# $Id: bootstrap.pl,v 1.19 2020/03/28 20:23:01 mjl Exp $
 #
 # script to ship scamper with generated configure script ready to build.
 
@@ -22,9 +22,9 @@ my %ax;
 $ax{"ax_check_openssl.m4"} =
     "b00c3b76d7d5ea81f77d75c0f0284b0a960480c1eed1b8a7edc63ba988ba988b";
 $ax{"ax_gcc_builtin.m4"} =
-    "97d45c8aae9fd6a9def8b8a02d76258f5a428c0f490715dba32fad13222013cc";
+    "7e18d94162058a321464fe0f8f565b9a009ef6bd4d584ec6e8591b20b902c78b";
 $ax{"ax_pthread.m4"} =
-    "262e63f192063234c32a9ae372d5245cd935dc1ed223b237d3c5510e4c0e4549";
+    "07683234bc076455749e88c83ffb9f186afd7246565340cb601060dd59f90766";
 
 sub which($)
 {
@@ -70,7 +70,7 @@ foreach my $ax (sort keys %ax)
     if(!-r "m4/$ax")
     {
 	my $cmd;
-	foreach my $util ("fetch", "wget", "ftp")
+	foreach my $util ("fetch", "wget", "ftp", "curl")
 	{
 	    my $fetch = which($util);
 	    next if(!defined($fetch));
@@ -88,6 +88,11 @@ foreach my $ax (sort keys %ax)
 	    elsif($util eq "ftp")
 	    {
 		$cmd = "ftp -o m4/$ax \"$ax_url/$ax\"";
+		last;
+	    }
+	    elsif($util eq "curl")
+	    {
+		$cmd = "curl -o m4/$ax \"$ax_url/$ax\"";
 		last;
 	    }
 	}

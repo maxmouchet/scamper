@@ -1,10 +1,11 @@
 /*
  * sc_radargun : scamper driver to do radargun-style probing.
  *
- * $Id: sc_radargun.c,v 1.9 2019/07/12 21:40:13 mjl Exp $
+ * $Id: sc_radargun.c,v 1.12 2020/06/09 08:25:23 mjl Exp $
  *
  * Copyright (C) 2014 The Regents of the University of California
  * Copyright (C) 2016 The University of Waikato
+ * Copyright (C) 2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * Radargun technique authored by:
@@ -29,11 +30,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_radargun.c,v 1.9 2019/07/12 21:40:13 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -170,7 +166,7 @@ static FILE                  *logfile       = NULL;
 static int                    dump_id       = 0;
 static char                  *dump_file     = NULL;
 static const sc_dump_t        dump_funcs[]  = {
-  {NULL, NULL, NULL},
+  {NULL, NULL, NULL, NULL, NULL},
   {"dump inferred aliases", NULL, NULL, process_dealias_1, NULL},
   {"dump interface classifications", init_2, process_ping_2, NULL, finish_2},
 };
@@ -1543,10 +1539,10 @@ static int do_addrfile(void)
 static int do_files(void)
 {
   mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
-  int flags = O_WRONLY | O_CREAT | O_TRUNC;
+  int fd_flags = O_WRONLY | O_CREAT | O_TRUNC;
   int pair[2];
 
-  if((outfile_fd = open(outfile_name, flags, mode)) == -1)
+  if((outfile_fd = open(outfile_name, fd_flags, mode)) == -1)
     return -1;
 
   /*
@@ -1633,7 +1629,7 @@ static int sc_ipid_tx_cmp(const void *va, const void *vb)
 }
 
 static int inseq(scamper_dealias_radargun_t *rg,
-		 sc_ipid_t *pts, int ptc, int limit)
+		 sc_ipid_t *pts, int ptc, uint32_t limit)
 {
   int i;
 

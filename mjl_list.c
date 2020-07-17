@@ -1,8 +1,12 @@
 /*
  * linked list routines
- * by Matthew Luckie
  *
- * Copyright (C) 2004-2019 Matthew Luckie. All rights reserved.
+ * $Id: mjl_list.c,v 1.78 2020/03/17 07:32:15 mjl Exp $
+ *
+ *        Matthew Luckie
+ *        mjl@luckie.org.nz
+ *
+ * Copyright (C) 2004-2020 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,11 +30,6 @@
  * SUCH DAMAGE.
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: mjl_list.c,v 1.76 2019/05/22 06:12:57 mjl Exp $";
-#endif
 
 #include <stdlib.h>
 #include <assert.h>
@@ -1029,23 +1028,27 @@ void dlist_concat(dlist_t *first, dlist_t *second)
 
 void dlist_node_head_push(dlist_t *list, dlist_node_t *node)
 {
+  dlist_onremove_t onremove = NULL;
+
   assert(list != NULL);
   assert(list->lock == 0);
   assert(node != NULL);
   dlist_assert(list);
 
+  if(node->list != NULL)
+    onremove = node->list->onremove;
+
   /* eject the node from whatever list it is currently on */
   dlist_node_eject(node->list, node);
 
+  if(onremove != NULL)
+    onremove(node->item);
+
   /* if we don't have a head node, we don't have a tail node set either */
   if(list->head == NULL)
-    {
-      list->tail = node;
-    }
+    list->tail = node;
   else
-    {
-      list->head->prev = node;
-    }
+    list->head->prev = node;
 
   /* the current head node will be second on the list */
   node->next = list->head;
@@ -1061,23 +1064,27 @@ void dlist_node_head_push(dlist_t *list, dlist_node_t *node)
 
 void dlist_node_tail_push(dlist_t *list, dlist_node_t *node)
 {
+  dlist_onremove_t onremove = NULL;
+
   assert(list != NULL);
   assert(list->lock == 0);
   assert(node != NULL);
   dlist_assert(list);
 
+  if(node->list != NULL)
+    onremove = node->list->onremove;
+
   /* eject the node from whatever list it is currently on */
   dlist_node_eject(node->list, node);
 
+  if(onremove != NULL)
+    onremove(node->item);
+
   /* if we don't have a tail node, we don't have a head node set either */
   if(list->tail == NULL)
-    {
-      list->head = node;
-    }
+    list->head = node;
   else
-    {
-      list->tail->next = node;
-    }
+    list->tail->next = node;
 
   /* the current tail node will be second to last on the list */
   node->prev = list->tail;
@@ -1102,15 +1109,31 @@ dlist_node_t *dlist_head_push_dm(dlist_t *list, void *item,
 
   assert(list != NULL);
   assert(list->lock == 0);
+  dlist_assert(list);
 
 #ifndef DMALLOC
-  if((node = dlist_node(item, NULL, NULL)) != NULL)
+  node = dlist_node(item, NULL, NULL);
 #else
-  if((node = dlist_node(item, NULL, NULL, file, line)) != NULL)
+  node = dlist_node(item, NULL, NULL, file, line);
 #endif
-    {
-      dlist_node_head_push(list, node);
-    }
+
+  if(node == NULL)
+    return NULL;
+
+  /* if we don't have a head node, we don't have a tail node set either */
+  if(list->head == NULL)
+    list->tail = node;
+  else
+    list->head->prev = node;
+
+  /* the current head node will be second on the list */
+  node->next = list->head;
+  node->list = list;
+
+  list->head = node;
+  list->length++;
+
+  dlist_assert(list);
 
   return node;
 }
@@ -1126,15 +1149,31 @@ dlist_node_t *dlist_tail_push_dm(dlist_t *list, void *item,
 
   assert(list != NULL);
   assert(list->lock == 0);
+  dlist_assert(list);
 
 #ifndef DMALLOC
-  if((node = dlist_node(item, NULL, NULL)) != NULL)
+  node = dlist_node(item, NULL, NULL);
 #else
-  if((node = dlist_node(item, NULL, NULL, file, line)) != NULL)
+  node = dlist_node(item, NULL, NULL, file, line);
 #endif
-    {
-      dlist_node_tail_push(list, node);
-    }
+
+  if(node == NULL)
+    return NULL;
+
+  /* if we don't have a tail node, we don't have a head node set either */
+  if(list->tail == NULL)
+    list->head = node;
+  else
+    list->tail->next = node;
+
+  /* the current tail node will be second to last on the list */
+  node->prev = list->tail;
+  node->list = list;
+
+  list->tail = node;
+  list->length++;
+
+  dlist_assert(list);
 
   return node;
 }

@@ -1,14 +1,14 @@
 /*
  * scamper_do_trace.c
  *
- * $Id: scamper_trace_do.c,v 1.306 2019/07/12 23:37:57 mjl Exp $
+ * $Id: scamper_trace_do.c,v 1.310 2020/06/12 23:29:25 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2008      Alistair King
  * Copyright (C) 2012-2015 The Regents of the University of California
  * Copyright (C) 2015      The University of Waikato
- * Copyright (C) 2019      Matthew Luckie
+ * Copyright (C) 2019-2020 Matthew Luckie
  *
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
@@ -27,11 +27,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_trace_do.c,v 1.306 2019/07/12 23:37:57 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -226,6 +221,7 @@ typedef struct trace_state
   uint16_t             alloc_hops;    /* number of trace->hops allocated */
   uint16_t             payload_size;  /* how much payload to include */
   uint16_t             header_size;   /* size of headers */
+  uint8_t              flags;         /* flags for keeping state */
   struct timeval       next_tx;       /* when the next probe should be tx */
 
 #ifndef _WIN32
@@ -264,6 +260,8 @@ typedef struct trace_state
   int                  lssc;
   trace_lss_t         *lsst;
 } trace_state_t;
+
+#define TRACE_STATE_FLAG_ICMP_ID 0x01
 
 static const uint8_t MODE_RTSOCK           = 0;
 static const uint8_t MODE_DLHDR            = 1;
@@ -2305,8 +2303,16 @@ static void do_trace_handle_icmp(scamper_task_t *task, scamper_icmp_resp_t *ir)
 	  else if(ir->ir_af == AF_INET6) proto = IPPROTO_ICMPV6;
 	  else return;
 
+	  if((ir->ir_flags & SCAMPER_ICMP_RESP_FLAG_RXERR) != 0 &&
+	     (state->flags & TRACE_STATE_FLAG_ICMP_ID) == 0)
+	    {
+	      trace->sport = ir->ir_inner_icmp_id;
+	      state->flags |= TRACE_STATE_FLAG_ICMP_ID;
+	    }
+
 	  if(ir->ir_inner_ip_proto != proto          ||
-	     ir->ir_inner_icmp_id  != trace->sport   ||
+	     ((ir->ir_flags & SCAMPER_ICMP_RESP_FLAG_RXERR) == 0 &&
+	      ir->ir_inner_icmp_id != trace->sport) ||
 	     ir->ir_inner_icmp_seq >= state->id_next)
 	    {
 	      return;
@@ -2316,7 +2322,15 @@ static void do_trace_handle_icmp(scamper_task_t *task, scamper_icmp_resp_t *ir)
 	}
       else
 	{
-	  if(ir->ir_icmp_id  != trace->sport ||
+	  if((ir->ir_flags & SCAMPER_ICMP_RESP_FLAG_RXERR) != 0 &&
+	     (state->flags & TRACE_STATE_FLAG_ICMP_ID) == 0)
+	    {
+	      trace->sport = ir->ir_inner_icmp_id;
+	      state->flags |= TRACE_STATE_FLAG_ICMP_ID;
+	    }
+
+	  if(((ir->ir_flags & SCAMPER_ICMP_RESP_FLAG_RXERR) == 0 &&
+	      ir->ir_icmp_id != trace->sport) ||
 	     ir->ir_icmp_seq >= state->id_next)
 	    {
 	      return;
@@ -3497,45 +3511,64 @@ static int trace_state_alloc(scamper_task_t *task)
 	state->mode = MODE_TRACE;
     }
 
-  if(trace->dst->type == SCAMPER_ADDR_TYPE_IPV4)
-    state->icmp = scamper_fd_icmp4(trace->src->addr);
-  else if(trace->dst->type == SCAMPER_ADDR_TYPE_IPV6)
-    state->icmp = scamper_fd_icmp6(trace->src->addr);
+  if(scamper_option_icmp_rxerr() != 0)
+    {
+      trace->flags |= SCAMPER_TRACE_FLAG_RXERR;
+      if(SCAMPER_TRACE_TYPE_IS_ICMP(trace) &&
+	 SCAMPER_ADDR_TYPE_IS_IPV4(trace->dst))
+	{
+	  state->icmp = scamper_fd_icmp4_err(trace->src->addr);
+	  state->probe = scamper_fd_icmp4_err(trace->src->addr);
+	}
+      else if(SCAMPER_TRACE_TYPE_IS_UDP(trace) &&
+	      SCAMPER_ADDR_TYPE_IS_IPV6(trace->dst))
+	{
+	  state->icmp = scamper_fd_udp6_err(trace->src->addr, trace->sport);
+	  state->probe = scamper_fd_udp6_err(trace->src->addr, trace->sport);
+	}
+      if(state->icmp == NULL || state->probe == NULL)
+	goto err;
+    }
   else
-    goto err;
-  if(state->icmp == NULL)
-    goto err;
+    {
+      if(trace->dst->type == SCAMPER_ADDR_TYPE_IPV4)
+	state->icmp = scamper_fd_icmp4(trace->src->addr);
+      else if(trace->dst->type == SCAMPER_ADDR_TYPE_IPV6)
+	state->icmp = scamper_fd_icmp6(trace->src->addr);
+      if(state->icmp == NULL)
+	goto err;
 
-  if(SCAMPER_TRACE_TYPE_IS_TCP(trace))
-    {
-      if(trace->dst->type == SCAMPER_ADDR_TYPE_IPV4)
+      if(SCAMPER_TRACE_TYPE_IS_TCP(trace))
 	{
-	  state->probe = scamper_fd_tcp4(NULL, trace->sport);
-	  if(scamper_option_rawtcp() != 0 &&
-	     (state->raw = scamper_fd_ip4()) == NULL)
-	    goto err;
+	  if(trace->dst->type == SCAMPER_ADDR_TYPE_IPV4)
+	    {
+	      state->probe = scamper_fd_tcp4(NULL, trace->sport);
+	      if(scamper_option_rawtcp() != 0 &&
+		 (state->raw = scamper_fd_ip4()) == NULL)
+		goto err;
+	    }
+	  else
+	    {
+	      state->probe = scamper_fd_tcp6(NULL, trace->sport);
+	    }
 	}
-      else
+      else if(SCAMPER_TRACE_TYPE_IS_ICMP(trace))
 	{
-	  state->probe = scamper_fd_tcp6(NULL, trace->sport);
+	  if(trace->dst->type == SCAMPER_ADDR_TYPE_IPV4)
+	    state->probe = scamper_fd_icmp4(trace->src->addr);
+	  else
+	    state->probe = scamper_fd_icmp6(trace->src->addr);
 	}
+      else if(SCAMPER_TRACE_TYPE_IS_UDP(trace))
+	{
+	  if(trace->dst->type == SCAMPER_ADDR_TYPE_IPV4)
+	    state->probe = scamper_fd_udp4(trace->src->addr, trace->sport);
+	  else
+	    state->probe = scamper_fd_udp6(trace->src->addr, trace->sport);
+	}
+      if(state->probe == NULL)
+	goto err;
     }
-  else if(SCAMPER_TRACE_TYPE_IS_ICMP(trace))
-    {
-      if(trace->dst->type == SCAMPER_ADDR_TYPE_IPV4)
-	state->probe = scamper_fd_icmp4(trace->src->addr);
-      else
-	state->probe = scamper_fd_icmp6(trace->src->addr);
-    }
-  else if(SCAMPER_TRACE_TYPE_IS_UDP(trace))
-    {
-      if(trace->dst->type == SCAMPER_ADDR_TYPE_IPV4)
-	state->probe = scamper_fd_udp4(trace->src->addr, trace->sport);
-      else
-	state->probe = scamper_fd_udp6(trace->src->addr, trace->sport);
-    }
-  if(state->probe == NULL)
-    goto err;
 
   scamper_task_setstate(task, state);
   return 0;
@@ -3704,6 +3737,9 @@ static void do_trace_probe(scamper_task_t *task)
       probe.pr_ip_proto = IPPROTO_ICMPV6;
   else
     goto err;
+
+  if(trace->flags & SCAMPER_TRACE_FLAG_RXERR)
+    probe.pr_flags |= SCAMPER_PROBE_FLAG_RXERR;
 
   /*
    * while the paris traceroute paper says that the payload of the
