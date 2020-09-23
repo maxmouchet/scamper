@@ -1,7 +1,7 @@
 /*
  * scamper_debug.c
  *
- * $Id: scamper_debug.c,v 1.38 2020/04/08 07:55:51 mjl Exp $
+ * $Id: scamper_debug.c,v 1.39 2020/08/01 20:59:22 mjl Exp $
  *
  * routines to reduce the impact of debugging cruft in scamper's code.
  *
@@ -39,9 +39,7 @@
 static FILE *debugfile = NULL;
 #endif
 
-#ifdef HAVE_DAEMON
 static int isdaemon = 0;
-#endif
 
 static char *timestamp_str(char *buf, const size_t len)
 {
@@ -225,7 +223,6 @@ void scamper_debug(const char *func, const char *format, ...)
 
   assert(format != NULL);
 
-#ifdef HAVE_DAEMON
   if(isdaemon != 0)
     {
 #ifndef WITHOUT_DEBUGFILE
@@ -235,7 +232,6 @@ void scamper_debug(const char *func, const char *format, ...)
       return;
 #endif
     }
-#endif
 
   va_start(ap, format);
   vsnprintf(message, sizeof(message), format, ap);
@@ -246,13 +242,11 @@ void scamper_debug(const char *func, const char *format, ...)
   if(func != NULL) snprintf(fs, sizeof(fs), "%s: ", func);
   else             fs[0] = '\0';
 
-#ifndef NDEBUG
   if(isdaemon == 0)
     {
       fprintf(stderr, "%s %s%s\n", ts, fs, message);
       fflush(stderr);
     }
-#endif
 
 #ifndef WITHOUT_DEBUGFILE
   if(debugfile != NULL)

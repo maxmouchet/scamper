@@ -1,12 +1,14 @@
 /*
  * sc_hoiho: Holistic Orthography of Internet Hostname Observations
  *
- * $Id: sc_hoiho.c,v 1.7 2020/03/11 21:45:45 mjl Exp $
+ * $Id: sc_hoiho.c,v 1.9 2020/09/21 21:22:43 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@luckie.org.nz
  *
- * Copyright (C) 2017-2019 The University of Waikato
+ *         Marianne Fletcher added code to infer ASN regexes.
+ *
+ * Copyright (C) 2017-2020 The University of Waikato
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -64,9 +66,9 @@ typedef struct sc_domain
   char           *domain;  /* the domain */
   char           *escape;  /* escaped domain suffix */
   size_t          escapel; /* length of escaped suffix */
-  slist_t        *routers; /* training routers with an iface in the domain */
-  slist_t        *appl;    /* other interfaces we can't train from */
-  slist_t        *regexes; /* set of regexes built */
+  slist_t        *routers; /* of sc_routerdom_t: training routers with an iface in the domain */
+  slist_t        *appl;    /* of sc_routerdom_t: other interfaces we can't train from */
+  slist_t        *regexes; /* of sc_regex_t: set of regexes built */
   uint32_t        ifacec;  /* number of training interfaces in the domain */
   uint32_t        tpmlen;  /* how wide the tp_mask variable is */
   uint32_t        rtmlen;  /* how wide a mask for router tags should be */
@@ -94,6 +96,7 @@ struct sc_regex
   sc_regexn_t   **regexes; /* the regexes */
   int             regexc;  /* number of regexes */
   int             score;   /* regex specificity score */
+  uint8_t         class;   /* classification */
   sc_domain_t    *dom;     /* the domain this regex is for */
 
   /* these parameters are set during evaluation */
@@ -125,12 +128,17 @@ typedef struct sc_iface
   sc_router_t    *rtr;     /* backpointer to router */
   int16_t         ip_s;    /* possible start of IP address */
   int16_t         ip_e;    /* possible end of IP address */
+  int16_t         as_s;    /* possible start of ASN */
+  int16_t         as_e;    /* possible end of ASN */
+  uint8_t         flags;   /* flags for the interface */
 } sc_iface_t;
 
 struct sc_router
 {
   sc_iface_t    **ifaces;  /* interfaces inferred to be part of the router */
   int             ifacec;  /* number of interfaces involved */
+  uint32_t        id;      /* node id */
+  uint32_t        asn;     /* inferred owner */
 };
 
 typedef struct sc_ifacedom
@@ -158,10 +166,17 @@ typedef struct sc_routername
   int             matchc;  /* largest frequency */
 } sc_routername_t;
 
+typedef struct sc_routerload
+{
+  slist_t        *ifaces;  /* list of sc_iface_t */
+  uint32_t        asn;     /* inferred owner */
+  uint32_t        id;      /* node id */
+} sc_routerload_t;
+
 typedef struct sc_ifaceinf
 {
   sc_ifacedom_t  *ifd;     /* interface from training */
-  sc_css_t       *css;     /* inferred name */
+  sc_css_t       *css;     /* inferred name/ASN */
   sc_routerinf_t *ri;      /* pointer to inferred router */
   int             rtrc;    /* how many interfaces from training routers */
   int             regex;   /* regex id */
@@ -177,6 +192,12 @@ struct sc_routerinf
   int             ip;      /* name includes IP string */
 };
 
+typedef struct sc_as2org
+{
+  uint32_t        asn;     /* ASN */
+  uint32_t        org;     /* org id */
+} sc_as2org_t;
+
 struct sc_regex_fn
 {
   sc_regex_t     *re;      /* regex that we might improve on */
@@ -187,8 +208,8 @@ struct sc_regex_fn
 
 typedef struct sc_domain_fn
 {
-  slist_t        *work;    /* current working list of regexes */
-  slist_t        *base;    /* base list of all regexes in sc_regex_fn_t */
+  slist_t        *work;    /* of sc_regex_fn: current working list of regexes */
+  slist_t        *base;    /* of sc_regex_fn: base list of all regexes in sc_regex_fn_t */
   int             done;    /* whether or not we're done with this domain */
 } sc_domain_fn_t;
 
@@ -204,6 +225,15 @@ typedef struct sc_ptrc
   int             c;
 } sc_ptrc_t;
 
+typedef struct sc_uint32c
+{
+  uint32_t        num;
+  int             c;
+} sc_uint32c_t;
+
+/**
+ * Represents a string representation of an IPv6 IP address.
+ */
 typedef struct sc_charpos
 {
   char            c[32];   /* the character for the nibble */
@@ -281,6 +311,23 @@ typedef struct sc_rebuild_p
   size_t       len;
 } sc_rebuild_p_t;
 
+typedef struct sc_remerge
+{
+  sc_css_t    *css;  /* the part of the regex in common among all regexes */
+  slist_t     *list; /* list of strings that differ between the regexes */
+  int          opt;  /* whether or not the diff strings are required */
+} sc_remerge_t;
+
+typedef struct sc_reasn
+{
+  splaytree_t  *org;
+  splaytree_t  *inf;
+  splaytree_t **infs;
+  splaytree_t  *ext;
+  splaytree_t **exts;
+  uint32_t      sib;
+} sc_reasn_t;
+
 typedef struct sc_segscore
 {
   char *seg;
@@ -294,9 +341,29 @@ typedef struct sc_dump
   int  (*func)(void);
 } sc_dump_t;
 
+#define BIT_TYPE_SKIP        0
+#define BIT_TYPE_CAPTURE     1
+#define BIT_TYPE_SKIP_LIT    2
+#define BIT_TYPE_CAPTURE_LIT 3
+#define BIT_TYPE_IP          4
+#define BIT_TYPE_ASN         5
+
+#define BIT_TYPE_MIN         0
+#define BIT_TYPE_MAX         5
+
+#define IPV4_REPR_CHARS		12
+
+#define SC_IFACE_FLAG_AS_ED1 0x01
+
+#define RE_CLASS_POOR      0
+#define RE_CLASS_GOOD      1
+#define RE_CLASS_PROM      2
+#define RE_CLASS_SINGLE    3
+
 static int dump_1(void);
 static int dump_2(void);
 static int dump_3(void);
+static int dump_4(void);
 
 typedef size_t (*sc_regex_build_t)(const char *,           /* name */
 				   const sc_rebuild_p_t *, /* build params */
@@ -304,14 +371,18 @@ typedef size_t (*sc_regex_build_t)(const char *,           /* name */
 				   int *,                  /* score */
 				   int *);                 /* name offset */
 
-static slist_t         *router_list  = NULL;
 static char            *router_file  = NULL;
 static char            *suffix_file  = NULL;
 static sc_suffix_t     *suffix_root  = NULL;
-static splaytree_t     *domain_tree  = NULL;
-static slist_t         *domain_list  = NULL;
+static splaytree_t     *domain_tree  = NULL;    /* of sc_domain_t */
+static slist_t         *domain_list  = NULL;    /* of sc_domain_t */
+static slist_t         *router_list  = NULL;    /* of sc_router_t */
 static char            *domain_eval  = NULL;
 static const char      *regex_eval   = NULL;
+static char            *sibling_file = NULL;
+static sc_as2org_t    **siblings     = NULL;
+static int              siblingc     = 0;
+static uint32_t         sibling_id   = 1;
 static int              refine_sets  = 1;
 static int              refine_ip    = 1;
 static int              refine_fp    = 1;
@@ -319,14 +390,22 @@ static int              refine_fne   = 1;
 static int              refine_fnu   = 1;
 static int              refine_tp    = 1;
 static int              refine_class = 1;
+static int              refine_merge = 1;
 static int              thin_same    = 1;
 static int              thin_matchc  = 1;
 static int              thin_mask    = 1;
 static int              do_debug     = 0;
 static int              do_ri        = 0;
 static int              do_appl      = 0;
+static int              do_showclass = 0;
+static int              do_show      = 0;
 static int              do_jit       = 1;
 static int              do_json      = 0;
+static int              do_learnalias = 0;
+static int              do_learnasn  = 0;
+static int              do_loadonly  = 0;
+static int              do_ed1       = 1;
+static int              do_ip        = 1;
 static int              ip_v         = 4;
 static long             threadc      = -1;
 static threadpool_t    *tp           = NULL;
@@ -334,8 +413,9 @@ static long             dump_id      = 1;
 static const sc_dump_t  dump_funcs[] = {
   {NULL, NULL, NULL},
   {"dump working set of regexes", "working-set", dump_1},
-  {"apply best regex to routers", "routers", dump_2},
+  {"apply best regexes to routers", "routers", dump_2},
   {"dump best regex for each domain", "best-regex", dump_3},
+  {"apply best regexes to interfaces", "interfaces", dump_4},
 };
 static int              dump_funcc = sizeof(dump_funcs) / sizeof(sc_dump_t);
 
@@ -345,6 +425,7 @@ static int              dump_funcc = sizeof(dump_funcs) / sizeof(sc_dump_t);
 #define OPT_REGEX     0x0008
 #define OPT_OPTION    0x0010
 #define OPT_IPV6      0x0020
+#define OPT_SIBLINGS  0x0080
 
 static void usage(uint32_t opts)
 {
@@ -352,7 +433,7 @@ static void usage(uint32_t opts)
 
   fprintf(stderr,
 	  "usage: sc_hoiho [-6] [-d dumpid] [-D domain] [-O options]\n"
-	  "                [-r regex] [-t threadc]\n"
+	  "                [-r regex] [-S siblings] [-t threadc]\n"
 	  "                <public-suffix-list> <router-file>\n");
 
   if(opts == 0)
@@ -385,6 +466,11 @@ static void usage(uint32_t opts)
       fprintf(stderr, "           application: show outcome of regexes\n");
       fprintf(stderr, "           debug: output debugging information\n");
       fprintf(stderr, "           json: output inferences in json format\n");
+      fprintf(stderr, "           learnasn: learn when hostnames embed ASN\n");
+      fprintf(stderr, "           learnalias: learn when hostnames embed names\n");
+      fprintf(stderr, "           loadonly: stop after loading data\n");
+      fprintf(stderr, "           noed1: skip ASNs w edit distance of one\n");
+      fprintf(stderr, "           noip: do not infer embedded IP literals\n");
       fprintf(stderr, "           nojit: do not use PCRE JIT complication\n");
       fprintf(stderr, "           norefine: do not refine regexes\n");
       fprintf(stderr, "           norefine-tp: do not do TP refinement\n");
@@ -407,10 +493,14 @@ static void usage(uint32_t opts)
       fprintf(stderr, "           nothin-same: do not thin equivalent regexes\n");
       fprintf(stderr, "           thin-same: thin equivalent regexes\n");
       fprintf(stderr, "           randindex: compute the Rand Index metric\n");
+      fprintf(stderr, "           show-class: only show classified names\n");
+      fprintf(stderr, "           show-good: only show good conventions\n");
     }
 
   if(opts & OPT_REGEX)
     fprintf(stderr, "       -r: the regex (or file of regexes) to apply\n");
+  if(opts & OPT_SIBLINGS)
+    fprintf(stderr, "       -S: siblings file\n");
   if(opts & OPT_THREADC)
     fprintf(stderr, "       -t: the number of threads to use\n");
 
@@ -419,7 +509,7 @@ static void usage(uint32_t opts)
 
 static int check_options(int argc, char *argv[])
 {
-  char *opts = "6d:D:O:r:t:?";
+  char *opts = "6d:D:O:r:S:t:?";
   char *opt_threadc = NULL, *opt_dumpid = NULL;
   struct stat sb;
   long lo;
@@ -451,6 +541,7 @@ static int check_options(int argc, char *argv[])
 	      refine_tp = 0;
 	      refine_fnu = 0;
 	      refine_class = 0;
+	      refine_merge = 0;
 	    }
 	  else if(strcasecmp(optarg, "norefine-ip") == 0)
 	    refine_ip = 0;
@@ -480,6 +571,10 @@ static int check_options(int argc, char *argv[])
 	    refine_class = 0;
 	  else if(strcasecmp(optarg, "refine-class") == 0)
 	    refine_class = 1;
+	  else if(strcasecmp(optarg, "norefine-merge") == 0)
+	    refine_merge = 0;
+	  else if(strcasecmp(optarg, "refine-merge") == 0)
+	    refine_merge = 1;
 	  else if(strcasecmp(optarg, "nothin") == 0)
 	    {
 	      thin_matchc = 0;
@@ -504,10 +599,29 @@ static int check_options(int argc, char *argv[])
 	    do_appl = 1;
 	  else if(strcasecmp(optarg, "debug") == 0)
 	    do_debug = 1;
+	  else if(strcasecmp(optarg, "noed1") == 0)
+	    do_ed1 = 0;
+	  else if(strcasecmp(optarg, "noip") == 0)
+	    do_ip = 0;
 	  else if(strcasecmp(optarg, "nojit") == 0)
 	    do_jit = 0;
 	  else if(strcasecmp(optarg, "json") == 0)
 	    do_json = 1;
+	  else if(strcasecmp(optarg, "learnasn") == 0)
+	    do_learnasn = 1;
+	  else if(strcasecmp(optarg, "learnalias") == 0)
+	    do_learnalias = 1;
+	  else if(strcasecmp(optarg, "loadonly") == 0)
+	    do_loadonly = 1;
+	  else if(strcasecmp(optarg, "show-class") == 0)
+	    do_showclass = 1;
+	  else if(strcasecmp(optarg, "show-good") == 0)
+	    do_show |= (1 << RE_CLASS_GOOD);
+	  else if(strcasecmp(optarg, "show-prom") == 0 ||
+		  strcasecmp(optarg, "show-promising") == 0)
+	    do_show |= (1 << RE_CLASS_PROM);
+	  else if(strcasecmp(optarg, "show-poor") == 0)
+	    do_show |= (1 << RE_CLASS_POOR);
 	  else
 	    {
 	      usage(0);
@@ -517,6 +631,10 @@ static int check_options(int argc, char *argv[])
 
 	case 'r':
 	  regex_eval = optarg;
+	  break;
+
+	case 'S':
+	  sibling_file = optarg;
 	  break;
 
 	case 't':
@@ -595,6 +713,9 @@ static int check_options(int argc, char *argv[])
       threadc = lo;
     }
 
+  if(do_learnalias == 0 && do_learnasn == 0)
+    do_learnalias = 1;
+
   suffix_file = argv[optind + 0];
   router_file = argv[optind + 1];
   return 0;
@@ -605,6 +726,47 @@ static int ptrcmp(const void *a, const void *b)
   if(a < b) return -1;
   if(a > b) return  1;
   return 0;
+}
+
+static int sc_uint32c_num_cmp(const sc_uint32c_t *a, const sc_uint32c_t *b)
+{
+  if(a->num < b->num) return -1;
+  if(a->num > b->num) return  1;
+  return 0;
+}
+
+static int sc_uint32c_c_cmp(const sc_uint32c_t *a, const sc_uint32c_t *b)
+{
+  if(a->c > b->c) return -1;
+  if(a->c < b->c) return  1;
+  return 0;
+}
+
+static sc_uint32c_t *sc_uint32c_get(splaytree_t *tree, uint32_t num)
+{
+  sc_uint32c_t *ptr, fm;
+  fm.num = num;
+  if((ptr = splaytree_find(tree, &fm)) != NULL)
+    return ptr;
+  if((ptr = malloc(sizeof(sc_uint32c_t))) == NULL)
+    return NULL;
+  ptr->num = num;
+  ptr->c = 0;
+  if(splaytree_insert(tree, ptr) == NULL)
+    {
+      free(ptr);
+      return NULL;
+    }
+  return ptr;
+}
+
+static int tree_mincount(splaytree_t *a, splaytree_t *b)
+{
+  int ac, bc;
+  ac = splaytree_count(a);
+  bc = splaytree_count(b);
+  if(ac <= bc) return ac;
+  return bc;
 }
 
 static int slist_to_dlist(void *entry, void *ptr)
@@ -637,6 +799,8 @@ static int tree_to_dlist(void *ptr, void *entry)
 
 static void json_print(const char *str)
 {
+  if(str == NULL)
+    return;
   while(*str != '\0')
     {
       if(*str == '\\')
@@ -693,6 +857,22 @@ static sc_ptrc_t *sc_ptrc_get(splaytree_t *tree, void *ptr)
  err:
   if(ptrc != NULL) free(ptrc);
   return NULL;
+}
+
+static int sc_as2org_cmp(const sc_as2org_t *a, const sc_as2org_t *b)
+{
+  if(a->asn < b->asn) return -1;
+  if(a->asn > b->asn) return  1;
+  return 0;
+}
+
+static sc_as2org_t *sc_as2org_find(uint32_t asn)
+{
+  sc_as2org_t fm;
+  if(siblings == NULL)
+    return NULL;
+  fm.asn = asn;
+  return array_find((void **)siblings,siblingc,&fm,(array_cmp_t)sc_as2org_cmp);
 }
 
 static int char_within(const char *name, int l, int r, char c)
@@ -809,8 +989,8 @@ static int hex_toascii(char *buf, size_t len, const char *str)
 
 static int overlap(int a, int b, int x, int y)
 {
-  if((a < x && y < b) || (a < x && b > x && b < y) ||
-     (x < a && y > a && y < b) || (a >= x && y >= b))
+  if((a <= x && y <= b) || (a >= x && y >= b) ||
+     (a < x && b >= x) || (x < a && y >= a))
     return 1;
   return 0;
 }
@@ -820,6 +1000,8 @@ static int pt_to_bits_trip(slist_t *list, int m, int x, int y)
   int *trip = NULL;
 
   assert(x <= y);
+  assert(m >= BIT_TYPE_MIN);
+  assert(m <= BIT_TYPE_MAX);
 
   if((trip = malloc(sizeof(int) * 3)) == NULL ||
      slist_tail_push(list, trip) == NULL)
@@ -832,6 +1014,87 @@ static int pt_to_bits_trip(slist_t *list, int m, int x, int y)
  err:
   if(trip != NULL) free(trip);
   return -1;
+}
+
+static int pt_xor(const char *str, size_t len,
+		  int *m, int mc, int **outn, int *outc)
+{
+  int i, x = 0, *n = NULL, nc = 0;
+
+  if(m[0] > 0) nc += 2;
+  if(m[mc-1] + 1 < len) nc += 2;
+
+  for(i=0; i<mc-2; i+=2)
+    if(m[i+1] + 1 < m[i+2])
+      nc += 2;
+
+  if(nc == 0)
+    goto done;
+
+  if((n = malloc(sizeof(int) * nc)) == NULL)
+    return -1;
+
+  if(m[0] > 0)
+    {
+      n[x++] = 0;
+      n[x++] = m[0] - 1;
+    }
+
+  for(i=0; i<mc-2; i+=2)
+    {
+      if(m[i+1] + 1 < m[i+2])
+	{
+	  n[x++] = m[i+1] + 1;
+	  n[x++] = m[i+2] - 1;
+	}
+    }
+
+  if(m[mc-1] + 1 < len)
+    {
+      n[x++] = m[mc-1] + 1;
+      n[x++] = len - 1;
+    }
+
+  assert(x == nc);
+
+ done:
+  *outn = n;
+  *outc = nc;
+  return 0;
+}
+
+static void pt_s_flatten(slist_t *list, int *out, int *outc)
+{
+  sc_lcs_pt_t *pt;
+  slist_node_t *sn;
+  int i = 0;
+
+  for(sn=slist_head_node(list); sn != NULL; sn=slist_node_next(sn))
+    {
+      pt = slist_node_item(sn);
+      out[i++] = pt->S_start;
+      out[i++] = pt->S_end;
+    }
+  *outc = i;
+
+  return;
+}
+
+static void pt_t_flatten(slist_t *list, int *out, int *outc)
+{
+  sc_lcs_pt_t *pt;
+  slist_node_t *sn;
+  int i = 0;
+
+  for(sn=slist_head_node(list); sn != NULL; sn=slist_node_next(sn))
+    {
+      pt = slist_node_item(sn);
+      out[i++] = pt->T_start;
+      out[i++] = pt->T_end;
+    }
+  *outc = i;
+
+  return;
 }
 
 /*
@@ -856,14 +1119,14 @@ static int pt_to_bits_lit(const char *s, int *l, int lc, int **out, int *bitc)
       k = l[0]-1;
       while(isalnum(s[k]) == 0 && k > 0)
 	k--;
-      if(pt_to_bits_trip(list, 0, 0, k) != 0)
+      if(pt_to_bits_trip(list, BIT_TYPE_SKIP, 0, k) != 0)
 	goto done;
     }
 
   for(i=0; i<lc; i+=2)
     {
       /* literal portion */
-      if(pt_to_bits_trip(list, 2, l[i], l[i+1]) != 0)
+      if(pt_to_bits_trip(list, BIT_TYPE_SKIP_LIT, l[i], l[i+1]) != 0)
 	goto done;
 
       /* open the next skip portion */
@@ -889,7 +1152,7 @@ static int pt_to_bits_lit(const char *s, int *l, int lc, int **out, int *bitc)
 		k++;
 	    }
 
-	  if(pt_to_bits_trip(list, 0, j, k) != 0)
+	  if(pt_to_bits_trip(list, BIT_TYPE_SKIP, j, k) != 0)
 	    goto done;
 	}
     }
@@ -939,7 +1202,7 @@ static int pt_to_bits_ip(const sc_ifacedom_t *ifd, int *l, int lc,
   if(ip_s != 0 && lc != 0 && l[0] != 0)
     {
       k = (ip_s < l[0] ? ip_s : l[0]);
-      if(pt_to_bits_trip(list, 0, 0, k-1) != 0)
+      if(pt_to_bits_trip(list, BIT_TYPE_SKIP, 0, k-1) != 0)
 	goto done;
       j = k;
     }
@@ -949,7 +1212,7 @@ static int pt_to_bits_ip(const sc_ifacedom_t *ifd, int *l, int lc,
       /* IP match */
       if(j == ip_s)
 	{
-	  if(pt_to_bits_trip(list, 4, ip_s, ip_e) != 0)
+	  if(pt_to_bits_trip(list, BIT_TYPE_IP, ip_s, ip_e) != 0)
 	    goto done;
 	  j = ip_e + 1;
 	  continue;
@@ -961,7 +1224,7 @@ static int pt_to_bits_ip(const sc_ifacedom_t *ifd, int *l, int lc,
 	  break;
       if(i != lc)
 	{
-	  if(pt_to_bits_trip(list, 2, l[i], l[i+1]) != 0)
+	  if(pt_to_bits_trip(list, BIT_TYPE_SKIP_LIT, l[i], l[i+1]) != 0)
 	    goto done;
 	  j = l[i+1] + 1;
 	  continue;
@@ -989,7 +1252,7 @@ static int pt_to_bits_ip(const sc_ifacedom_t *ifd, int *l, int lc,
       x = k;
       while(isalnum(ifd->label[x]) == 0 && x >= j)
 	x--;
-      if(x >= j && pt_to_bits_trip(list, 0, j, x) != 0)
+      if(x >= j && pt_to_bits_trip(list, BIT_TYPE_SKIP, j, x) != 0)
 	goto done;
       j = k + 1;
     }
@@ -1005,7 +1268,7 @@ static int pt_to_bits_ip(const sc_ifacedom_t *ifd, int *l, int lc,
       free(trip);
     }
 
-  if(do_debug != 0 && threadc == 1)
+  if(do_debug != 0 && threadc <= 1)
     {
       printf("%s %d | %d %d", ifd->label, (int)ifd->len, ip_s, ip_e);
       if(lc > 0)
@@ -1081,33 +1344,129 @@ static int pt_overlap(int *X, int Xc, int *L, int Lc)
     {
       for(l=0; l<Lc; l+=2)
 	{
-	  /* X 13 25, L 25 25: L contained within X */
-	  if(X[x] <= L[l] && L[l+1] <= X[x+1])
-	    return 1;
-
-	  /* X 13 25, L 12 25: X contained within L */
-	  if(X[x] >= L[l] && L[l+1] >= X[x+1])
-	    return 1;
-
-	  /*
-	   * right of X overlaps with left of L
-	   * X 12 13, L 13 14
-	   * X 12 14, L 13 15
-	   */
-	  if(X[x] < L[l] && X[x+1] >= L[l]) /* && X[x+1] <= L[l+1])*/
-	    return 1;
-
-	  /*
-	   * left of X overlaps with right of L
-	   * L 12 13, X 13 14
-	   * L 12 14, X 13 15
-	   */
-	  if(L[l] < X[x] && L[l+1] >= X[x]) /* && L[l+1] <= X[x+1]) */
+	  if(overlap(X[x], X[x+1], L[l], L[l+1]) != 0)
 	    return 1;
 	}
     }
 
   return 0;
+}
+
+/*
+ * pt_to_bits_asn
+ *
+ * Convert the ASN pattern found in the string into a capture pattern.
+ * Use "skip literal" to skip strings surrounding the ASN (such
+ * as the common prefix "as").
+ */
+static int pt_to_bits_asn(const sc_ifacedom_t *ifd, int *l, int lc,
+			  int **out, int *bitc)
+{
+  slist_t *list = NULL; /* list contains triples */
+  int i, j, k, x;
+  int as_s = ifd->iface->as_s;
+  int as_e = ifd->iface->as_e;
+  int *trip, *bits = NULL;
+  int rc = -1;
+
+  if((list = slist_alloc()) == NULL)
+    goto done;
+
+  j = 0;
+
+  /* if the first match doesn't begin at the start of the string */
+  if(as_s != 0 && lc != 0 && l[0] != 0)
+    {
+      k = (as_s < l[0] ? as_s : l[0]);
+      if(pt_to_bits_trip(list, BIT_TYPE_SKIP, 0, k-1) != 0)
+	goto done;
+      j = k;
+    }
+
+  while(j < ifd->len)
+    {
+      /* ASN match */
+      if(j == as_s)
+	{
+	  if(pt_to_bits_trip(list, BIT_TYPE_ASN, as_s, as_e) != 0)
+	    goto done;
+	  j = as_e + 1;
+	  continue;
+	}
+
+      /* is there a literal match starting here? */
+      for(i=0; i<lc; i+=2)
+	if(j == l[i])
+	  break;
+      if(i != lc)
+	{
+	  if(pt_to_bits_trip(list, BIT_TYPE_SKIP_LIT, l[i], l[i+1]) != 0)
+	    goto done;
+	  j = l[i+1] + 1;
+	  continue;
+	}
+
+      /* figure out the start of the next literal */
+      for(i=0; i<lc; i+=2)
+	if(j < l[i])
+	  break;
+      if(i != lc)
+	{
+	  if(l[i] < as_s)
+	    k = as_s - 1;
+	  else
+	    k = l[i] - 1;
+	}
+      else if(j < as_s)
+	k = as_s - 1;
+      else
+	k = ifd->len - 1;
+
+      /* skip over punctuation */
+      while(isalnum(ifd->label[j]) == 0 && j < k)
+	j++;
+      x = k;
+      while(isalnum(ifd->label[x]) == 0 && x >= j)
+	x--;
+      if(x >= j && pt_to_bits_trip(list, BIT_TYPE_SKIP, j, x) != 0)
+	goto done;
+      j = k + 1;
+    }
+
+  if((bits = malloc(slist_count(list) * sizeof(int) * 3)) == NULL)
+    goto done;
+  x = 0;
+  while((trip = slist_head_pop(list)) != NULL)
+    {
+      bits[x++] = trip[0];
+      bits[x++] = trip[1];
+      bits[x++] = trip[2];
+      free(trip);
+    }
+
+  if(do_debug != 0 && threadc <= 1)
+    {
+      printf("%s %d | %d %d", ifd->label, (int)ifd->len, as_s, as_e);
+      if(lc > 0)
+	{
+	  printf(" |");
+	  for(i=0; i<lc; i++)
+	    printf(" %d", l[i]);
+	}
+      printf(" |");
+      for(i=0; i<x; i++)
+	printf(" %d", bits[i]);
+      printf("\n");
+    }
+
+  *out = bits; bits = NULL;
+  *bitc = x;
+  rc = 0;
+
+ done:
+  if(list != NULL) slist_free_cb(list, free);
+  if(bits != NULL) free(bits);
+  return rc;
 }
 
 /*
@@ -1137,8 +1496,8 @@ static int pt_overlap(int *X, int Xc, int *L, int Lc)
 static int pt_to_bits(const char *s, int *c, int cc, int *l, int lc,
 		      int **out, int *bitc)
 {
-  slist_t *list = NULL, *list2 = NULL;
-  int i, j, k, x, *trip, *bits = NULL, rc = -1;
+  slist_t *list = NULL, *list2 = NULL; /* list contains triples */
+  int i, j, k, m, x, *trip, *bits = NULL, rc = -1;
 
   if((list = slist_alloc()) == NULL || (list2 = slist_alloc()) == NULL)
     goto done;
@@ -1150,14 +1509,14 @@ static int pt_to_bits(const char *s, int *c, int cc, int *l, int lc,
       k = c[0]-1;
       while(isalnum(s[k]) == 0 && k > 0)
 	k--;
-      if(pt_to_bits_trip(list, 0, 0, k) != 0)
+      if(pt_to_bits_trip(list, BIT_TYPE_SKIP, 0, k) != 0)
 	goto done;
     }
 
   for(i=0; i<cc; i+=2)
     {
       /* capture portion */
-      if(pt_to_bits_trip(list, 1, c[i+0], c[i+1]) != 0)
+      if(pt_to_bits_trip(list, BIT_TYPE_CAPTURE, c[i+0], c[i+1]) != 0)
 	goto done;
 
       /* open the next skip portion, skipping over dashes and dots */
@@ -1181,7 +1540,7 @@ static int pt_to_bits(const char *s, int *c, int cc, int *l, int lc,
 		k++;
 	    }
 
-	  if(pt_to_bits_trip(list, 0, j, k) != 0)
+	  if(pt_to_bits_trip(list, BIT_TYPE_SKIP, j, k) != 0)
 	    goto done;
 	}
     }
@@ -1219,6 +1578,7 @@ static int pt_to_bits(const char *s, int *c, int cc, int *l, int lc,
 	  k = l[i+0]-1;
 	  while(isalnum(s[k]) == 0 && k > trip[1])
 	    k--;
+	  assert(trip[0] == BIT_TYPE_SKIP || trip[0] == BIT_TYPE_CAPTURE);
 	  if(pt_to_bits_trip(list2, trip[0], trip[1], k) != 0)
 	    goto done;
 	}
@@ -1227,7 +1587,12 @@ static int pt_to_bits(const char *s, int *c, int cc, int *l, int lc,
 	{
 	  /* get the right edge of the new literal trip */
 	  k = l[i+1] <= trip[2] ? l[i+1] : trip[2];
-	  if(pt_to_bits_trip(list2, trip[0]+2, l[i+0], k) != 0)
+	  assert(trip[0] == BIT_TYPE_SKIP || trip[0] == BIT_TYPE_CAPTURE);
+	  if(trip[0] == BIT_TYPE_SKIP)
+	    m = BIT_TYPE_SKIP_LIT;
+	  else
+	    m = BIT_TYPE_CAPTURE_LIT;
+	  if(pt_to_bits_trip(list2, m, l[i+0], k) != 0)
 	    goto done;
 	  if(l[i+1] == trip[2])
 	    break;
@@ -1246,6 +1611,7 @@ static int pt_to_bits(const char *s, int *c, int cc, int *l, int lc,
 	    j++;
 
 	  /* non-literal trip */
+	  assert(trip[0] == BIT_TYPE_SKIP || trip[0] == BIT_TYPE_CAPTURE);
 	  if(j <= k && pt_to_bits_trip(list2, trip[0], j, k) != 0)
 	    goto done;
 	  if(k == trip[2])
@@ -1268,7 +1634,7 @@ static int pt_to_bits(const char *s, int *c, int cc, int *l, int lc,
       free(trip);
     }
 
-  if(do_debug != 0 && threadc == 1)
+  if(do_debug != 0 && threadc <= 1)
     {
       printf("%s |", s);
       for(i=0; i<cc; i++)
@@ -1642,15 +2008,93 @@ static int lcs_trim(slist_t *X, const char *S, const char *T)
 }
 
 /*
+ * lcs_asn
+ *
+ * Return a list of sc_lcs_pt_t which contains the longest common substring
+ * that surrounds the ASN between two strings.
+ * param S: First interface to compare.
+ * param T: Second interface to compare.
+ */
+static slist_t *lcs_asn(sc_ifacedom_t *S, sc_ifacedom_t *T)
+{
+  slist_t *L = NULL;
+  int s_start, s_end, t_start, t_end;
+
+  assert(S->iface->as_s >= 0); assert(S->iface->as_e >= 0);
+  assert(T->iface->as_s >= 0); assert(T->iface->as_e >= 0);
+
+  if((L = slist_alloc()) == NULL)
+    goto err;
+
+  if(S->iface->as_s > 0 && T->iface->as_s > 0 &&
+     S->label[S->iface->as_s-1] == T->label[T->iface->as_s-1] &&
+     isalnum(S->label[S->iface->as_s-1]) != 0)
+    {
+      /*
+       * Expand capture before the ASN to see how much of the
+       * structure is shared between the two interfaces, stopping at
+       * the first separator
+       */
+      s_start = s_end = S->iface->as_s - 1;
+      t_start = t_end = T->iface->as_s - 1;
+      while(s_start != 0 && t_start != 0)
+	{
+	  if(S->label[s_start-1] != T->label[t_start-1] ||
+	     isalnum(S->label[s_start-1]) == 0)
+	    break;
+	  s_start--; t_start--;
+	}
+      if(sc_lcs_pt_push(L, s_start, s_end, t_start, t_end) != 0)
+	goto err;
+    }
+
+  if(S->label[S->iface->as_e+1] == T->label[T->iface->as_e+1] &&
+     isalnum(S->label[S->iface->as_e+1]) != 0)
+    {
+      /*
+       * Expand capture after the ASN to see how much of the
+       * structure is shared between the two interfaces, stopping at
+       * the first separator
+       */
+      s_start = s_end = S->iface->as_e + 1;
+      t_start = t_end = T->iface->as_e + 1;
+      while(S->label[s_end+1] != '\0' && T->label[t_end+1] != '\0')
+	{
+	  if(S->label[s_end+1] != T->label[t_end+1] ||
+	     isalnum(T->label[s_end+1]) == 0)
+	    break;
+	  s_end++; t_end++;
+	}
+      if(sc_lcs_pt_push(L, s_start, s_end, t_start, t_end) != 0)
+	goto err;
+    }
+
+  return L;
+
+ err:
+  if(L != NULL) slist_free_cb(L, (slist_free_t)sc_lcs_pt_free);
+  return NULL;
+}
+
+/*
  * lcs
  *
  * longest common substring, based off wikipedia's description of the
  * dynamic programming solution.
+ *
+ * Return a list of sc_lcs_pt_t which contains the longest common substring(s)
+ * of two strings.
+ * param S: First string to search.
+ * param r: Length of S. If 0, the length will be calculated by strlen.
+ * param T: Second string to search.
+ * param n: Length of T. If 0, the length will be calculated by strlen.
+ * param min_z: May not be 0.
+ * returns:
  */
 static slist_t *lcs(const char *S, int r, const char *T, int n, int min_z)
 {
   slist_t *bits = NULL;
-  slist_t *X = NULL;
+  slist_t *X = NULL; /* of sc_lcs_pt_t */
   sc_lcs_pt_t *pt;
   int *L = NULL;
   int x, z;
@@ -1666,9 +2110,11 @@ static slist_t *lcs(const char *S, int r, const char *T, int n, int min_z)
      (L = malloc(sizeof(int) * (r * n))) == NULL)
     goto done;
 
+  /* Iterate over S */
   x = 0;
   for(i=0; i<r; i++)
     {
+      /* Iterate over T */
       for(j=0; j<n; j++)
 	{
 	  if(S[i] == '\0' || T[j] == '\0')
@@ -1783,6 +2229,91 @@ static slist_t *lcs(const char *S, int r, const char *T, int n, int min_z)
   return X;
 }
 
+static int dlx(int al, int bl, int i, int j)
+{
+  assert(al >= 0); assert(bl >= 0);
+  assert(i >= -1); assert(j >= -1);
+  assert(i <= al); assert(j <= bl);
+  return ((i + 1) * (bl + 2)) + (j + 1);
+}
+
+/*
+ * dled
+ *
+ * implement Damerau-Levenshtein distance calculation, based off wikipedia's
+ * description of the solution.
+ */
+static int dled(const char *a, const char *b)
+{
+  int al, bl, maxdist, i, j, ma[4], k, l, da[256], db, cost, *d = NULL;
+
+  al = strlen(a);
+  bl = strlen(b);
+  maxdist = al + bl;
+  memset(da, 0, sizeof(da));
+
+  if((d = malloc(sizeof(int) * (al + 2) * (bl + 2))) == NULL)
+    return -1;
+  d[dlx(al, bl, -1, -1)] = maxdist;
+  for(i=0; i<=al; i++)
+    {
+      d[dlx(al, bl, i, -1)] = maxdist;
+      d[dlx(al, bl, i, 0)] = i;
+    }
+  for(j=0; j<=bl; j++)
+    {
+      d[dlx(al, bl, -1, j)] = maxdist;
+      d[dlx(al, bl, 0, j)] = j;
+    }
+
+  for(i=1; i<=al; i++)
+    {
+      db = 0;
+      for(j=1; j<=bl; j++)
+	{
+	  k = da[(int)b[j-1]];
+	  l = db;
+
+	  if(a[i-1] == b[j-1])
+	    {
+	      cost = 0;
+	      db = j;
+	    }
+	  else cost = 1;
+
+	  /* substitution */
+	  ma[0] = d[dlx(al, bl, i-1, j-1)] + cost;
+	  /* insertion */
+	  ma[1] = d[dlx(al, bl, i, j-1)] + 1;
+	  /* deletion */
+	  ma[2] = d[dlx(al, bl, i-1, j)] + 1;
+	  /* transposition */
+	  ma[3] = d[dlx(al, bl, k-1, l-1)] + (i-k-1) + 1 + (j-l-1);
+
+	  d[dlx(al, bl, i, j)] = min_array(ma, 4);
+	}
+
+      da[(int)a[i-1]] = i;
+    }
+
+#if 0
+  printf("%s %s\n", a, b);
+  for(i=-1; i<=al; i++)
+    {
+      for(j=-1; j<=bl; j++)
+	{
+	  printf(" %2d", d[dlx(al,bl,i,j)]);
+	}
+      printf("\n");
+    }
+#endif
+
+  k = d[dlx(al, bl, al, bl)];
+  assert(k >= 0);
+  free(d);
+  return k;
+}
+
 static void sc_css_free(sc_css_t *css)
 {
   if(css->css != NULL) free(css->css);
@@ -1805,9 +2336,14 @@ static sc_css_t *sc_css_alloc0(void)
 static sc_css_t *sc_css_alloc(size_t len)
 {
   sc_css_t *css;
-  if((css = malloc(sizeof(sc_css_t))) == NULL ||
-     (css->css = malloc(len)) == NULL)
+  if((css = malloc(sizeof(sc_css_t))) == NULL)
     goto err;
+  if(len > 0)
+    {
+      if((css->css = malloc(len)) == NULL)
+	goto err;
+    }
+  else css->css = NULL;
   css->cssc = 0;
   css->len = 0;
   css->count = 0;
@@ -2056,6 +2592,46 @@ static int sc_css_count_min_cmp(const sc_css_t *a, const sc_css_t *b)
   return 0;
 }
 
+static sc_css_t *sc_css_alloc_xor(const char *str, size_t len, int *m, int mc)
+{
+  sc_css_t *css = NULL;
+  int i, *n = NULL, nc;
+  size_t off = 0;
+
+  if(pt_xor(str, len, m, mc, &n, &nc) != 0)
+    goto err;
+
+  for(i=0; i<nc; i+=2)
+    off += n[i+1] - n[i] + 1 + 1;
+
+  if((css = sc_css_alloc(off)) == NULL)
+    goto err;
+  for(i=0; i<nc; i+=2)
+    {
+      memcpy(css->css+css->len, &str[n[i]], n[i+1] - n[i] + 1);
+      css->len += n[i+1] - n[i] + 1;
+      css->css[css->len++] = '\0';
+      css->cssc++;
+    }
+
+  if(n != NULL) free(n);
+  return css;
+
+ err:
+  if(n != NULL) free(n);
+  if(css != NULL) sc_css_free(css);
+  return NULL;
+}
+
+/*
+ * sc_css_alloc_lcs
+ *
+ * Allocate an sc_css_t struct containing the common substrings for
+ * a pair of strings.
+ * param X: A list of sc_lcs_pt_t.
+ * param S: The label excluding the suffix.
+ * returns: An sc_css_t struct containing the common substrings.
+ */
 static sc_css_t *sc_css_alloc_lcs(const slist_t *X, const char *S)
 {
   sc_css_t *css = NULL;
@@ -2236,6 +2812,51 @@ static sc_css_t *sc_css_matchxor(const sc_css_t *css, const sc_ifacedom_t *ifd)
     }
   if(X_array != NULL) free(X_array);
   return out;
+}
+
+/*
+ * sc_remerge_cmp
+ *
+ */
+static int sc_remerge_cmp(const sc_remerge_t *a, const sc_remerge_t *b)
+{
+  return sc_css_css_cmp(a->css, b->css);
+}
+
+static void sc_remerge_free(sc_remerge_t *rem)
+{
+  if(rem->css != NULL) sc_css_free(rem->css);
+  if(rem->list != NULL) slist_free_cb(rem->list, free);
+  free(rem);
+  return;
+}
+
+static sc_remerge_t *sc_remerge_get(splaytree_t *tree, sc_css_t *css)
+{
+  sc_remerge_t fm, *rem;
+
+  fm.css = css;
+  if((rem = splaytree_find(tree, &fm)) != NULL)
+    return rem;
+
+  if((rem = malloc_zero(sizeof(sc_remerge_t))) == NULL ||
+     (rem->css = sc_css_dup(css)) == NULL ||
+     (rem->list = slist_alloc()) == NULL ||
+     splaytree_insert(tree, rem) == NULL)
+    goto err;
+
+  return rem;
+
+ err:
+  if(rem != NULL) sc_remerge_free(rem);
+  return NULL;
+}
+
+static int sc_regex_show(const sc_regex_t *re)
+{
+  if(do_show == 0 || (do_show & (1 << re->class)) != 0)
+    return 1;
+  return 0;
 }
 
 /*
@@ -3327,6 +3948,7 @@ static sc_suffix_t *sc_suffix_get(const char *suffix)
       end = ptr;
       fm.label = buf;
 
+      /* If the suffix fm is not in the suffix tree insert it. */
       if((s = array_find((void **)ss->suffixes, ss->suffixc, &fm,
 			 (array_cmp_t)sc_suffix_label_cmp)) == NULL)
 	{
@@ -3404,12 +4026,27 @@ static const char *sc_suffix_find(const char *domain)
   return NULL;
 }
 
+static int sc_iface_cmp(const sc_iface_t *a, const sc_iface_t *b)
+{
+  int i;
+  if(a->name != NULL && b->name != NULL)
+    {
+      if((i = strcmp(a->name, b->name)) != 0)
+	return i;
+    }
+  else
+    {
+      if(a->name == NULL) return 1;
+      if(b->name == NULL) return -1;
+    }
+  return scamper_addr_human_cmp(a->addr, b->addr);
+}
+
 static int sc_iface_suffix_cmp(const sc_iface_t *a, const sc_iface_t *b)
 {
   const char *as = sc_suffix_find(a->name);
   const char *bs = sc_suffix_find(b->name);
   int i;
-
   if(as != NULL || bs != NULL)
     {
       if(as == NULL) return 1;
@@ -3417,9 +4054,7 @@ static int sc_iface_suffix_cmp(const sc_iface_t *a, const sc_iface_t *b)
       if((i = strcmp(as, bs)) != 0)
 	return i;
     }
-  if((i = strcmp(a->name, b->name)) != 0)
-    return i;
-  return scamper_addr_human_cmp(a->addr, b->addr);
+  return sc_iface_cmp(a, b);
 }
 
 static int sc_segscore_cmp(const sc_segscore_t *a, const sc_segscore_t *b)
@@ -3495,6 +4130,14 @@ static sc_regexn_t *sc_regexn_alloc(char *str)
   return ren;
 }
 
+/*
+ * sc_regex_findnew
+ *
+ * Return the index of the first regex in the candidate set which is not
+ * in the current set.
+ * The number of regexes in the candidate set must be exactly one more than
+ * the current set.
+ */
 static int sc_regex_findnew(const sc_regex_t *cur, const sc_regex_t *can)
 {
   int i;
@@ -3511,7 +4154,10 @@ static int sc_regex_findnew(const sc_regex_t *cur, const sc_regex_t *can)
 
 static int sc_regex_score_atp(const sc_regex_t *re)
 {
-  return (int)re->tp_c - (int)(re->fp_c + re->fne_c + re->ip_c);
+  assert(do_learnalias != 0 || do_learnasn != 0);
+  if(do_learnalias != 0)
+    return (int)re->tp_c - (int)(re->fp_c + re->fne_c + re->ip_c);
+  return (int)re->tp_c - (int)(re->fp_c + re->fnu_c + re->ip_c);
 }
 
 static float sc_regex_score_tpr(const sc_regex_t *re)
@@ -3558,6 +4204,7 @@ static char *sc_regex_tostr(const sc_regex_t *re, char *buf, size_t len)
 
 static char *sc_regex_score_tostr(const sc_regex_t *re, char *buf, size_t len)
 {
+  static const char *class[] = {"poor", "good", "promising", "single"};
   uint32_t tp, fp;
   size_t off = 0;
 
@@ -3570,8 +4217,12 @@ static char *sc_regex_score_tostr(const sc_regex_t *re, char *buf, size_t len)
   tp = re->tp_c;
   fp = re->fp_c + re->ip_c;
 
-  string_concat(buf, len, &off,	"ppv %.3f, rt %u tp %u fp %u",
-		((float)tp) / (tp+fp), re->rt_c, re->tp_c, re->fp_c);
+  string_concat(buf, len, &off, "ppv %.3f,", ((float)tp) / (tp+fp));
+  if(do_learnalias != 0)
+    string_concat(buf, len, &off, " rt %u", re->rt_c);
+  else if(do_learnasn != 0)
+    string_concat(buf, len, &off, " asn %u", re->rt_c);
+  string_concat(buf, len, &off, " tp %u fp %u", re->tp_c, re->fp_c);
 
   if(re->fne_c > 0)
     string_concat(buf, len, &off, " fne %u", re->fne_c);
@@ -3587,6 +4238,9 @@ static char *sc_regex_score_tostr(const sc_regex_t *re, char *buf, size_t len)
   string_concat(buf, len, &off, " tpr %.1f atp %d",
 		sc_regex_score_tpr(re), sc_regex_score_atp(re));
 
+  assert(re->class >= 0 && re->class <= 3);
+  string_concat(buf, len, &off, " class %s", class[re->class]);
+
   string_concat(buf, len, &off, ", score %u matches %u", re->score, re->matchc);
 
   return buf;
@@ -3594,12 +4248,24 @@ static char *sc_regex_score_tostr(const sc_regex_t *re, char *buf, size_t len)
 
 static char *sc_regex_score_tojson(const sc_regex_t *re, char *buf, size_t len)
 {
+  static const char *class[] = {"poor", "good", "promising", "single"};
   size_t off = 0;
-  string_concat(buf, len, &off,
-		"\"rt\":%d, \"tp\":%d, \"fp\":%d, \"fne\":%d, \"fnu\":%d, "
-		"\"sp\":%d, \"sn\":%d, \"ip\":%d",
-		re->rt_c, re->tp_c, re->fp_c, re->fne_c, re->fnu_c,
-		re->sp_c, re->sn_c, re->ip_c);
+
+  if(do_learnalias != 0)
+    string_concat(buf, len, &off, "\"rt\":%u, ", re->rt_c);
+  else if(do_learnasn != 0)
+    string_concat(buf, len, &off, "\"asn\": %u, ", re->rt_c);
+
+  string_concat(buf, len, &off, "\"tp\":%d, \"fp\":%d, \"ip\":%d, \"fnu\":%d",
+		re->tp_c, re->fp_c, re->ip_c, re->fnu_c);
+
+  if(do_learnalias != 0)
+    string_concat(buf, len, &off, ", \"fne\":%d, \"sp\":%d, \"sn\":%d",
+		  re->fne_c, re->sp_c, re->sn_c);
+
+  assert(re->class >= 0 && re->class <= 3);
+  string_concat(buf, len, &off, ", \"class\":\"%s\"", class[re->class]);
+
   return buf;
 }
 
@@ -3706,10 +4372,23 @@ static int sc_regex_score_thin_sort_cmp(const sc_regex_t *a,const sc_regex_t *b)
   return sc_regex_score_tie_cmp(a, b);
 }
 
-static int sc_regex_score_cmp(const sc_regex_t *a, const sc_regex_t *b)
+static int sc_regex_score_atp_cmp(const sc_regex_t *a, const sc_regex_t *b)
 {
-  if(a->rt_c > b->rt_c) return -1;
-  if(a->rt_c < b->rt_c) return  1;
+  int a_atp, b_atp;
+  a_atp = sc_regex_score_atp(a);
+  b_atp = sc_regex_score_atp(b);
+  if(a_atp > b_atp)
+    return -1;
+  if(a_atp < b_atp)
+    return 1;
+  return 0;
+}
+
+static int sc_regex_score_rank_cmp(const sc_regex_t *a, const sc_regex_t *b)
+{
+  int x;
+  if((x = sc_regex_score_atp_cmp(a, b)) != 0)
+    return x;
   if(a->fp_c < b->fp_c) return -1;
   if(a->fp_c > b->fp_c) return  1;
   if(a->tp_c > b->tp_c) return -1;
@@ -3717,23 +4396,15 @@ static int sc_regex_score_cmp(const sc_regex_t *a, const sc_regex_t *b)
   return sc_regex_score_tie_cmp(a, b);
 }
 
-static int sc_regex_score_rank_cmp(const sc_regex_t *a, const sc_regex_t *b)
+static int sc_regex_score_rank_asn_cmp(const sc_regex_t *a, const sc_regex_t *b)
 {
-  int a_atp, b_atp;
-
-  a_atp = sc_regex_score_atp(a);
-  b_atp = sc_regex_score_atp(b);
-
-  if(a_atp > b_atp)
-    return -1;
-  if(a_atp < b_atp)
-    return 1;
-
-  if(a->fp_c < b->fp_c) return -1;
-  if(a->fp_c > b->fp_c) return  1;
+  int x;
+  if((x = sc_regex_score_atp_cmp(a, b)) != 0)
+    return x;
   if(a->tp_c > b->tp_c) return -1;
   if(a->tp_c < b->tp_c) return  1;
-
+  if(a->fp_c < b->fp_c) return -1;
+  if(a->fp_c > b->fp_c) return  1;
   return sc_regex_score_tie_cmp(a, b);
 }
 
@@ -3770,6 +4441,29 @@ static int sc_regex_score_ip_cmp(const sc_regex_t *a, const sc_regex_t *b)
   if(ac > bc) return -1;
   if(ac < bc) return 1;
   return sc_regex_score_tie_cmp(a, b);
+}
+
+static int sc_regex_css_score_cmp(const sc_regex_t *a, const sc_regex_t *b)
+{
+  if(a->rt_c > b->rt_c) return -1;
+  if(a->rt_c < b->rt_c) return  1;
+  if(a->fp_c < b->fp_c) return -1;
+  if(a->fp_c > b->fp_c) return  1;
+  if(a->tp_c > b->tp_c) return -1;
+  if(a->tp_c < b->tp_c) return  1;
+  return sc_regex_score_tie_cmp(a, b);
+}
+
+static int sc_regex_css_regex_score_cmp(const sc_regex_css_t *a,
+					const sc_regex_css_t *b)
+{
+  return sc_regex_css_score_cmp(a->regex, b->regex);
+}
+
+static int sc_regex_css_work_score_cmp(const sc_regex_css_t *a,
+				       const sc_regex_css_t *b)
+{
+  return sc_regex_css_score_cmp(a->work, b->work);
 }
 
 static void sc_regex_free(sc_regex_t *re)
@@ -4200,6 +4894,23 @@ static void sc_ifaceinf_free(sc_ifaceinf_t *ifi)
   return;
 }
 
+static int sc_ifaceinf_class_cmp(const sc_ifaceinf_t *a,const sc_ifaceinf_t *b)
+{
+  if(a->class == b->class)
+    return sc_iface_cmp(a->ifd->iface, b->ifd->iface);
+  if(a->class == '+') return -1;
+  if(b->class == '+') return  1;
+  if(a->class == '=') return -1;
+  if(b->class == '=') return  1;
+  if(a->class == '!') return -1;
+  if(b->class == '!') return  1;
+  if(a->class == '~') return -1;
+  if(b->class == '~') return  1;
+  if(a->class == '*') return -1;
+  if(b->class == '*') return  1;
+  return 0;
+}
+
 static int sc_ifaceinf_inf_cmp(const sc_ifaceinf_t *a, const sc_ifaceinf_t *b)
 {
   if(a->css == NULL && b->css == NULL) return 0;
@@ -4259,18 +4970,6 @@ static void sc_regex_css_free(sc_regex_css_t *recss)
   return;
 }
 
-static int sc_regex_css_score_cmp(const sc_regex_css_t *a,
-				  const sc_regex_css_t *b)
-{
-  return sc_regex_score_cmp(a->regex, b->regex);
-}
-
-static int sc_regex_css_work_score_cmp(const sc_regex_css_t *a,
-				       const sc_regex_css_t *b)
-{
-  return sc_regex_score_cmp(a->work, b->work);
-}
-
 static sc_iface_t *sc_iface_alloc(char *ip, char *name)
 {
   sc_iface_t *iface;
@@ -4310,6 +5009,8 @@ static sc_iface_t *sc_iface_alloc(char *ip, char *name)
   iface->len = strlen(name);
   iface->ip_s = -1;
   iface->ip_e = -1;
+  iface->as_s = -1;
+  iface->as_e = -1;
   return iface;
  err:
   if(iface != NULL) sc_iface_free(iface);
@@ -4390,7 +5091,7 @@ static int sc_iface_ip_find_4(sc_iface_t *iface, const char *suffix)
 	    {
 	      iface->ip_s = ip_s;
 	      iface->ip_e = ip_e;
-	      if(do_debug != 0 && threadc == 1)
+	      if(do_debug != 0 && threadc <= 1)
 		{
 		  printf("found %s in %s bytes %d - %d\n",
 			 scamper_addr_tostr(iface->addr, buf, sizeof(buf)),
@@ -4504,6 +5205,11 @@ static int sc_charpos_score_cmp(const sc_charpos_t *a, const sc_charpos_t *b)
   return 0;
 }
 
+/**
+ * INPUT iface
+ * INPUT cp
+ * OUTPUT int
+ */
 static int sc_iface_ip_isok(const sc_iface_t *iface, const sc_charpos_t *cp)
 {
   int i, j, x, nonzero[8], set[8], left, right;
@@ -4585,6 +5291,11 @@ static void sc_iface_ip_unfill_zero(sc_charpos_t *cp)
   return;
 }
 
+/**
+ * Right-fills the pos array after the first set character.
+ * INPUT iface
+ * INPUT/OUTPUT cp: May change cp->pos array.
+ */
 static void sc_iface_ip_fill_zero(sc_iface_t *iface, sc_charpos_t *cp)
 {
   int i, j, x, pos, asc = 0, desc = 0;
@@ -4689,6 +5400,14 @@ static void sc_iface_ip_fill_zero(sc_iface_t *iface, sc_charpos_t *cp)
   return;
 }
 
+/**
+ * INPUT iface:
+ * INPUT suffix:
+ * INPUT/OUTPUT posl:
+ * INPUT/OUTPUT cp:
+ * INPUT x: Starting position within the suffix string
+ * OUTPUT best:
+ */
 static int sc_iface_ip_find_6_rec(sc_iface_t *iface, const char *suffix,
 				  sc_charposl_t *posl, sc_charpos_t *cp, int x,
 				  sc_charpos_t *best)
@@ -4779,6 +5498,9 @@ static int sc_iface_ip_find_6_rec(sc_iface_t *iface, const char *suffix,
 /*
  * sc_iface_ip_find_6:
  *
+ * INPUT/OUTPUT iface: May change iface->ip_s and iface->ip_e.
+ * INPUT suffix: The domain name suffix of the interface.
+ *
  * infer if a portion of the hostname happens to correspond to an IPv6
  * address literal.
  */
@@ -4793,6 +5515,7 @@ static int sc_iface_ip_find_6(sc_iface_t *iface, const char *suffix)
   memset(&cp, 0, sizeof(cp));
   memset(posl, 0, sizeof(posl));
 
+  // Convert scamper address to IPv6 address string
   for(i=0; i<32; i++)
     {
       u =
@@ -4807,6 +5530,7 @@ static int sc_iface_ip_find_6(sc_iface_t *iface, const char *suffix)
       cp.pos[i] = -1;
     }
 
+  // Count all possible hex digits that appear in the label
   for(i=1; i<16; i++)
     {
       if(i < 10) c = '0' + i;
@@ -4851,7 +5575,7 @@ static int sc_iface_ip_find_6(sc_iface_t *iface, const char *suffix)
 
   iface->ip_s = best.left;
   iface->ip_e = best.right;
-  if(do_debug != 0 && threadc == 1)
+  if(do_debug != 0 && threadc <= 1)
     {
       printf("found %s in %s bytes %d - %d\n",
 	     scamper_addr_tostr(iface->addr, buf, sizeof(buf)),
@@ -4869,6 +5593,7 @@ static int sc_iface_ip_find_6(sc_iface_t *iface, const char *suffix)
 static void sc_iface_ip_find_thread(sc_iface_t *iface)
 {
   const char *suffix = sc_suffix_find(iface->name);
+  /* todo: integrate sc_iface_ip_find_unseparated_ipv4 */
   if(SCAMPER_ADDR_TYPE_IS_IPV4(iface->addr))
     sc_iface_ip_find_4(iface, suffix);
   else if(SCAMPER_ADDR_TYPE_IS_IPV6(iface->addr))
@@ -4906,6 +5631,80 @@ static int sc_iface_ip_matched(sc_iface_t *iface, sc_rework_t *rew)
     }
 
   return 0;
+}
+
+static void sc_iface_asn_find_thread(sc_ifacedom_t *ifd)
+{
+  sc_iface_t *iface = ifd->iface;
+  char buf[128], *dup = NULL;
+  int i, as_s = -1, as_e = -1, as_dist = -1, dist, start, stop;
+  size_t len;
+
+  snprintf(buf, sizeof(buf), "%u", iface->rtr->asn);
+  len = strlen(buf);
+  if((dup = strdup(ifd->label)) == NULL)
+    return;
+
+  i = 0; stop = 0;
+  for(;;)
+    {
+      while(isdigit(dup[i]) == 0 && dup[i] != '\0')
+	i++;
+      if(dup[i] == '\0')
+	break;
+
+      start = i;
+      while(isdigit(dup[i]) != 0 && dup[i] != '\0')
+	i++;
+
+      if(dup[i] == '\0')
+	stop = 1;
+      else
+	dup[i] = '\0';
+
+      if(iface->ip_s == -1 || overlap(iface->ip_s,iface->ip_e,start,i-1) == 0)
+	{
+	  /*
+	   * if the edit distance between the ASN extracted from
+	   * the hostname and the ASN we believe operates the
+	   * router is only one character, then classify the
+	   * extraction as a true positive, marked with a '=',
+	   * provided the ASNs are at least three characters in
+	   * length and the first and last digits both agree.
+	   */
+	  dist = dled(dup+start, buf);
+	  if((dist == 0 ||
+	      (do_ed1 != 0 && dist == 1 && len >= 3 && i - start >= 3 &&
+	       dup[start] == buf[0] && dup[i-1] == buf[len-1])) &&
+	     (as_dist == -1 || as_dist > dist))
+	    {
+	      as_s = start;
+	      as_e = i-1;
+	      as_dist = dist;
+	    }
+	}
+
+      if(stop != 0)
+	break;
+      i++;
+    }
+
+  if(as_s != -1)
+    {
+      iface->as_s = as_s;
+      iface->as_e = as_e;
+      if(as_dist > 0)
+	iface->flags |= SC_IFACE_FLAG_AS_ED1;
+      if(do_debug != 0 && threadc <= 1)
+	{
+	  printf("found %u in %s %s bytes %d - %d\n", iface->rtr->asn,
+		 iface->name, scamper_addr_tostr(iface->addr,buf,sizeof(buf)),
+		 iface->as_s, iface->as_e);
+	}
+    }
+
+  free(dup);
+  return;
 }
 
 static void sc_ifdptr_free(sc_ifdptr_t *ifp)
@@ -5000,6 +5799,29 @@ static int sc_ifdptr_tree_ri(splaytree_t *ifp_tree, const slist_t *ri_list)
 	    return -1;
 	  ifp->ptr = ri->ifaces[i];
 	}
+    }
+
+  return 0;
+}
+
+/*
+ * sc_ifdptr_tree_ri
+ *
+ * given a tree filled with ifp constructed from a set of routers, attach
+ * the inferred router interfaces to each ifp.
+ */
+static int sc_ifdptr_tree_ifi(splaytree_t *ifp_tree, const slist_t *ifi_list)
+{
+  slist_node_t *sn;
+  sc_ifaceinf_t *ifi;
+  sc_ifdptr_t *ifp;
+
+  for(sn=slist_head_node(ifi_list); sn != NULL; sn=slist_node_next(sn))
+    {
+      ifi = slist_node_item(sn);
+      if((ifp=sc_ifdptr_find(ifp_tree, ifi->ifd)) == NULL)
+	return -1;
+      ifp->ptr = ifi;
     }
 
   return 0;
@@ -5408,11 +6230,11 @@ static double randindex(slist_t *ifp_list)
 }
 
 /*
- * sc_regex_eval_ri_build
+ * sc_regex_alias_ri_build
  *
  * given a set of inferences on router interfaces, build routers
  */
-static int sc_regex_eval_ri_build(slist_t *ifi_list_in, slist_t *ri_list_out)
+static int sc_regex_alias_ri_build(slist_t *ifi_list_in, slist_t *ri_list_out)
 {
   sc_ifaceinf_t *ifi = NULL;
   sc_routerinf_t *ri = NULL;
@@ -5482,14 +6304,14 @@ static int sc_regex_eval_ri_build(slist_t *ifi_list_in, slist_t *ri_list_out)
 }
 
 /*
- * sc_regex_eval_ifi_build2
+ * sc_regex_ifi_build2
  *
  * given two sets of inferences on router interfaces, build a set of
  * inferences according the priority (p) of inferences in ifi1 and
  * ifi2.
  */
-static int sc_regex_eval_ifi_build2(slist_t *ifi1_list, slist_t *ifi2_list,
-				    int p, slist_t *ifi_list_out)
+static int sc_regex_ifi_build2(slist_t *ifi1_list, slist_t *ifi2_list,
+			       int p, slist_t *ifi_list_out)
 {
   slist_t *ifi_list = NULL;
   slist_node_t *sn1, *sn2;
@@ -5539,7 +6361,15 @@ static int sc_regex_eval_ifi_build2(slist_t *ifi1_list, slist_t *ifi2_list,
   return rc;
 }
 
-static int sc_regex_eval_ifi_build(sc_regex_t *re, slist_t *ifi_list_out)
+/*
+ * sc_regex_ifi_build
+ *
+ * Return 0 iff assignments for each interface could be evaluated and
+ * added to ifi_list_out.
+ * ifi_list_out will be an slist_t of sc_ifaceinf_t (although the
+ * length could be 0).
+ */
+static int sc_regex_ifi_build(sc_regex_t *re, slist_t *ifi_list_out)
 {
   sc_routerdom_t *rd;
   slist_node_t *sn;
@@ -5597,7 +6427,7 @@ static int sc_regex_eval_ifi_build(sc_regex_t *re, slist_t *ifi_list_out)
 }
 
 /*
- * sc_regex_eval_ifi_thin
+ * sc_regex_ifi_thin
  *
  * go through candidate interface inferences and remove any that are
  * identical to what the current working regex has.
@@ -5605,7 +6435,7 @@ static int sc_regex_eval_ifi_build(sc_regex_t *re, slist_t *ifi_list_out)
  * return the count of extractions made by cand_l at the end of the
  * thin process
  */
-static int sc_regex_eval_ifi_thin(slist_t *ifi_work_l, slist_t *ifi_cand_l)
+static int sc_regex_ifi_thin(slist_t *ifi_work_l, slist_t *ifi_cand_l)
 {
   slist_node_t *sn_work, *sn_cand;
   sc_ifaceinf_t *ifi_work, *ifi_cand;
@@ -5646,7 +6476,7 @@ static int sc_regex_eval_ifi_thin(slist_t *ifi_work_l, slist_t *ifi_cand_l)
 }
 
 /*
- * sc_regex_eval_ri_sp
+ * sc_regex_alias_ri_sp
  *
  * the evaluation put a single interface of a router in its own
  * cluster.  is that a single positive or a false negative?  single
@@ -5654,7 +6484,7 @@ static int sc_regex_eval_ifi_thin(slist_t *ifi_work_l, slist_t *ifi_cand_l)
  * interfaces from that training router are intentionally skipped, or
  * an IP address is matched.
  */
-static int sc_regex_eval_ri_sp(sc_ifaceinf_t **ifimap, sc_routerdom_t *rd)
+static int sc_regex_alias_ri_sp(sc_ifaceinf_t **ifimap, sc_routerdom_t *rd)
 {
   int i, matchc = 0;
   sc_ifaceinf_t *ifi;
@@ -5707,15 +6537,15 @@ static void sc_regex_eval_tp_mask(sc_regex_t *re, sc_ifacedom_t *ifd)
 }
 
 /*
- * sc_regex_eval_ri_score
+ * sc_regex_alias_ri_score
  *
  * evaluate the infererences against the training data, storing results
  * in the regex scores.
  */
-static int sc_regex_eval_ri_score(sc_regex_t *re, slist_t *ri_list)
+static int sc_regex_alias_ri_score(sc_regex_t *re, slist_t *ri_list)
 {
   slist_node_t *sn;
-  int tp, i, x, rc = -1, *remap = NULL;
+  int ppv, tp, i, x, rc = -1, *remap = NULL;
   sc_routerdom_t *rd;
   sc_routerinf_t *ri = NULL;
   sc_ifaceinf_t **ifimap = NULL;
@@ -5839,7 +6669,7 @@ static int sc_regex_eval_ri_score(sc_regex_t *re, slist_t *ri_list)
 		  ri->ifaces[0]->class = 'x';
 		}
 	      /* if the training router also has a single interface */
-	      else if(sc_regex_eval_ri_sp(ifimap,ri->ifaces[0]->ifd->rd)== 1)
+	      else if(sc_regex_alias_ri_sp(ifimap,ri->ifaces[0]->ifd->rd)== 1)
 		{
 		  re->sp_c++;
 		  ri->ifaces[0]->class = '+';
@@ -5968,6 +6798,17 @@ static int sc_regex_eval_ri_score(sc_regex_t *re, slist_t *ri_list)
 	}
     }
 
+  if(re->tp_c != 0)
+    ppv = re->tp_c * 100 / (re->tp_c + re->fp_c);
+  else
+    ppv = 0;
+  if(ppv < 80 || re->rt_c < 3)
+    re->class = RE_CLASS_POOR;
+  else if((re->rt_c >= 3 && re->rt_c <= 6 && re->fp_c > 0) || ppv < 90)
+    re->class = RE_CLASS_PROM;
+  else
+    re->class = RE_CLASS_GOOD;
+
   rc = 0;
 
  done:
@@ -6032,11 +6873,11 @@ static int sc_regex_issame(sc_regex_t *re1,slist_t *ifi1_list, sc_regex_t *re2)
 
   /* we use ifi1_list across calls to sc_regex_issame to cache inferences */
   if(slist_count(ifi1_list) == 0 &&
-     sc_regex_eval_ifi_build(re1, ifi1_list) != 0)
+     sc_regex_ifi_build(re1, ifi1_list) != 0)
     goto done;
 
   if((ifi2_list = slist_alloc()) == NULL ||
-     sc_regex_eval_ifi_build(re2, ifi2_list) != 0)
+     sc_regex_ifi_build(re2, ifi2_list) != 0)
     goto done;
 
   sn1 = slist_head_node(ifi1_list);
@@ -6067,15 +6908,21 @@ static int sc_regex_issame(sc_regex_t *re1,slist_t *ifi1_list, sc_regex_t *re2)
   return rc;
 }
 
-static int sc_regex_eval_ifi_score(sc_regex_t *re, slist_t *ifi_list)
+/*
+ * sc_regex_alias_ifi_score
+ *
+ * Given a list of ifaceinfs, adjust the score of the regex and the
+ * class of each inference.
+ */
+static int sc_regex_alias_ifi_score(sc_regex_t *re, slist_t *ifi_list)
 {
   slist_t *ri_list = NULL;
   int rc = 0;
 
   sc_regex_score_reset(re);
   if((ri_list = slist_alloc()) == NULL ||
-     sc_regex_eval_ri_build(ifi_list, ri_list) != 0 ||
-     sc_regex_eval_ri_score(re, ri_list) != 0)
+     sc_regex_alias_ri_build(ifi_list, ri_list) != 0 ||
+     sc_regex_alias_ri_score(re, ri_list) != 0)
     rc = -1;
 
   if(ri_list != NULL)
@@ -6087,7 +6934,7 @@ static int sc_regex_eval_ifi_score(sc_regex_t *re, slist_t *ifi_list)
   return rc;
 }
 
-static int sc_regex_eval(sc_regex_t *re, slist_t *out)
+static int sc_regex_alias_eval(sc_regex_t *re, slist_t *out)
 {
   slist_t *ifi_list = NULL, *ri_list = NULL;
   int rc = -1;
@@ -6096,7 +6943,7 @@ static int sc_regex_eval(sc_regex_t *re, slist_t *out)
   sc_regex_score_reset(re);
 
   if((ifi_list = slist_alloc()) == NULL ||
-     sc_regex_eval_ifi_build(re, ifi_list) != 0)
+     sc_regex_ifi_build(re, ifi_list) != 0)
     goto done;
   if(slist_count(ifi_list) == 0)
     {
@@ -6107,12 +6954,12 @@ static int sc_regex_eval(sc_regex_t *re, slist_t *out)
   /* build router structures using the assignments */
   if((ri_list = slist_alloc()) == NULL)
     goto done;
-  if(sc_regex_eval_ri_build(ifi_list, ri_list) != 0)
+  if(sc_regex_alias_ri_build(ifi_list, ri_list) != 0)
     goto done;
   slist_free(ifi_list); ifi_list = NULL;
 
   /* score the router inferences */
-  if(sc_regex_eval_ri_score(re, ri_list) != 0)
+  if(sc_regex_alias_ri_score(re, ri_list) != 0)
     goto done;
 
   if(out != NULL)
@@ -6123,6 +6970,331 @@ static int sc_regex_eval(sc_regex_t *re, slist_t *out)
   if(ri_list != NULL) slist_free_cb(ri_list, (slist_free_t)sc_routerinf_free);
   if(ifi_list != NULL) slist_free_cb(ifi_list, (slist_free_t)sc_ifaceinf_free);
   return rc;
+}
+
+static void sc_regex_asn_ifi_score_free(sc_reasn_t *ts, int regexc)
+{
+  int i;
+
+  if(ts->org != NULL) splaytree_free(ts->org, free);
+  if(ts->ext != NULL) splaytree_free(ts->ext, free);
+  if(ts->inf != NULL) splaytree_free(ts->inf, free);
+  if(ts->exts != NULL)
+    {
+      for(i=0; i<regexc; i++)
+	if(ts->exts[i] != NULL)
+	  splaytree_free(ts->exts[i], free);
+      free(ts->exts);
+    }
+  if(ts->infs != NULL)
+    {
+      for(i=0; i<regexc; i++)
+	if(ts->infs[i] != NULL)
+	  splaytree_free(ts->infs[i], free);
+      free(ts->infs);
+    }
+  free(ts);
+
+  return;
+}
+
+static sc_reasn_t *sc_regex_asn_ifi_score_init(int regexc)
+{
+  sc_reasn_t *ts = NULL;
+  int i;
+
+  if((ts = malloc_zero(sizeof(sc_reasn_t))) == NULL ||
+     (ts->org = splaytree_alloc((splaytree_cmp_t)sc_as2org_cmp)) == NULL ||
+     (ts->inf = splaytree_alloc((splaytree_cmp_t)sc_uint32c_num_cmp)) == NULL ||
+     (ts->ext = splaytree_alloc((splaytree_cmp_t)sc_uint32c_num_cmp)) == NULL)
+    goto err;
+
+  if(regexc > 1)
+    {
+      if((ts->infs = malloc_zero(sizeof(splaytree_t *) * regexc)) == NULL ||
+	 (ts->exts = malloc_zero(sizeof(splaytree_t *) * regexc)) == NULL)
+	goto err;
+      for(i=0; i<regexc; i++)
+	{
+	  ts->infs[i] = splaytree_alloc((splaytree_cmp_t)sc_uint32c_num_cmp);
+	  if(ts->infs[i] == NULL)
+	    goto err;
+	  ts->exts[i] = splaytree_alloc((splaytree_cmp_t)sc_uint32c_num_cmp);
+	  if(ts->exts[i] == NULL)
+	    goto err;
+	}
+    }
+
+  ts->sib = sibling_id;
+  return ts;
+
+ err:
+  if(ts != NULL) sc_regex_asn_ifi_score_free(ts, regexc);
+  return NULL;
+}
+
+static int sc_regex_asn_ifi_score_org(sc_reasn_t *ts, uint32_t a, uint32_t *o)
+{
+  sc_as2org_t *a2o, fm;
+
+  /* if there is no sibling file, then no need to consider org_id mappings */
+  if(sibling_file == NULL)
+    {
+      *o = a;
+      return 0;
+    }
+
+  /* find an existing org_id mapping, if we have one */
+  fm.asn = a;
+  if((a2o = sc_as2org_find(a)) != NULL ||
+     (a2o = splaytree_find(ts->org, &fm)) != NULL)
+    {
+      *o = a2o->org;
+      return 0;
+    }
+
+  /* create a new org_id mapping */
+  if((a2o = malloc(sizeof(sc_as2org_t))) == NULL)
+    return -1;
+  a2o->asn = a;
+  a2o->org = ts->sib;
+  if(splaytree_insert(ts->org, a2o) == NULL)
+    return -1;
+
+  *o = a2o->org;
+  ts->sib++;
+  return 0;
+}
+
+static int sc_regex_asn_ifi_score_tp(sc_reasn_t *ts, sc_regex_t *re,
+				     sc_ifaceinf_t *ifi, uint32_t ext_asn)
+{
+  uint32_t inf_org, ext_org, inf_asn = ifi->ifd->iface->rtr->asn;
+  sc_uint32c_t *c;
+
+  if(sc_regex_asn_ifi_score_org(ts, inf_asn, &inf_org) != 0 ||
+     sc_regex_asn_ifi_score_org(ts, ext_asn, &ext_org) != 0)
+    return -1;
+
+  if((c = sc_uint32c_get(ts->inf, inf_org)) == NULL)
+    return -1;
+  c->c++;
+  if((c = sc_uint32c_get(ts->ext, ext_org)) == NULL)
+    return -1;
+  c->c++;
+
+  if(re->regexc > 1)
+    {
+      if((c = sc_uint32c_get(ts->infs[ifi->regex], inf_org)) == NULL)
+	return -1;
+      c->c++;
+      if((c = sc_uint32c_get(ts->exts[ifi->regex], ext_org)) == NULL)
+	return -1;
+      c->c++;
+    }
+
+  sc_regex_eval_tp_mask(re, ifi->ifd);
+  re->tp_c++;
+  return 0;
+}
+
+static int sc_regex_asn_ifi_score(sc_regex_t *re, slist_t *ifi_list)
+{
+  sc_reasn_t *ts = NULL;
+  slist_t *list = NULL;
+  sc_ifaceinf_t *ifi;
+  sc_uint32c_t *c;
+  slist_node_t *sn;
+  sc_iface_t *iface;
+  long long ll;
+  size_t len, css_len;
+  char asstr[16];
+  int rc = -1;
+  int i, x, ppv, ed1 = 0;
+
+  /* figure out how many bits might be needed for the true positives mask */
+  len = sizeof(uint32_t) * re->dom->tpmlen;
+  if(re->tp_mask == NULL && (re->tp_mask = malloc_zero(len)) == NULL)
+    goto done;
+
+  if((ts = sc_regex_asn_ifi_score_init(re->regexc)) == NULL)
+    goto done;
+
+  for(sn=slist_head_node(ifi_list); sn != NULL; sn=slist_node_next(sn))
+    {
+      ifi = slist_node_item(sn);
+      iface = ifi->ifd->iface;
+
+      if(ifi->regex != -1)
+	re->regexes[ifi->regex]->matchc++;
+
+      if(ifi->css != NULL)
+	{
+	  if(string_isnumber(ifi->css->css) == 0 ||
+	     string_tollong(ifi->css->css, &ll) != 0 ||
+	     ll < 0 || ll > 4294967295)
+	    {
+	      ifi->class = '!';
+	      re->fp_c++;
+	    }
+	  else if((ll >= 64496 && ll <= 65551) || ll >= 4200000000 || ll == 0)
+	    {
+	      ifi->class = '*';
+	      continue;
+	    }
+	  else if(iface->rtr->asn != ll)
+	    {
+	      /*
+	       * if the edit distance between the ASN extracted from
+	       * the hostname and the ASN we believe operates the
+	       * router is only one character, then classify the
+	       * extraction as a true positive, marked with a '=',
+	       * provided the ASNs are at least three characters in
+	       * length and the first and last digits both agree.
+	       * note the final check is to ensure that we extract all
+	       * of the apparent ASN embedded in the hostname.
+	       */
+	      snprintf(asstr, sizeof(asstr), "%u", iface->rtr->asn);
+	      x = dled(ifi->css->css, asstr);
+	      len = strlen(asstr);
+	      css_len = strlen(ifi->css->css);
+	      if(do_ed1 != 0 && x == 1 && len >= 3 && css_len >= 3 &&
+		 ifi->css->css[0] == asstr[0] &&
+		 ifi->css->css[css_len-1] == asstr[len-1] &&
+		 css_len == iface->as_e - iface->as_s + 1)
+		{
+		  if(sc_regex_asn_ifi_score_tp(ts, re, ifi, ll) != 0)
+		    goto done;
+		  ifi->class = '=';
+		  ed1++;
+		}
+	      else
+		{
+		  ifi->class = '!';
+		  re->fp_c++;
+		}
+	    }
+	  else
+	    {
+	      if(sc_regex_asn_ifi_score_tp(ts, re, ifi, ll) != 0)
+		goto done;
+	      ifi->class = '+';
+	    }
+
+	  re->matchc++;
+	}
+      else
+	{
+	  if(iface->as_s != -1 && (iface->flags & SC_IFACE_FLAG_AS_ED1) == 0)
+	    {
+	      ifi->class = '~';
+	      re->fnu_c++;
+	    }
+	  else
+	    {
+	      ifi->class = ' ';
+	    }
+	}
+    }
+
+  /*
+   * if all the true positives were edit distance 1 from the training
+   * ASN, then these are bogus
+   */
+  if(ed1 > 0 && re->tp_c == ed1)
+    {
+      re->fp_c = re->tp_c;
+      re->tp_c = 0;
+      for(sn=slist_head_node(ifi_list); sn != NULL; sn=slist_node_next(sn))
+	{
+	  ifi = slist_node_item(sn);
+	  if(ifi->class == '=')
+	    ifi->class = '!';
+	}
+      if(re->regexc > 1)
+	{
+	  for(i=0; i<re->regexc; i++)
+	    {
+	      splaytree_empty(ts->infs[i], free);
+	      splaytree_empty(ts->exts[i], free);
+	    }
+	}
+      splaytree_empty(ts->inf, free);
+      splaytree_empty(ts->ext, free);
+    }
+
+  if(re->regexc > 1)
+    {
+      for(i=0; i<re->regexc; i++)
+	re->regexes[i]->rt_c = tree_mincount(ts->infs[i], ts->exts[i]);
+    }
+  else
+    {
+      re->regexes[0]->rt_c = tree_mincount(ts->inf, ts->ext);
+    }
+  re->rt_c = tree_mincount(ts->inf, ts->ext);
+
+  if((list = slist_alloc()) == NULL)
+    goto done;
+  splaytree_inorder(ts->inf, tree_to_slist, list);
+  slist_qsort(list, (slist_cmp_t)sc_uint32c_c_cmp);
+  if(re->tp_c != 0)
+    ppv = re->tp_c * 100 / (re->tp_c + re->fp_c);
+  else
+    ppv = 0;
+  if(((c = slist_head_item(list)) != NULL && re->tp_c > 3 && ppv < 80 &&
+      c->c * 100 / re->tp_c > 50) || re->rt_c == 1)
+    re->class = RE_CLASS_SINGLE;
+  else if(re->rt_c >= 3 && ppv >= 80)
+    re->class = RE_CLASS_GOOD;
+  else if(re->rt_c >= 2 && ppv >= 50)
+    re->class = RE_CLASS_PROM;
+  else
+    re->class = RE_CLASS_POOR;
+
+  rc = 0;
+
+ done:
+  if(list != NULL) slist_free(list);
+  if(ts != NULL) sc_regex_asn_ifi_score_free(ts, re->regexc);
+  return rc;
+}
+
+static int sc_regex_asn_eval(sc_regex_t *re, slist_t *out)
+{
+  slist_t *ifi_list = NULL;
+  int rc = -1;
+
+  assert(re->dom != NULL);
+  sc_regex_score_reset(re);
+
+  if((ifi_list = slist_alloc()) == NULL ||
+     sc_regex_ifi_build(re, ifi_list) != 0)
+    goto done;
+  if(slist_count(ifi_list) == 0)
+    {
+      rc = 0;
+      goto done;
+    }
+
+  if(sc_regex_asn_ifi_score(re, ifi_list) != 0)
+    goto done;
+
+  if(out != NULL)
+    slist_concat(out, ifi_list);
+  rc = 0;
+
+ done:
+  if(ifi_list != NULL) slist_free_cb(ifi_list, (slist_free_t)sc_ifaceinf_free);
+  return rc;
+}
+
+static int sc_regex_eval(sc_regex_t *re, slist_t *out)
+{
+  assert(do_learnalias != 0 || do_learnasn != 0);
+  if(do_learnalias != 0)
+    return sc_regex_alias_eval(re, out);
+  return sc_regex_asn_eval(re, out);
 }
 
 /*
@@ -6146,8 +7318,10 @@ static int sc_regex_permute(sc_regex_t *work, slist_t *work_ifi,
       return 0;
 
   if((ifi = slist_alloc()) == NULL || (ri_list = slist_alloc()) == NULL ||
-     (cand_ifi = slist_alloc()) == NULL ||
-     sc_regex_eval_ifi_build(cand, cand_ifi) != 0)
+     (cand_ifi = slist_alloc()) == NULL)
+    goto done;
+
+  if(sc_regex_ifi_build(cand, cand_ifi) != 0)
     goto done;
 
   /*
@@ -6155,7 +7329,7 @@ static int sc_regex_permute(sc_regex_t *work, slist_t *work_ifi,
    * made by the working regex so that they do not get counted against the
    * candidate.
    */
-  if(sc_regex_eval_ifi_thin(work_ifi, cand_ifi) == 0)
+  if(sc_regex_ifi_thin(work_ifi, cand_ifi) == 0)
     {
       rc = 0;
       goto done;
@@ -6168,21 +7342,31 @@ static int sc_regex_permute(sc_regex_t *work, slist_t *work_ifi,
       re->score = work->score + cand->score;
 
       /* build a new set of inferences */
-      if(sc_regex_eval_ifi_build2(work_ifi, cand_ifi, i, ifi) != 0)
+      if(sc_regex_ifi_build2(work_ifi, cand_ifi, i, ifi) != 0)
 	goto done;
-      if(sc_regex_eval_ri_build(ifi, ri_list) != 0)
-	goto done;
-      if(sc_regex_eval_ri_score(re, ri_list) != 0)
-	goto done;
+
+      if(do_learnalias != 0)
+	{
+	  if(sc_regex_alias_ri_build(ifi, ri_list) != 0)
+	    goto done;
+	  if(sc_regex_alias_ri_score(re, ri_list) != 0)
+	    goto done;
+	  slist_foreach(ifi, (slist_foreach_t)sc_ifaceinf_css_null, NULL);
+	  slist_empty(ifi);
+	  slist_empty_cb(ri_list, (slist_free_t)sc_routerinf_free);
+	}
+      else
+	{
+	  if(sc_regex_asn_ifi_score(re, ifi) != 0)
+	    goto done;
+	  slist_foreach(ifi, (slist_foreach_t)sc_ifaceinf_css_null, NULL);
+	  slist_empty_cb(ifi, (slist_free_t)sc_ifaceinf_free);
+	}
 
       /* keep regex around */
       if(slist_tail_push(set, re) == NULL)
 	goto done;
       re = NULL;
-
-      slist_foreach(ifi, (slist_foreach_t)sc_ifaceinf_css_null, NULL);
-      slist_empty(ifi);
-      slist_empty_cb(ri_list, (slist_free_t)sc_routerinf_free);
     }
 
   rc = 0;
@@ -6372,7 +7556,50 @@ static int sc_regex_del_ppv_ok(const sc_regex_t *cur, const sc_regex_t *can)
   return 1;
 }
 
-static sc_regex_t *sc_domain_bestre(sc_domain_t *dom)
+static sc_regex_t *sc_domain_bestre_asn(sc_domain_t *dom)
+{
+  sc_regex_t *re, *best;
+  slist_node_t *sn;
+
+  slist_qsort(dom->regexes, (slist_cmp_t)sc_regex_score_rank_asn_cmp);
+  best = slist_head_item(dom->regexes);
+
+  for(sn=slist_head_node(dom->regexes); sn != NULL; sn=slist_node_next(sn))
+    {
+      re = slist_node_item(sn);
+      if(re == best)
+	continue;
+
+      /*
+       * if the convention is made up of fewer regexes but matches
+       * more hostnames, and the number of false positives is only one
+       * more than the current best regex with at least the same
+       * number of TPs, then take the shorter naming convention
+       */
+      if(re->regexc < best->regexc && re->matchc >= best->matchc &&
+	 re->tp_c >= best->tp_c &&
+	 re->fp_c > best->fp_c && re->fp_c - best->fp_c <= 1)
+	{
+	  best = re;
+	}
+      /*
+       * if the number of inferred ASNs is larger, take it if the current
+       * regex only infers a single ASN, or if the number of TPs is larger
+       * and the number of FPs smaller.
+       */
+      else if(re->rt_c > best->rt_c && re->tp_c > 0 &&
+	      ((best->rt_c == 1 &&
+		re->tp_c * 100 / (re->tp_c + re->fp_c) > 50) ||
+	       (re->tp_c >= best->tp_c && re->fp_c <= best->fp_c)))
+	{
+	  best = re;
+	}
+    }
+
+  return best;
+}
+
+static sc_regex_t *sc_domain_bestre_alias(sc_domain_t *dom)
 {
   int best_atp, best_ppv, best_len;
   int re_ppv, re_atp, re_len;
@@ -6380,9 +7607,6 @@ static sc_regex_t *sc_domain_bestre(sc_domain_t *dom)
   int del_ppv, del_tp, del_fp;
   sc_regex_t *re, *best;
   slist_node_t *sn;
-
-  if(slist_count(dom->regexes) < 1)
-    return NULL;
 
   slist_qsort(dom->regexes, (slist_cmp_t)sc_regex_score_rank_cmp);
   best = slist_head_item(dom->regexes);
@@ -6458,6 +7682,18 @@ static sc_regex_t *sc_domain_bestre(sc_domain_t *dom)
   return best;
 }
 
+static sc_regex_t *sc_domain_bestre(sc_domain_t *dom)
+{
+  assert(do_learnalias != 0 || do_learnasn != 0);
+  if(slist_count(dom->regexes) < 1)
+    return NULL;
+  if(do_learnalias != 0)
+    return sc_domain_bestre_alias(dom);
+  else if(do_learnasn != 0)
+    return sc_domain_bestre_asn(dom);
+  return NULL;
+}
+
 static int sc_domain_lock(sc_domain_t *dom)
 {
 #ifdef HAVE_PTHREAD
@@ -6482,7 +7718,6 @@ static int sc_domain_cmp(const sc_domain_t *a, const sc_domain_t *b)
 
 static void sc_domain_free(sc_domain_t *dom)
 {
-  sc_ifacedom_t *ifd;
   if(dom->domain != NULL)
     free(dom->domain);
   if(dom->escape != NULL)
@@ -6492,14 +7727,7 @@ static void sc_domain_free(sc_domain_t *dom)
   if(dom->regexes != NULL)
     slist_free_cb(dom->regexes, (slist_free_t)sc_regex_free);
   if(dom->appl != NULL)
-    {
-      while((ifd = slist_head_pop(dom->appl)) != NULL)
-	{
-	  if(ifd->iface != NULL) sc_iface_free(ifd->iface);
-	  sc_ifacedom_free(ifd);
-	}
-      slist_free(dom->appl);
-    }
+    slist_free_cb(dom->appl, (slist_free_t)sc_routerdom_free);
 #ifdef HAVE_PTHREAD
   if(dom->mutex_o != 0)
     pthread_mutex_destroy(&dom->mutex);
@@ -6575,14 +7803,6 @@ static sc_domain_t *sc_domain_get(const char *domain)
     }
 
   return dom;
-}
-
-static int sc_domain_finish(sc_domain_t *dom)
-{
-  uint32_t rtc = slist_count(dom->routers);
-  dom->tpmlen = dom->ifacec / 32 + ((dom->ifacec % 32 == 0) ? 0 : 1);
-  dom->rtmlen = rtc / 32 + ((rtc % 32 == 0) ? 0 : 1);
-  return 0;
 }
 
 static int label_cmp(const char *ap, const char *bp)
@@ -6696,24 +7916,32 @@ static int process_suffix(slist_t *list)
 
 static int isliteral(int x)
 {
-  assert(x >= 0 && x <= 4);
-  if(x == 0 || x == 1 || x == 4)
-    return 0;
-  return 1;
+  assert(x >= BIT_TYPE_MIN && x <= BIT_TYPE_MAX);
+  if(x == BIT_TYPE_SKIP_LIT || x == BIT_TYPE_CAPTURE_LIT)
+    return 1;
+  return 0;
 }
 
 static int iscapture(int x)
 {
-  assert(x >= 0 && x <= 4);
-  if(x == 1 || x == 3)
+  assert(x >= BIT_TYPE_MIN && x <= BIT_TYPE_MAX);
+  if(x == BIT_TYPE_CAPTURE || x == BIT_TYPE_CAPTURE_LIT || x == BIT_TYPE_ASN)
     return 1;
   return 0;
 }
 
 static int isip(int x)
 {
-  assert(x >= 0 && x <= 4);
-  if(x == 4)
+  assert(x >= BIT_TYPE_MIN && x <= BIT_TYPE_MAX);
+  if(x == BIT_TYPE_IP)
+    return 1;
+  return 0;
+}
+
+static int isasn(int x)
+{
+  assert(x >= BIT_TYPE_MIN && x <= BIT_TYPE_MAX);
+  if(x == BIT_TYPE_ASN)
     return 1;
   return 0;
 }
@@ -6761,8 +7989,8 @@ static size_t sc_regex_build_0(const char *name, const sc_rebuild_p_t *p,
   char sep;
   int j, r, x = rb->x;
 
-  /* does not apply to literals or IP address portions */
-  if(isliteral(bits[x]) != 0 || isip(bits[x]) != 0)
+  /* does not apply to literals, IP address portions, or ASN portions */
+  if(isliteral(bits[x]) != 0 || isip(bits[x]) != 0 || isasn(bits[x]) != 0)
     return 0;
 
   /* does not apply if there is no dot or dash separator at the end */
@@ -6817,8 +8045,8 @@ static size_t sc_regex_build_1(const char *name, const sc_rebuild_p_t *p,
   char sep;
   int x = rb->x, j, r, last_sep = -1;
 
-  /* does not apply to literals or IP address portions */
-  if(isliteral(bits[x]) != 0 || isip(bits[x]) != 0)
+  /* does not apply to literals, IP address portions, or ASN portions */
+  if(isliteral(bits[x]) != 0 || isip(bits[x]) != 0 || isasn(bits[x]) != 0)
     return 0;
 
   /* cannot be working at the very start of the string */
@@ -6911,8 +8139,8 @@ static size_t sc_regex_build_2(const char *name, const sc_rebuild_p_t *p,
   if(rb->off == 0 && p->dom != NULL)
     return 0;
 
-  /* does not apply to literals or IP addresses */
-  if(isliteral(bits[x]) != 0 || isip(bits[x]) != 0)
+  /* does not apply to literals, IP address portions, or ASN portions */
+  if(isliteral(bits[x]) != 0 || isip(bits[x]) != 0 || isasn(bits[x]) != 0)
     return 0;
 
   /* string_concat(buf, len, &to, ".+"); */
@@ -6950,8 +8178,8 @@ static size_t sc_regex_build_3(const char *name, const sc_rebuild_p_t *p,
   if(rb->o != bits[x+1])
     return 0;
 
-  /* does not apply to literals or IP address portions */
-  if(isliteral(bits[x]) != 0 || isip(bits[x]) != 0)
+  /* does not apply to literals, IP address portions, or ASN portions */
+  if(isliteral(bits[x]) != 0 || isip(bits[x]) != 0 || isasn(bits[x]) != 0)
     return 0;
 
   /* skip over any dashes and dots at the start of the string */
@@ -7066,14 +8294,6 @@ static size_t sc_regex_build_5_v4(const char *name, const sc_rebuild_p_t *p,
   size_t to = 0;
   int x = rb->x, r;
 
-  /* do not allow partial starts for now */
-  if(rb->o != bits[x+1])
-    return 0;
-
-  /* only applies to IP literals */
-  if(isip(bits[x]) == 0)
-    return 0;
-
   ptr = name + bits[x+1];
   while(ptr < name + bits[x+2] + 1)
     {
@@ -7122,14 +8342,6 @@ static size_t sc_regex_build_5_v6(const char *name, const sc_rebuild_p_t *p,
   size_t to = 0;
   int x = rb->x, r;
 
-  /* do not allow partial starts for now */
-  if(rb->o != bits[x+1])
-    return 0;
-
-  /* only applies to IP literals */
-  if(isip(bits[x]) == 0)
-    return 0;
-
   ptr = name + bits[x+1];
   while(ptr < name + bits[x+2] + 1)
     {
@@ -7169,6 +8381,17 @@ static size_t sc_regex_build_5_v6(const char *name, const sc_rebuild_p_t *p,
 static size_t sc_regex_build_5(const char *name, const sc_rebuild_p_t *p,
 			       const sc_rebuild_t *rb, int *score, int *o)
 {
+  const int *bits = p->bits;
+  int x = rb->x;
+
+  /* do not allow partial starts for now */
+  if(rb->o != bits[x+1])
+    return 0;
+
+  /* only applies to IP literals */
+  if(isip(bits[x]) == 0)
+    return 0;
+
   if(ip_v == 4)
     return sc_regex_build_5_v4(name, p, rb, score, o);
   return sc_regex_build_5_v6(name, p, rb, score, o);
@@ -7196,8 +8419,8 @@ static size_t sc_regex_build_6(const char *name, const sc_rebuild_p_t *p,
   if(rb->o != bits[x+1])
     return 0;
 
-  /* does not apply to literals or IP address portions */
-  if(isliteral(bits[x]) != 0 || isip(bits[x]) != 0)
+  /* does not apply to literals, IP address portions, or ASN portions */
+  if(isliteral(bits[x]) != 0 || isip(bits[x]) != 0 || isasn(bits[x]) != 0)
     return 0;
 
   /* skip over any dashes and dots at the start of the string */
@@ -7263,8 +8486,8 @@ static size_t sc_regex_build_7(const char *name, const sc_rebuild_p_t *p,
   char tmp[8];
   int j, r, x = rb->x;
 
-  /* does not apply to literals or IP address portions */
-  if(isliteral(bits[x]) != 0 || isip(bits[x]) != 0)
+  /* does not apply to literals, IP address portions, or ASN portions */
+  if(isliteral(bits[x]) != 0 || isip(bits[x]) != 0 || isasn(bits[x]) != 0)
     return 0;
 
   /* skip over any dashes and dots at the start of the string */
@@ -7297,6 +8520,48 @@ static size_t sc_regex_build_7(const char *name, const sc_rebuild_p_t *p,
 
   *score += 1;
   *o = j;
+  return to;
+}
+
+/*
+ * sc_regex_build_8
+ *
+ * output \d+ to match an ASN embedded in the hostname.
+ *
+ * the score increases by 3 as this is a specific formation.
+ */
+static size_t sc_regex_build_8(const char *name, const sc_rebuild_p_t *p,
+			       const sc_rebuild_t *rb, int *score, int *o)
+{
+  const int *bits = p->bits;
+  char *buf = p->buf;
+  size_t len = p->len;
+  size_t to = 0;
+  int j, x = rb->x;
+
+  /* do not allow partial starts for now */
+  if(rb->o != bits[x+1])
+    return 0;
+
+  /* only applies to ASNs */
+  if(isasn(bits[x]) == 0)
+    return 0;
+
+  /*
+   * skip over any dashes and dots at the start of the string
+   * XXX: figure out if this is even necessary
+   */
+  if((j = sc_regex_build_skip(name, bits[x+1], buf, len, &to)) > bits[x+2])
+    return 0;
+
+  /* string_concat(buf, len, &to, "\\d+"); */
+  *score += 3;
+  if(len - to < 4)
+    return 0;
+  buf[to++] = '\\'; buf[to++] = 'd'; buf[to++] = '+';
+  buf[to] = '\0';
+  *o = bits[x+2] + 1;
+
   return to;
 }
 
@@ -7335,6 +8600,7 @@ static sc_rebuild_t *sc_rebuild_push(slist_t *list, char *buf, size_t off,
 #define RB_SEG_LITERAL_IP 0x0020
 #define RB_SEG_DIGIT      0x0040
 #define RB_FIRST_PUNC_END 0x0080
+#define RB_SEG_ASN        0x0100
 
 /*
  * sc_regex_build
@@ -7356,6 +8622,7 @@ static int sc_regex_build(splaytree_t *tree, const char *name, sc_domain_t *dom,
     sc_regex_build_5, /* 0x0020 : embed IP address literal */
     sc_regex_build_6, /* 0x0040 : use \d+ where appropriate */
     sc_regex_build_7, /* 0x0080 : non alnum seperator at first non-alnum */
+    sc_regex_build_8, /* 0x0100 : use \d+ for an ASN */
   };
 
   sc_rebuild_p_t p;
@@ -7491,7 +8758,7 @@ static int sc_regex_build(splaytree_t *tree, const char *name, sc_domain_t *dom,
 
 	  if(sc_regex_find(tree, buf) != NULL)
 	    continue;
-	  if(do_debug != 0 && threadc == 1)
+	  if(do_debug != 0 && threadc <= 1)
 	    {
 	      printf("%s %s", buf, name);
 	      for(k=0; k<bitc; k+=3)
@@ -7516,6 +8783,86 @@ static int sc_regex_build(splaytree_t *tree, const char *name, sc_domain_t *dom,
   rc = 0;
  done:
   if(stack != NULL) slist_free_cb(stack, (slist_free_t)free);
+  return rc;
+}
+
+/*
+ * sc_regex_asn_lcs
+ *
+ * A modification of sc_regex_lcs which will treat the location of ASNs
+ * differently -- the longest substring will be
+ *
+ * Generate regexes for the longest common substring.
+ * param tree: Tree to put output on.
+ * param dom: Domain that the interfaces belong to.
+ * param S, T: A pair of interfaces from the same domain.
+ * returns: 0 if successful.
+ */
+static int sc_regex_asn_lcs(splaytree_t *tree, sc_domain_t *dom,
+			    sc_ifacedom_t *S, sc_ifacedom_t *T)
+{
+  static const uint16_t mask =
+    RB_BASE | RB_FIRST_PUNC_END | RB_SEG_LITERAL | RB_SEG_DIGIT | RB_SEG_ASN;
+  int *L_array = NULL;
+  slist_t *L = NULL;
+  int i, j, Lc, rc = -1;
+  const sc_ifacedom_t *R;
+  int *bits = NULL, bitc;
+  sc_lcs_pt_t *pt;
+  slist_node_t *sn;
+
+  /*
+   * Expand literals outwards around the ASN to see how much of the
+   * structure is shared between the two interfaces.
+   */
+  if((L = lcs_asn(S, T)) == NULL)
+    goto done;
+
+  Lc = slist_count(L) * 2;
+  if(Lc > 0 && (L_array = malloc(sizeof(int) * Lc)) == NULL)
+    goto done;
+
+  for(i=0; i<2; i++)
+    {
+      /*
+       * two identical loops, which only differ on which of the two
+       * interface strings under consideration
+       */
+      j = 0;
+      if(i == 0)
+	{
+	  R = S;
+	  for(sn=slist_head_node(L); sn != NULL; sn=slist_node_next(sn))
+	    {
+	      pt = slist_node_item(sn);
+	      L_array[j++] = pt->S_start;
+	      L_array[j++] = pt->S_end;
+	    }
+	}
+      else
+	{
+	  R = T;
+	  for(sn=slist_head_node(L); sn != NULL; sn=slist_node_next(sn))
+	    {
+	      pt = slist_node_item(sn);
+	      L_array[j++] = pt->T_start;
+	      L_array[j++] = pt->T_end;
+	    }
+	}
+      if(pt_to_bits_asn(R, L_array, Lc, &bits, &bitc) == 0)
+	{
+	  if(sc_regex_build(tree, R->label, dom, mask, bits, bitc) != 0)
+	    goto done;
+	}
+      free(bits); bits = NULL;
+    }
+
+  rc = 0;
+
+ done:
+  if(L != NULL) slist_free_cb(L, (slist_free_t)sc_lcs_pt_free);
+  if(L_array != NULL) free(L_array);
+  if(bits != NULL) free(bits);
   return rc;
 }
 
@@ -7561,6 +8908,15 @@ static int sc_regex_lcs2(splaytree_t *tree, sc_domain_t *dom,
   return rc;
 }
 
+/*
+ * sc_regex_lcs
+ *
+ * Generate regexes for the longest common substring.
+ * param tree: Tree to put output on.
+ * param dom: Domain that the interfaces belong to.
+ * param S, T: A pair of interfaces from the same domain.
+ * returns: 0 if successful.
+ */
 static int sc_regex_lcs(splaytree_t *tree, sc_domain_t *dom,
 			const sc_ifacedom_t *S, const sc_ifacedom_t *T)
 {
@@ -7623,8 +8979,6 @@ static int sc_regex_lcs(splaytree_t *tree, sc_domain_t *dom,
 	    }
 	}
     }
-  free(X_array); X_array = NULL;
-  sc_css_free(X_css); X_css = NULL;
 
   rc = 0;
 
@@ -7634,6 +8988,30 @@ static int sc_regex_lcs(splaytree_t *tree, sc_domain_t *dom,
   if(X_css != NULL) sc_css_free(X_css);
   if(X_array != NULL) free(X_array);
   return rc;
+}
+
+static void sc_routerload_reset(sc_routerload_t *rl)
+{
+  slist_empty_cb(rl->ifaces, (slist_free_t)sc_iface_free);
+  rl->asn = 0;
+  rl->id = 0;
+  return;
+}
+
+static int sc_router_istraining(sc_router_t *rtr)
+{
+  assert(do_learnalias != 0 || do_learnasn != 0);
+  if(do_learnalias != 0)
+    {
+      if(rtr->ifacec > 1)
+	return 1;
+    }
+  else if(do_learnasn != 0)
+    {
+      if(rtr->asn != 0)
+	return 1;
+    }
+  return 0;
 }
 
 static void sc_router_free(sc_router_t *rtr)
@@ -7658,77 +9036,53 @@ static void sc_router_free(sc_router_t *rtr)
  * interfaces and build the router, placing the router onto each
  * applicable domain
  */
-static int sc_router_finish(slist_t *list)
+static int sc_router_finish(sc_routerload_t *rl)
 {
-  splaytree_t *dctree = NULL;
+  splaytree_t *dctree = NULL; /* of sc_css_t */
   sc_router_t *rtr = NULL;
   sc_routerdom_t *rd = NULL;
-  sc_ifacedom_t *ifd = NULL;
   sc_iface_t *iface;
   sc_css_t *dc;
   sc_domain_t *dom;
-  slist_node_t *sn;
-  int i, c;
+  slist_node_t *sn; /* of sc_iface_t */
+  int i, c, free_rtr = 1;
   int namec = 0;
   slist_t *tmp = NULL;
   const char *suffix;
 
-  for(sn=slist_head_node(list); sn != NULL; sn=slist_node_next(sn))
+  /* count how many interfaces have names.  if none, skip over */
+  for(sn=slist_head_node(rl->ifaces); sn != NULL; sn=slist_node_next(sn))
     {
       iface = slist_node_item(sn);
-      if(iface->name != NULL)
-	namec++;
+      /* skip over domains that we're not interested in */
+      if((suffix = sc_suffix_find(iface->name)) == NULL ||
+	 (domain_eval != NULL && strcmp(domain_eval, suffix) != 0))
+	continue;
+      namec++;
     }
   if(namec == 0)
     {
-      slist_empty_cb(list, (slist_free_t)sc_iface_free);
-      return 0;
-    }
-
-  /* is this a router we cannot train from? */
-  if(slist_count(list) == 1)
-    {
-      /*
-       * use the public suffix list to figure out the domain
-       * and skip over domains that we're not interested in
-       */
-      iface = slist_head_pop(list);
-      if((suffix = sc_suffix_find(iface->name)) == NULL ||
-	 (domain_eval != NULL && strcmp(domain_eval, suffix) != 0))
-	{
-	  sc_iface_free(iface);
-	  return 0;
-	}
-
-      if((ifd = sc_ifacedom_alloc(iface, suffix)) == NULL ||
-	 (dom = sc_domain_get(suffix)) == NULL ||
-	 slist_tail_push(dom->appl, ifd) == NULL)
-	{
-	  sc_iface_free(iface);
-	  goto err;
-	}
+      sc_routerload_reset(rl);
       return 0;
     }
 
   /* to start with, build the router and put it on the global list */
+  c = slist_count(rl->ifaces);
   if((rtr = malloc_zero(sizeof(sc_router_t))) == NULL ||
-     (rtr->ifaces = malloc_zero(sizeof(sc_iface_t *) * namec)) == NULL)
+     (rtr->ifaces = malloc_zero(sizeof(sc_iface_t *) * c)) == NULL)
     goto err;
-  while((iface = slist_head_pop(list)) != NULL)
+  rtr->asn = rl->asn;
+  rtr->id  = rl->id;
+  while((iface = slist_head_pop(rl->ifaces)) != NULL)
     {
-      if(iface->name == NULL)
-	{
-	  sc_iface_free(iface);
-	  continue;
-	}
       rtr->ifaces[rtr->ifacec++] = iface;
       iface->rtr = rtr;
     }
-  if(slist_tail_push(router_list, rtr) == NULL)
-    goto err;
-
   array_qsort((void **)rtr->ifaces, rtr->ifacec,
 	      (array_cmp_t)sc_iface_suffix_cmp);
+  if(slist_tail_push(router_list, rtr) == NULL)
+    goto err;
+  free_rtr = 0;
 
   /* figure out all the domains the router can be mapped to */
   if((dctree=splaytree_alloc((splaytree_cmp_t)sc_css_css_cmp))==NULL)
@@ -7784,7 +9138,6 @@ static int sc_router_finish(slist_t *list)
 	goto err;
       rd->ifacec = c;
       rd->rtr = rtr;
-      rd->id = slist_count(dom->routers) + 1;
       c = 0;
       for(i=0; i<rtr->ifacec; i++)
 	{
@@ -7795,42 +9148,61 @@ static int sc_router_finish(slist_t *list)
 	  if((rd->ifaces[c] = sc_ifacedom_alloc(iface, suffix)) == NULL)
 	    goto err;
 	  rd->ifaces[c]->rd = rd;
-	  rd->ifaces[c]->id = dom->ifacec + c + 1;
 	  c++;
 	}
 
       if(slist_tail_push(dom->routers, rd) == NULL)
 	goto err;
-      dom->ifacec += rd->ifacec;
       rd = NULL;
 
       sc_css_free(dc);
     }
   slist_free(tmp);
-
+  sc_routerload_reset(rl);
   return 0;
 
  err:
+  if(rtr != NULL && free_rtr != 0) sc_router_free(rtr);
   if(rd != NULL) sc_routerdom_free(rd);
-  if(ifd != NULL) sc_ifacedom_free(ifd);
+  sc_routerload_reset(rl);
   return -1;
 }
 
 static int router_file_line(char *line, void *param)
 {
-  slist_t *list = param;
+  sc_routerload_t *rl = param;
   sc_iface_t *iface = NULL;
+  long long ll;
   char *ip, *ptr;
   char name[1024];
 
   if(line[0] == '#')
-    return 0;
+    {
+      ptr = line + 1;
+      while(*ptr == ' ')
+	ptr++;
+      if(strncasecmp(ptr, "node2as:", 8) == 0)
+	{
+	  ptr += 8;
+	  while(*ptr == ' ')
+	    ptr++;
+	  if(string_tollong(ptr, &ll) == 0)
+	    rl->asn = ll;
+	}
+      else if(strncasecmp(ptr, "node2id:", 8) == 0)
+	{
+	  ptr += 8;
+	  while(*ptr == ' ')
+	    ptr++;
+	  if(string_tollong(ptr, &ll) == 0)
+	    rl->id = ll;
+	}
+      return 0;
+    }
 
   if(line[0] == '\0')
     {
-      if(slist_count(list) == 0)
-	return 0;
-      if(sc_router_finish(list) != 0)
+      if(sc_router_finish(rl) != 0)
 	return -1;
       return 0;
     }
@@ -7849,12 +9221,65 @@ static int router_file_line(char *line, void *param)
   else name[0] = '\0';
 
   if((iface = sc_iface_alloc(ip, name)) == NULL ||
-     slist_tail_push(list, iface) == NULL)
+     slist_tail_push(rl->ifaces, iface) == NULL)
     goto err;
 
   return 0;
 
  err:
+  return -1;
+}
+
+static int sibling_file_line(char *line, void *param)
+{
+  slist_t *list = param;
+  sc_as2org_t *a2o = NULL;
+  char *asn, *ptr;
+  long long ll;
+  int last = 0;
+
+  if(line[0] == '#')
+    return 0;
+
+  asn = ptr = line;
+
+  for(;;)
+    {
+      while(isdigit(*ptr) != 0)
+	ptr++;
+      if(*ptr == '\0')
+	last = 1;
+      else if(isspace(*ptr) == 0)
+	goto err;
+      *ptr = '\0'; ptr++;
+
+      /* build an as2org node */
+      if(string_tollong(asn, &ll) != 0)
+	goto err;
+      if((a2o = malloc(sizeof(sc_as2org_t))) == NULL)
+	goto err;
+      a2o->asn = ll;
+      a2o->org = sibling_id;
+      if(slist_tail_push(list, a2o) == NULL)
+	goto err;
+      a2o = NULL;
+
+      /* continue onto the next ASN in this org */
+      if(last != 0)
+	break;
+      while(isspace(*ptr) != 0)
+	ptr++;
+      if(*ptr == '\0')
+	break;
+
+      asn = ptr;
+    }
+
+  sibling_id++;
+  return 0;
+
+ err:
+  if(a2o != NULL) free(a2o);
   return -1;
 }
 
@@ -7889,7 +9314,60 @@ static int dump_1(void)
   return 0;
 }
 
-static int dump_2_regex(sc_domain_t *dom, sc_regex_t *re)
+static void dump_2_regex_iface(sc_iface_t *iface, char class,
+			       sc_rework_t *rew, sc_css_t *css)
+{
+  char buf[256], *ptr;
+  int x;
+
+  printf("{\"addr\":\"%s\"", scamper_addr_tostr(iface->addr,buf,sizeof(buf)));
+  if(class != '\0')
+    printf(", \"code\":\"%c\"", class);
+  printf(", \"hostname\":\"");
+  json_print(iface->name);
+  printf("\"");
+  if(rew != NULL)
+    {
+      printf(", \"span\":[");
+      for(x=1; x<rew->m; x++)
+	{
+	  if(x > 1) printf(", ");
+	  printf("%d, %d", (int)rew->ovector[2*x],
+		 (int)rew->ovector[(2*x)+1]);
+	}
+      printf("]");
+    }
+  else if(class == '~' && do_learnasn != 0 && iface->as_s != -1)
+    {
+      printf(", \"span\":[%d, %d]", iface->as_s, iface->as_e+1);
+    }
+
+  if(css != NULL)
+    {
+      ptr = css->css;
+      printf(", \"css\":[");
+      for(x=0; x<css->cssc; x++)
+	{
+	  if(x > 0)
+	    {
+	      printf(", ");
+	      ptr++;
+	    }
+	  printf("\"");
+	  json_print(ptr);
+	  printf("\"");
+	  while(*ptr != '\0')
+	    ptr++;
+	}
+      printf("]");
+    }
+
+  printf("}");
+
+  return;
+}
+
+static int dump_2_regex_alias(sc_domain_t *dom, sc_regex_t *re)
 {
   sc_routername_t **rnames = NULL, *rn;
   int rnamec = 0;
@@ -7929,7 +9407,7 @@ static int dump_2_regex(sc_domain_t *dom, sc_regex_t *re)
   /* take a pass through the inferred routers, pairing inference with iface */
   if((ri_list = slist_alloc()) == NULL)
     goto done;
-  if(sc_regex_eval(re, ri_list) != 0)
+  if(sc_regex_alias_eval(re, ri_list) != 0)
     goto done;
   if(sc_ifdptr_tree_ri(ifp_tree, ri_list) != 0)
     goto done;
@@ -8027,7 +9505,6 @@ static int dump_2_regex(sc_domain_t *dom, sc_regex_t *re)
 		       sc_css_css_cmp(rn->css,ifi->css) != 0) &&
 		      sc_css_match(rn->css, ifd->label, NULL, 1) == 1)
 		code = 'm';
-
 	      printf("%16s %c %s\n",
 		     scamper_addr_tostr(iface->addr, buf, sizeof(buf)),
 		     code, iface->name);
@@ -8035,25 +9512,13 @@ static int dump_2_regex(sc_domain_t *dom, sc_regex_t *re)
 	  else
 	    {
 	      if(i > 0) printf(", ");
-	      printf("{\"addr\":\"%s\", \"code\":\"%c\"",
-		     scamper_addr_tostr(iface->addr, buf, sizeof(buf)), code);
-	      printf(", \"hostname\":\"");
-	      json_print(iface->name);
-	      printf("\"");
 	      if(ifi->css != NULL)
 		{
 		  if(sc_rework_match(rew, iface, NULL) < 0)
 		    goto done;
-		  printf(", \"span\":[");
-		  for(x=1; x<rew->m; x++)
-		    {
-		      if(x > 1) printf(", ");
-		      printf("%d, %d", (int)rew->ovector[2*x],
-			     (int)rew->ovector[(2*x)+1]);
-		    }
-		  printf("]");
+		  dump_2_regex_iface(iface, code, rew, ifi->css);
 		}
-	      printf("}");
+	      else dump_2_regex_iface(iface, code, NULL, NULL);
 	    }
 	}
 
@@ -8063,17 +9528,18 @@ static int dump_2_regex(sc_domain_t *dom, sc_regex_t *re)
 	  if((suffix = sc_suffix_find(iface->name)) == NULL ||
 	     strcmp(suffix, dom->domain) != 0)
 	    {
+	      scamper_addr_tostr(iface->addr, buf, sizeof(buf));
 	      if(do_json == 0)
-		printf("%16s   %s\n",
-		       scamper_addr_tostr(iface->addr, buf, sizeof(buf)),
-		       iface->name);
+		{
+		  if(iface->name != NULL)
+		    printf("%16s   %s\n", buf, iface->name);
+		  else
+		    printf("%16s\n", buf);
+		}
 	      else
 		{
-		  printf(", {\"addr\":\"%s\"",
-			 scamper_addr_tostr(iface->addr, buf, sizeof(buf)));
-		  printf(", \"hostname\":\"");
-		  json_print(iface->name);
-		  printf("\"}");
+		  printf(", ");
+		  dump_2_regex_iface(iface, '\0', NULL, NULL);
 		}
 	    }
 	}
@@ -8108,7 +9574,8 @@ static int dump_2_regex(sc_domain_t *dom, sc_regex_t *re)
 
       for(sn=slist_head_node(dom->appl); sn != NULL; sn=slist_node_next(sn))
 	{
-	  ifd = slist_node_item(sn);
+	  rd = slist_node_item(sn); assert(rd->ifacec == 1);
+	  ifd = rd->ifaces[0];
 	  iface = ifd->iface;
 	  code = ' ';
 
@@ -8181,26 +9648,18 @@ static int dump_2_regex(sc_domain_t *dom, sc_regex_t *re)
 	  while(sn != sn2)
 	    {
 	      ifi = slist_node_item(sn); iface = ifi->ifd->iface;
-	      scamper_addr_tostr(iface->addr, buf, sizeof(buf));
 	      if(do_json == 0)
-		printf("%16s %c %s\n", buf, ifi->class, iface->name);
+		{
+		  printf("%16s %c %s\n",
+			 scamper_addr_tostr(iface->addr, buf, sizeof(buf)),
+			 ifi->class, iface->name);
+		}
 	      else
 		{
 		  if(i > 0) printf(", ");
-		  printf("{\"addr\":\"%s\", \"code\":\"%c\"", buf, ifi->class);
-		  printf(", \"hostname\":\"");
-		  json_print(iface->name);
-		  printf("\"");
 		  if(sc_rework_match(rew, iface, NULL) < 0)
 		    goto done;
-		  printf(", \"span\":[");
-		  for(x=1; x<rew->m; x++)
-		    {
-		      if(x > 1) printf(", ");
-		      printf("%d, %d", (int)rew->ovector[2*x],
-			     (int)rew->ovector[(2*x)+1]);
-		    }
-		  printf("]}");
+		  dump_2_regex_iface(iface, ifi->class, rew, ifi->css);
 		}
 	      sn = slist_node_next(sn);
 	      i++;
@@ -8226,17 +9685,16 @@ static int dump_2_regex(sc_domain_t *dom, sc_regex_t *re)
 	  while(sn != NULL)
 	    {
 	      ifi = slist_node_item(sn); iface = ifi->ifd->iface;
-	      scamper_addr_tostr(iface->addr, buf, sizeof(buf));
-
 	      if(do_json == 0)
-		printf("%16s %c %s\n", buf, ifi->class, iface->name);
+		{
+		  printf("%16s %c %s\n",
+			 scamper_addr_tostr(iface->addr, buf, sizeof(buf)),
+			 ifi->class, iface->name);
+		}
 	      else
 		{
 		  if(i > 0) printf(", ");
-		  printf("{\"addr\":\"%s\", \"code\":\"%c\"", buf, ifi->class);
-		  printf(", \"hostname\":\"");
-		  json_print(iface->name);
-		  printf("\"}");
+		  dump_2_regex_iface(iface, ifi->class, NULL, NULL);
 		  i++;
 		}
 	      sn = slist_node_next(sn);
@@ -8269,19 +9727,373 @@ static int dump_2_regex(sc_domain_t *dom, sc_regex_t *re)
   return rc;
 }
 
+static int dump_2_regex_asn(sc_domain_t *dom, sc_regex_t *re)
+{
+  splaytree_t *rd_tree = NULL, *ifp_tree = NULL;
+  slist_t *ifi_list = NULL, *rd_list = NULL, *z_list = NULL, *rd0_list = NULL;
+  sc_rework_t *rew = NULL;
+  const char *suffix;
+  sc_ifaceinf_t *ifi;
+  sc_ifacedom_t *ifd;
+  sc_routerdom_t *rd;
+  sc_iface_t *iface;
+  sc_ifdptr_t *ifp;
+  sc_css_t *css = NULL;
+  slist_node_t *sn;
+  int matched, x, z, i, j, r, rc = -1;
+  char buf[2048];
+  void *ptr;
+
+  if((rd_tree = splaytree_alloc((splaytree_cmp_t)ptrcmp)) == NULL ||
+     (rd_list = slist_alloc()) == NULL ||
+     (ifi_list = slist_alloc()) == NULL ||
+     (ifp_tree = sc_ifdptr_tree(dom->routers)) == NULL ||
+     sc_regex_asn_eval(re, ifi_list) != 0 ||
+     sc_ifdptr_tree_ifi(ifp_tree, ifi_list) != 0 ||
+     (rew = sc_rework_alloc(re)) == NULL)
+    goto done;
+
+  if(do_json == 0)
+    {
+      printf("%s:", dom->domain);
+      for(i=0; i<re->regexc; i++)
+	printf(" %s", re->regexes[i]->str);
+      printf(" %s", sc_regex_score_tostr(re, buf, sizeof(buf)));
+      printf("\n");
+    }
+  else
+    {
+      printf("{\"domain\":\"%s\"", dom->domain);
+      printf(", \"re\":[");
+      for(i=0; i<re->regexc; i++)
+	{
+	  if(i > 0) printf(", ");
+	  printf("\"");
+	  json_print(re->regexes[i]->str);
+	  printf("\"");
+	}
+      printf("]");
+      printf(", \"score\":{%s}", sc_regex_score_tojson(re, buf, sizeof(buf)));
+      printf(", \"routers\":[");
+    }
+
+  slist_qsort(ifi_list, (slist_cmp_t)sc_ifaceinf_class_cmp);
+  for(sn=slist_head_node(ifi_list); sn != NULL; sn=slist_node_next(sn))
+    {
+      ifi = slist_node_item(sn);
+      if(ifi->class == ' ')
+	continue;
+      if(splaytree_find(rd_tree, ifi->ifd->rd) != NULL)
+	continue;
+      if(splaytree_insert(rd_tree, ifi->ifd->rd) == NULL ||
+	 slist_tail_push(rd_list, ifi->ifd->rd) == NULL)
+	goto done;
+    }
+
+  r = 0;
+  for(z=0; z<2; z++)
+    {
+      if(z == 0)
+	z_list = rd_list;
+      else
+	z_list = dom->routers;
+
+      for(sn=slist_head_node(z_list); sn != NULL; sn=slist_node_next(sn))
+	{
+	  rd = slist_node_item(sn);
+	  ptr = splaytree_find(rd_tree, rd);
+	  if((ptr == NULL && z == 0) || (ptr != NULL && z == 1))
+	    continue;
+
+	  if(do_json != 0)
+	    {
+	      if(r > 0) printf(",");
+	      printf("{\"asn\":%u", rd->rtr->asn);
+	      if(rd->rtr->id != 0)
+		printf(", \"id\":%u", rd->rtr->id);
+	      printf(", \"ifaces\":[");
+	      r++;
+	    }
+	  else
+	    {
+	      printf("%u\n", rd->rtr->asn);
+	    }
+
+	  for(i=0; i<rd->ifacec; i++)
+	    {
+	      ifd = rd->ifaces[i]; iface = ifd->iface;
+	      ifp = sc_ifdptr_find(ifp_tree, ifd); assert(ifp != NULL);
+	      ifi = ifp->ptr;
+	      if(do_json != 0)
+		{
+		  if(i > 0) printf(", ");
+		  if(ifi->css != NULL)
+		    {
+		      if(sc_rework_match(rew, iface, NULL) < 0)
+			goto done;
+		      dump_2_regex_iface(iface, ifi->class, rew, ifi->css);
+		    }
+		  else dump_2_regex_iface(iface, ifi->class, NULL, NULL);
+		}
+	      else
+		{
+		  printf("%16s %c %s\n",
+			 scamper_addr_tostr(iface->addr, buf, sizeof(buf)),
+			 ifi->class, iface->name);
+		}
+	    }
+
+	  for(i=0; i<rd->rtr->ifacec; i++)
+	    {
+	      iface = rd->rtr->ifaces[i];
+	      if((suffix = sc_suffix_find(iface->name)) == NULL ||
+		 strcmp(suffix, dom->domain) != 0)
+		{
+		  if(do_json == 0)
+		    {
+		      scamper_addr_tostr(iface->addr, buf, sizeof(buf));
+		      if(iface->name != NULL)
+			printf("%16s   %s\n", buf, iface->name);
+		      else
+			printf("%16s\n", buf);
+		    }
+		  else
+		    {
+		      printf(", ");
+		      dump_2_regex_iface(iface, '\0', NULL, NULL);
+		    }
+		}
+	    }
+
+	  if(do_json == 0)
+	    printf("\n");
+	  else
+	    printf("]}");
+	}
+    }
+  if(do_json != 0)
+    printf("]");
+
+  if(do_appl != 0 && slist_count(dom->appl) > 0)
+    {
+      /* empty out the list, put unmatched routers in it */
+      slist_empty(rd_list);
+      if((rd0_list = slist_alloc()) == NULL)
+	goto done;
+
+      for(sn=slist_head_node(dom->appl); sn != NULL; sn=slist_node_next(sn))
+	{
+	  rd = slist_node_item(sn);
+	  matched = 0;
+	  for(i=0; i<rd->ifacec; i++)
+	    {
+	      if((x = sc_rework_match(rew, rd->ifaces[i]->iface, NULL)) < 0)
+		goto done;
+	      if(x == 1)
+		{
+		  matched = 1;
+		  break;
+		}
+	    }
+	  if(slist_tail_push(matched != 0 ? rd_list : rd0_list, rd) == NULL)
+	    goto done;
+	}
+
+      if(slist_count(rd_list) > 0)
+	{
+	  if(do_json == 0)
+	    printf("application-matched:\n\n");
+	  else
+	    printf(", \"application_matched\":[");
+	  r = 0;
+
+	  for(sn=slist_head_node(rd_list); sn != NULL; sn=slist_node_next(sn))
+	    {
+	      rd = slist_node_item(sn);
+	      if(do_json != 0)
+		{
+		  if(r > 0) printf(",");
+		  printf("{\"ifaces\":[");
+		  r++;
+		}
+
+	      /* print matched interfaces first, then unmatched */
+	      for(z=0; z<2; z++)
+		{
+		  j = 0;
+		  for(i=0; i<rd->ifacec; i++)
+		    {
+		      iface = rd->ifaces[i]->iface;
+		      if((x = sc_rework_match(rew, iface, &css)) < 0)
+			goto done;
+		      if((x == 0 && z == 0) || (x == 1 && z == 1))
+			continue;
+		      if(do_json == 0)
+			{
+			  scamper_addr_tostr(iface->addr, buf, sizeof(buf));
+			  printf("%16s %c %s\n", buf,
+				 (x == 1 && z == 0) ? '?' : ' ', iface->name);
+			}
+		      else
+			{
+			  if(j > 0) printf(", ");
+			  if(x == 1 && z == 0)
+			    dump_2_regex_iface(iface, '?', rew, css);
+			  else
+			    dump_2_regex_iface(iface, '\0', NULL, NULL);
+			}
+		      if(css != NULL)
+			{
+			  sc_css_free(css);
+			  css = NULL;
+			}
+		      j++;
+		    }
+		}
+
+	      for(i=0; i<rd->rtr->ifacec; i++)
+		{
+		  iface = rd->rtr->ifaces[i];
+		  if((suffix = sc_suffix_find(iface->name)) == NULL ||
+		     strcmp(suffix, dom->domain) != 0)
+		    {
+		      if(do_json == 0)
+			{
+			  scamper_addr_tostr(iface->addr, buf, sizeof(buf));
+			  if(iface->name != NULL)
+			    printf("%16s   %s\n", buf, iface->name);
+			  else
+			    printf("%16s\n", buf);
+			}
+		      else
+			{
+			  printf(", ");
+			  dump_2_regex_iface(iface, '\0', NULL, NULL);
+			}
+		    }
+		}
+
+	      if(do_json == 0)
+		printf("\n");
+	      else
+		printf("]}");
+	    }
+	  if(do_json != 0)
+	    printf("]");
+	}
+
+      /* print other routers in the domain with no matched interfaces */
+      if(slist_count(rd0_list) > 0)
+	{
+	  if(do_json == 0)
+	    printf("application-unmatched:\n\n");
+	  else
+	    printf(", \"application_unmatched\":[");
+	  r = 0;
+
+	  for(sn=slist_head_node(rd0_list); sn != NULL; sn=slist_node_next(sn))
+	    {
+	      rd = slist_node_item(sn);
+	      if(do_json != 0)
+		{
+		  if(r > 0) printf(",");
+		  printf("{\"ifaces\":[");
+		  r++;
+		}
+
+	      /* print interfaces in the domain first */
+	      j = 0;
+	      for(i=0; i<rd->ifacec; i++)
+		{
+		  iface = rd->ifaces[i]->iface;
+		  if(do_json == 0)
+		    {
+		      printf("%16s   %s\n",
+			     scamper_addr_tostr(iface->addr, buf, sizeof(buf)),
+			     iface->name);
+		    }
+		  else
+		    {
+		      if(j > 0) printf(", ");
+		      dump_2_regex_iface(iface, '\0', NULL, NULL);
+		    }
+		  j++;
+		}
+
+	      /* print other interfaces on the router */
+	      for(i=0; i<rd->rtr->ifacec; i++)
+		{
+		  iface = rd->rtr->ifaces[i];
+		  if((suffix = sc_suffix_find(iface->name)) == NULL ||
+		     strcmp(suffix, dom->domain) != 0)
+		    {
+		      if(do_json == 0)
+			{
+			  scamper_addr_tostr(iface->addr, buf, sizeof(buf));
+			  if(iface->name != NULL)
+			    printf("%16s   %s\n", buf, iface->name);
+			  else
+			    printf("%16s\n", buf);
+			}
+		      else
+			{
+			  printf(", ");
+			  dump_2_regex_iface(iface, '\0', NULL, NULL);
+			}
+		    }
+		}
+
+	      if(do_json == 0)
+		printf("\n");
+	      else
+		printf("]}");
+	    }
+	  if(do_json != 0)
+	    printf("]");
+	}
+    }
+
+  if(do_json != 0)
+    printf("}\n");
+
+  rc = 0;
+
+ done:
+  if(ifi_list != NULL) slist_free_cb(ifi_list, (slist_free_t)sc_ifaceinf_free);
+  if(ifp_tree != NULL)
+    splaytree_free(ifp_tree, (splaytree_free_t)sc_ifdptr_free);
+  if(rd_tree != NULL) splaytree_free(rd_tree, NULL);
+  if(rd_list != NULL) slist_free(rd_list);
+  if(rd0_list != NULL) slist_free(rd0_list);
+  if(rew != NULL) sc_rework_free(rew);
+  if(css != NULL) sc_css_free(css);
+  return rc;
+}
+
 static int dump_2(void)
 {
   slist_node_t *sn;
   sc_domain_t *dom;
   sc_regex_t *re;
 
+  assert(do_learnalias != 0 || do_learnasn != 0);
+
   for(sn=slist_head_node(domain_list); sn != NULL; sn=slist_node_next(sn))
     {
       dom = slist_node_item(sn);
-      if((re = sc_domain_bestre(dom)) == NULL)
+      if((re = sc_domain_bestre(dom)) == NULL || sc_regex_show(re) == 0)
 	continue;
-      if(dump_2_regex(dom, re) != 0)
-	return -1;
+
+      if(do_learnalias != 0)
+	{
+	  if(dump_2_regex_alias(dom, re) != 0)
+	    return -1;
+	}
+      else if(do_learnasn != 0)
+	{
+	  if(dump_2_regex_asn(dom, re) != 0)
+	    return -1;
+	}
     }
 
   return 0;
@@ -8291,21 +10103,117 @@ static int dump_3(void)
 {
   slist_node_t *sn;
   sc_domain_t *dom;
-  sc_regex_t *best;
+  sc_regex_t *re;
   char buf[512];
   int k;
 
   for(sn=slist_head_node(domain_list); sn != NULL; sn=slist_node_next(sn))
     {
       dom = slist_node_item(sn);
-      if((best = sc_domain_bestre(dom)) == NULL)
+      if((re = sc_domain_bestre(dom)) == NULL || sc_regex_show(re) == 0)
+	continue;
+      printf("%s:", dom->domain);
+      for(k=0; k<re->regexc; k++)
+	printf(" %s", re->regexes[k]->str);
+      printf(", score: %s", sc_regex_score_tostr(re, buf, sizeof(buf)));
+      printf(", routers: %d\n", slist_count(dom->routers));
+    }
+
+  return 0;
+}
+
+static int dump_4_regex_asn(sc_domain_t *dom, sc_regex_t *re)
+{
+  slist_t *ifi_list = NULL;
+  sc_rework_t *rew = NULL;
+  sc_css_t *css = NULL;
+  sc_routerdom_t *rd;
+  sc_ifaceinf_t *ifi;
+  sc_iface_t *iface;
+  slist_node_t *sn;
+  int i, x, rc = -1;
+  char buf[2048], tmp[128];
+
+  if((ifi_list = slist_alloc()) == NULL ||
+     sc_regex_asn_eval(re, ifi_list) != 0)
+    goto done;
+
+  printf("%s:", dom->domain);
+  for(i=0; i<re->regexc; i++)
+    printf(" %s", re->regexes[i]->str);
+  printf(" %s", sc_regex_score_tostr(re, buf, sizeof(buf)));
+  printf("\n");
+
+  slist_qsort(ifi_list, (slist_cmp_t)sc_ifaceinf_class_cmp);
+  for(sn=slist_head_node(ifi_list); sn != NULL; sn=slist_node_next(sn))
+    {
+      ifi = slist_node_item(sn);
+      if(ifi->class == ' ' && do_showclass != 0)
+	continue;
+      iface = ifi->ifd->iface;
+      scamper_addr_tostr(iface->addr, buf, sizeof(buf));
+      tmp[0] = '\0';
+      if(ifi->css != NULL)
+	sc_css_tostr(ifi->css, '|', tmp, sizeof(tmp));
+      printf("%16s %c %6d %6s %s\n", buf, ifi->class, iface->rtr->asn,
+	     tmp, iface->name);
+    }
+
+  if(do_appl != 0 && slist_count(dom->appl) > 0)
+    {
+      if((rew = sc_rework_alloc(re)) == NULL)
+	goto done;
+      for(sn=slist_head_node(dom->appl); sn != NULL; sn=slist_node_next(sn))
+	{
+	  rd = slist_node_item(sn);
+	  for(i=0; i<rd->ifacec; i++)
+	    {
+	      iface = rd->ifaces[i]->iface;
+	      if((x = sc_rework_match(rew, iface, &css)) < 0)
+		goto done;
+	      if(x == 1)
+		{
+		  scamper_addr_tostr(iface->addr, buf, sizeof(buf));
+		  tmp[0] = '\0';
+		  if(css != NULL)
+		    sc_css_tostr(css, '|', tmp, sizeof(tmp));
+		  printf("%16s a %6s %6s %s\n", buf, "", tmp, iface->name);
+		}
+	      if(css != NULL)
+		{
+		  sc_css_free(css);
+		  css = NULL;
+		}
+	    }
+	}
+    }
+
+  rc = 0;
+
+ done:
+  if(ifi_list != NULL) slist_free_cb(ifi_list, (slist_free_t)sc_ifaceinf_free);
+  if(rew != NULL) sc_rework_free(rew);
+  if(css != NULL) sc_css_free(css);
+  return rc;
+}
+
+static int dump_4(void)
+{
+  slist_node_t *sn;
+  sc_domain_t *dom;
+  sc_regex_t *re;
+
+  for(sn=slist_head_node(domain_list); sn != NULL; sn=slist_node_next(sn))
+    {
+      dom = slist_node_item(sn);
+      if((re = sc_domain_bestre(dom)) == NULL || sc_regex_show(re) == 0)
 	continue;
 
-      printf("%s:", dom->domain);
-      for(k=0; k<best->regexc; k++)
-	printf(" %s", best->regexes[k]->str);
-      printf(", score: %s", sc_regex_score_tostr(best, buf, sizeof(buf)));
-      printf(", routers: %d\n", slist_count(dom->routers));
+      if(do_learnasn != 0)
+	{
+	  if(dump_4_regex_asn(dom, re) != 0)
+	    return -1;
+	}
     }
 
   return 0;
@@ -8414,13 +10322,17 @@ static int thin_regexes_domain_matchc(slist_t *regexes)
   sc_regex_t *re;
   int rc = -1;
 
+  assert(do_learnalias != 0 || do_learnasn != 0);
+
   if((keep = slist_alloc()) == NULL || (del = slist_alloc()) == NULL)
     goto done;
 
   for(sn = slist_head_node(regexes); sn != NULL; sn = slist_node_next(sn))
     {
       re = slist_node_item(sn);
-      if(re->matchc >= 3 && re->rt_c > 0)
+      if(do_learnalias != 0 && re->matchc >= 3 && re->rt_c > 0)
+	list = keep;
+      else if(do_learnasn != 0 && re->rt_c > 0)
 	list = keep;
       else
 	list = del;
@@ -8674,7 +10586,7 @@ static int sc_regex_refine_tp(sc_regex_t *re)
    * in separate trees
    */
   if((ri_list = slist_alloc()) == NULL ||
-     sc_regex_eval(re, ri_list) != 0)
+     sc_regex_alias_eval(re, ri_list) != 0)
     goto done;
   for(sn=slist_head_node(ri_list); sn != NULL; sn=slist_node_next(sn))
     {
@@ -8748,7 +10660,7 @@ static int sc_regex_refine_tp(sc_regex_t *re)
 	      if(capc == 1 && css->cssc == 1 &&
 		 La[0] == 0 && ptr[La[1]+1] == '\0')
 		continue;
-	      if(threadc == 1 && do_debug != 0)
+	      if(threadc <= 1 && do_debug != 0)
 		printf("%s %s\n", ptr, sc_css_tostr(css,'|',buf,sizeof(buf)));
 	      if(pt_to_bits_lit(ptr, La, Lc, &bits, &bitc) == 0)
 		{
@@ -8777,9 +10689,9 @@ static int sc_regex_refine_tp(sc_regex_t *re)
 	  str = NULL;
 	  re_new->dom = re->dom;
 
-	  if(sc_regex_eval(re_new, NULL) != 0)
+	  if(sc_regex_alias_eval(re_new, NULL) != 0)
 	    goto done;
-	  if(re_new->matchc == 0 && threadc == 1 && do_debug != 0)
+	  if(re_new->matchc == 0 && threadc <= 1 && do_debug != 0)
 	    printf("no matches %s\n", re_new->regexes[0]->str);
 	  if(sc_regex_tp_isbetter(re, re_new) == 0)
 	    {
@@ -9113,7 +11025,7 @@ static int sc_regex_refine_fne(sc_regex_t *re)
      (rd_ri_list = slist_alloc()) == NULL ||
      (rd_ri_tree = splaytree_alloc((splaytree_cmp_t)sc_ptrc_ptr_cmp)) == NULL)
     goto done;
-  if(sc_regex_eval(re, ri_list) != 0)
+  if(sc_regex_alias_eval(re, ri_list) != 0)
     goto done;
 
   if((css_tree = sc_routerdom_css_tree(re->dom->routers)) == NULL)
@@ -9260,7 +11172,7 @@ static int sc_regex_refine_fne(sc_regex_t *re)
 	    goto done;
 	  re_eval->score = re->score + css->count;
 	  re_eval->dom = re->dom;
-	  if(sc_regex_eval(re_eval, NULL) != 0)
+	  if(sc_regex_alias_eval(re_eval, NULL) != 0)
 	    goto done;
 
 	  /* tag the regex with the css */
@@ -9283,9 +11195,9 @@ static int sc_regex_refine_fne(sc_regex_t *re)
       free(str); str = NULL;
     }
   splaytree_free(re_tree, NULL); re_tree = NULL;
-  dlist_qsort(recss_list, (dlist_cmp_t)sc_regex_css_score_cmp);
+  dlist_qsort(recss_list, (dlist_cmp_t)sc_regex_css_regex_score_cmp);
 
-  if(do_debug != 0 && threadc == 1)
+  if(do_debug != 0 && threadc <= 1)
     {
       for(dn=dlist_head_node(recss_list); dn != NULL; dn=dlist_node_next(dn))
 	{
@@ -9312,7 +11224,7 @@ static int sc_regex_refine_fne(sc_regex_t *re)
   for(;;)
     {
       slist_empty_cb(ifi_list, (slist_free_t)sc_ifaceinf_free);
-      if(sc_regex_eval_ifi_build(re_work, ifi_list) != 0)
+      if(sc_regex_ifi_build(re_work, ifi_list) != 0)
 	goto done;
 
       /* build a new set of regexes that include the current working regex */
@@ -9329,10 +11241,10 @@ static int sc_regex_refine_fne(sc_regex_t *re)
 	  if(recss->work != NULL) sc_regex_free(recss->work);
 	  recss->work = re_eval; re_eval = NULL;
 
-	  if(sc_regex_eval_ifi_build(recss->regex, ifi2_list) != 0 ||
-	     sc_regex_eval_ifi_build2(ifi_list, ifi2_list,
+	  if(sc_regex_ifi_build(recss->regex, ifi2_list) != 0 ||
+	     sc_regex_ifi_build2(ifi_list, ifi2_list,
 				      recss->work->regexc-1, ifi3_list) != 0 ||
-	     sc_regex_eval_ifi_score(recss->work, ifi3_list) != 0)
+	     sc_regex_alias_ifi_score(recss->work, ifi3_list) != 0)
 	    goto done;
 
 	  slist_empty_cb(ifi2_list, (slist_free_t)sc_ifaceinf_free);
@@ -9348,7 +11260,7 @@ static int sc_regex_refine_fne(sc_regex_t *re)
 	}
       dlist_qsort(recss_list, (dlist_cmp_t)sc_regex_css_work_score_cmp);
 
-      if(do_debug != 0 && threadc == 1)
+      if(do_debug != 0 && threadc <= 1)
 	{
 	  for(dn=dlist_head_node(recss_list);dn != NULL;dn=dlist_node_next(dn))
 	    {
@@ -9398,7 +11310,7 @@ static int sc_regex_refine_fne(sc_regex_t *re)
       css = dlist_node_item(dn);
       re_work->score += css->count;
     }
-  if(sc_regex_eval(re_work, NULL) != 0)
+  if(sc_regex_alias_eval(re_work, NULL) != 0)
     goto done;
 
   if(sc_regex_fne_isbetter2(re, re_work) > 0)
@@ -9410,7 +11322,7 @@ static int sc_regex_refine_fne(sc_regex_t *re)
       sc_domain_unlock(re->dom);
       re_work = NULL;
     }
-  else if(do_debug != 0 && threadc == 1)
+  else if(do_debug != 0 && threadc <= 1)
     {
       printf("%s %s\n",
 	     re_work->regexes[0]->str,
@@ -9665,7 +11577,8 @@ static int sc_regex_refine_class_do(sc_regex_t *re, slist_t *ifd_list,
 
       if((segs[i] = slist_alloc()) == NULL)
 	goto done;
-      if(slist_count(list) == 1 && re->rt_c >= 2)
+      if(slist_count(list) == 1 &&
+	 ((do_learnalias != 0 && re->rt_c >= 2) || do_learnasn != 0))
 	{
 	  ptr = slist_head_pop(list);
 	  if(string_isdigit(ptr) != 0)
@@ -9743,7 +11656,7 @@ static int sc_regex_refine_class_do(sc_regex_t *re, slist_t *ifd_list,
       slist_empty(list);
     }
 
-  if(do_debug != 0 && threadc == 1)
+  if(do_debug != 0 && threadc <= 1)
     {
       for(i=0; i<cc; i++)
 	{
@@ -9844,7 +11757,8 @@ static int sc_regex_refine_class_tree(splaytree_t *re_tree, slist_t *ifd_list)
 static int sc_regex_refine_class(sc_regex_t *re)
 {
   splaytree_t **trees = NULL, *seg_tree = NULL;
-  slist_t *ri_list = NULL, *ifd_list = NULL, *re_list = NULL;
+  slist_t *ifd_list = NULL, *re_list = NULL;
+  slist_t *ri_list = NULL, *ifi_list = NULL;
   sc_regex_t *capre = NULL, *re_eval;
   sc_rework_t *caprew = NULL;
   sc_routerinf_t *ri;
@@ -9853,26 +11767,51 @@ static int sc_regex_refine_class(sc_regex_t *re)
   char *str = NULL, buf[256];
   int i, cc = 0, rc = -1;
 
-  if((ifd_list = slist_alloc()) == NULL || (re_list = slist_alloc()) == NULL ||
-     (ri_list = slist_alloc()) == NULL || sc_regex_eval(re, ri_list) != 0)
+  assert(do_learnalias != 0 || do_learnasn != 0);
+
+  if((ifd_list = slist_alloc()) == NULL || (re_list = slist_alloc()) == NULL)
     goto done;
 
   /* assemble the set of interfaces we want to train with */
-  for(sn=slist_head_node(ri_list); sn != NULL; sn=slist_node_next(sn))
+  if(do_learnalias != 0)
     {
-      ri = slist_node_item(sn);
-      if(ri->ifacec == 1 || ri->ip != 0)
-	continue;
-      for(i=0; i<ri->ifacec; i++)
+      if((ri_list = slist_alloc()) == NULL ||
+	 sc_regex_alias_eval(re, ri_list) != 0)
+	goto done;
+      for(sn=slist_head_node(ri_list); sn != NULL; sn=slist_node_next(sn))
 	{
-	  ifi = ri->ifaces[i];
+	  ri = slist_node_item(sn);
+	  if(ri->ifacec == 1 || ri->ip != 0)
+	    continue;
+	  for(i=0; i<ri->ifacec; i++)
+	    {
+	      ifi = ri->ifaces[i];
+	      if(ifi->class != '+')
+		continue;
+	      if(slist_tail_push(ifd_list, ifi->ifd) == NULL)
+		goto done;
+	    }
+	}
+      slist_free_cb(ri_list, (slist_free_t)sc_routerinf_free); ri_list = NULL;
+    }
+  else if(do_learnasn != 0)
+    {
+      if((ifi_list = slist_alloc()) == NULL ||
+	 sc_regex_asn_eval(re, ifi_list) != 0)
+	goto done;
+      for(sn=slist_head_node(ifi_list); sn != NULL; sn=slist_node_next(sn))
+	{
+	  ifi = slist_node_item(sn);
 	  if(ifi->class != '+')
 	    continue;
 	  if(slist_tail_push(ifd_list, ifi->ifd) == NULL)
 	    goto done;
 	}
+      slist_free_cb(ifi_list, (slist_free_t)sc_ifaceinf_free); ifi_list = NULL;
     }
-  slist_free_cb(ri_list, (slist_free_t)sc_routerinf_free); ri_list = NULL;
+
+  if(slist_count(ifd_list) == 0)
+    goto done;
 
   /* get the set of regexes and evaluate them */
   if(sc_regex_refine_class_do(re, ifd_list, re_list) != 0)
@@ -9881,11 +11820,12 @@ static int sc_regex_refine_class(sc_regex_t *re)
   for(sn=slist_head_node(re_list); sn != NULL; sn=slist_node_next(sn))
     {
       re_eval = slist_node_item(sn);
-      sc_regex_eval(re_eval, NULL);
+      if(sc_regex_eval(re_eval, NULL) != 0)
+	goto done;
     }
   slist_qsort(re_list, (slist_cmp_t)sc_regex_score_rank_cmp);
 
-  if(do_debug != 0 && threadc == 1)
+  if(do_debug != 0 && threadc <= 1)
     {
       for(sn=slist_head_node(re_list); sn != NULL; sn=slist_node_next(sn))
 	{
@@ -9913,6 +11853,7 @@ static int sc_regex_refine_class(sc_regex_t *re)
   if(seg_tree != NULL)
     splaytree_free(seg_tree, (splaytree_free_t)sc_segscore_free);
   if(re_list != NULL) slist_free_cb(re_list, (slist_free_t)sc_regex_free);
+  if(ifi_list != NULL) slist_free_cb(ifi_list, (slist_free_t)sc_ifaceinf_free);
   if(ri_list != NULL) slist_free_cb(ri_list, (slist_free_t)sc_routerinf_free);
   if(ifd_list != NULL) slist_free(ifd_list);
   if(capre != NULL) sc_regex_free(capre);
@@ -10016,7 +11957,7 @@ static int sc_regex_refine_fnu(sc_regex_t *re)
      (re2_list = slist_alloc()) == NULL ||
      (css_list = slist_alloc()) == NULL ||
      (ri_list = slist_alloc()) == NULL ||
-     sc_regex_eval(re, ri_list) != 0 ||
+     sc_regex_alias_eval(re, ri_list) != 0 ||
      sc_ifdptr_tree_ri(ifp_tree, ri_list) != 0)
     goto done;
 
@@ -10134,7 +12075,7 @@ static int sc_regex_refine_fnu(sc_regex_t *re)
 	       * make sure La and Xa do not overlap, i.e. the literal
 	       * is not allowed to be within the extraction
 	       */
-	      if(threadc == 1 && do_debug != 0)
+	      if(threadc <= 1 && do_debug != 0)
 		printf("%s %s\n", ifd->label,
 		       sc_css_tostr(css, '|', buf, sizeof(buf)));
 	      if(pt_overlap(Xa, Xc * 2, La, Lc * 2) != 0)
@@ -10218,7 +12159,7 @@ static int sc_regex_refine_fnu(sc_regex_t *re)
   splaytree_inorder(re_tree, tree_to_dlist, re_list);
   splaytree_free(re_tree, NULL); re_tree = NULL;
 
-  if(threadc == 1 && do_debug != 0)
+  if(threadc <= 1 && do_debug != 0)
     {
       for(dn=dlist_head_node(re_list); dn != NULL; dn=dlist_node_next(dn))
 	{
@@ -10246,7 +12187,7 @@ static int sc_regex_refine_fnu(sc_regex_t *re)
       r = 0;
 
       slist_empty_cb(ifi_list, (slist_free_t)sc_ifaceinf_free);
-      if(sc_regex_eval_ifi_build(re_cur, ifi_list) != 0)
+      if(sc_regex_ifi_build(re_cur, ifi_list) != 0)
 	goto done;
 
       /* try every candidate regex paired with the current regex */
@@ -10260,7 +12201,7 @@ static int sc_regex_refine_fnu(sc_regex_t *re)
 	    goto done;
 	  if(slist_count(re_set) == 0)
 	    {
-	      if(threadc == 1 && do_debug != 0)
+	      if(threadc <= 1 && do_debug != 0)
 		printf("no matches %s\n", re_eval->regexes[0]->str);
 	      sc_regex_free(re_eval); re_eval = NULL;
 	      dlist_node_pop(re_list, dn_this);
@@ -10322,7 +12263,7 @@ static int sc_regex_refine_fnu(sc_regex_t *re)
   for(sn=slist_head_node(fnu_list); sn != NULL; sn=slist_node_next(sn))
     {
       re_fnu = slist_node_item(sn);
-      sc_regex_eval(re_fnu, NULL);
+      sc_regex_alias_eval(re_fnu, NULL);
       re_fnu = NULL;
     }
 
@@ -10404,7 +12345,7 @@ static int sc_regex_refine_ip(sc_regex_t *re)
   if((ifd_list = slist_alloc()) == NULL || (ri_list = slist_alloc()) == NULL ||
      (css_tree = splaytree_alloc((splaytree_cmp_t)sc_css_css_cmp)) == NULL)
     goto done;
-  if(sc_regex_eval(re, ri_list) != 0)
+  if(sc_regex_alias_eval(re, ri_list) != 0)
     goto done;
 
   for(sn=slist_head_node(ri_list); sn != NULL; sn=slist_node_next(sn))
@@ -10499,7 +12440,7 @@ static int sc_regex_refine_ip(sc_regex_t *re)
       dlist_qsort(re_list, (dlist_cmp_t)sc_regex_score_ip_cmp);
       slist_empty_cb(ri_list, (slist_free_t)sc_routerinf_free);
 
-      if(do_debug != 0 && threadc == 1)
+      if(do_debug != 0 && threadc <= 1)
 	{
 	  for(dn=dlist_head_node(re_list); dn != NULL; dn=dlist_node_next(dn))
 	    {
@@ -10526,7 +12467,7 @@ static int sc_regex_refine_ip(sc_regex_t *re)
       if(re_ip != NULL && re_ip->fp_c == 0 && re_ip->rt_c >= 3)
 	{
 	  if((re_new = sc_regex_head_push(re, re_ip->regexes[0])) == NULL ||
-	     sc_regex_eval(re_new, ri_list) != 0)
+	     sc_regex_alias_eval(re_new, ri_list) != 0)
 	    goto done;
 	  re_new->score = re->score + re_ip->score;
 
@@ -10671,7 +12612,7 @@ static int sc_regex_fp_isbetter(sc_regex_t *cur, sc_regex_t *can, int x)
     goto done;
 
   if((merged = sc_regex_plus1(cur, can->regexes[0], x)) == NULL ||
-     sc_regex_eval(merged, NULL) != 0)
+     sc_regex_alias_eval(merged, NULL) != 0)
     {
       rc = -1;
       goto done;
@@ -10789,7 +12730,7 @@ static int sc_regex_refine_fp(sc_regex_t *re)
   if((ifd_list = slist_alloc()) == NULL || (ri_list = slist_alloc()) == NULL ||
      (css_tree = splaytree_alloc((splaytree_cmp_t)sc_css_css_cmp)) == NULL)
     goto done;
-  if(sc_regex_eval(re, ri_list) != 0)
+  if(sc_regex_alias_eval(re, ri_list) != 0)
     goto done;
 
   /* figure out the interfaces where the associations are bad */
@@ -10827,7 +12768,7 @@ static int sc_regex_refine_fp(sc_regex_t *re)
   for(sn=slist_head_node(css_list); sn != NULL; sn=slist_node_next(sn))
     {
       css = slist_node_item(sn);
-      if(do_debug != 0 && threadc == 1)
+      if(do_debug != 0 && threadc <= 1)
 	printf("%s\n", sc_css_tostr(css, '|', buf, sizeof(buf)));
       La = malloc(sizeof(int) * 2 * css->cssc);
       for(sn2=slist_head_node(ifd_list); sn2 != NULL; sn2=slist_node_next(sn2))
@@ -10867,7 +12808,7 @@ static int sc_regex_refine_fp(sc_regex_t *re)
 	}
       dlist_qsort(re_list, (dlist_cmp_t)sc_regex_score_fp_cmp);
 
-      if(do_debug != 0 && threadc == 1)
+      if(do_debug != 0 && threadc <= 1)
 	{
 	  printf("fp round %d\n", x);
 	  for(dn=dlist_head_node(re_list); dn != NULL; dn=dlist_node_next(dn))
@@ -10911,7 +12852,7 @@ static int sc_regex_refine_fp(sc_regex_t *re)
       re = re_tmp; re_tmp = NULL;
 
       slist_empty_cb(ri_list, (slist_free_t)sc_routerinf_free);
-      if(sc_regex_eval(re, ri_list) != 0 || sc_regex_thin(re) != 0)
+      if(sc_regex_alias_eval(re, ri_list) != 0 || sc_regex_thin(re) != 0)
 	goto done;
 
       if(re->fp_c < 2)
@@ -10946,15 +12887,18 @@ static int sc_regex_f_stop(sc_regex_t *cur, sc_regex_t *can)
   if(can->fne_c + can->fnu_c + can->fp_c < 2)
     return 1;
 
-  /* find the new regex in the candidate */
-  i = sc_regex_findnew(cur, can);
+  if(do_learnalias != 0)
+    {
+      /* find the new regex in the candidate */
+      i = sc_regex_findnew(cur, can);
 
-  /*
-   * if the gain affects less than 4% routers over what we started
-   * with, then no better
-   */
-  if(can->regexes[i]->rt_c * 100 / cur->rt_c < 4)
-    return 1;
+      /*
+       * if the gain affects less than 4% routers over what we started
+       * with, then no better
+       */
+      if(can->regexes[i]->rt_c * 100 / cur->rt_c < 4)
+	return 1;
+    }
 
   return 0;
 }
@@ -10968,6 +12912,8 @@ static int sc_regex_f_isbetter(sc_regex_t *cur, sc_regex_t *can)
 {
   int i;
 
+  assert(do_learnalias != 0 || do_learnasn != 0);
+
   /* if we don't gain any true positives, then no better */
   if(can->tp_c <= cur->tp_c)
     return 0;
@@ -10976,17 +12922,32 @@ static int sc_regex_f_isbetter(sc_regex_t *cur, sc_regex_t *can)
   if(sc_regex_score_atp(cur) >= sc_regex_score_atp(can))
     return 0;
 
-  /*
-   * if the regex is not involved in clustering at least three true
-   * positives, then no better
-   */
-  i = sc_regex_findnew(cur, can);
-  if(can->regexes[i]->rt_c < 3)
-    return 0;
+  if(do_learnalias != 0)
+    {
+      /* figure out which regex is the new regex */
+      i = sc_regex_findnew(cur, can);
 
-  /* make sure the PPV rate is acceptable, otherwise no better */
-  if(sc_regex_del_ppv_ok(cur, can) == 0)
-    return 0;
+      /*
+       * if the regex is unable to cluster at least three routers,
+       * then no better
+       */
+      if(can->regexes[i]->rt_c < 3)
+	return 0;
+
+      /* make sure the PPV rate is acceptable, otherwise no better */
+      if(sc_regex_del_ppv_ok(cur, can) == 0)
+	return 0;
+    }
+  else
+    {
+      /*
+       * if any component regex is unable to find two unique ASNs,
+       * then no better
+       */
+      for(i=0; i<can->regexc; i++)
+	if(can->regexes[i]->rt_c < 2)
+	  return 0;
+    }
 
   return 1;
 }
@@ -11057,8 +13018,13 @@ static int sc_regex_refine_f(sc_regex_fn_t *work)
       return 0;
     }
 
-  if((ifi = slist_alloc()) == NULL ||
-     sc_regex_eval_ifi_build(work->re, ifi) != 0)
+  if((ifi = slist_alloc()) == NULL)
+    {
+      work->done = 1;
+      goto done;
+    }
+
+  if(sc_regex_ifi_build(work->re, ifi) != 0)
     {
       work->done = 1;
       goto done;
@@ -11101,11 +13067,279 @@ static int sc_regex_refine_f(sc_regex_fn_t *work)
   return rc;
 }
 
-static int generate_regexes_domain(sc_domain_t *dom)
+static sc_regex_t *sc_regex_refine_merge_do(sc_remerge_t *rem)
 {
-  splaytree_t *re_tree = NULL;
-  sc_routerdom_t *rd;
+  sc_regex_t *re = NULL;
+  char *ptr, *ptr_b, *str = NULL;
   slist_node_t *sn;
+  size_t off, len;
+  int i;
+
+  /*
+   * if the difference between two regexes is a single character, emit
+   * a regex that uses an ? operator on that character to make it
+   * optional.
+   */
+  if(slist_count(rem->list) == 1 &&
+     strlen((const char *)slist_head_item(rem->list)) == 1)
+    {
+      assert(rem->opt == 1);
+      ptr = slist_head_item(rem->list);
+      len = rem->css->len + 2;
+
+      if((str = malloc(len)) == NULL)
+	goto done;
+
+      if(rem->css->cssc == 2)
+	{
+	  ptr_b = rem->css->css;
+	  while(*ptr_b != '\0')
+	    ptr_b++;
+	  ptr_b++;
+	  snprintf(str, len, "%s%c?%s", rem->css->css, *ptr, ptr_b);
+	}
+      else
+	{
+	  snprintf(str, len, "%c?%s", *ptr, rem->css->css);
+	}
+
+      if((re = sc_regex_alloc(str)) != NULL)
+	return re;
+      goto done;
+    }
+
+  /*
+   * sort the strings so that we produce regexes consistently given
+   * the inputs available
+   */
+  slist_qsort(rem->list, (slist_cmp_t)strcmp);
+
+  /*
+   * allocate a string buffer that should be large enough to assemble
+   * the regex
+   */
+  len = rem->css->len + 4; /* (?:) */
+  if(rem->opt != 0) len++; /* ? */
+  for(sn=slist_head_node(rem->list); sn != NULL; sn=slist_node_next(sn))
+    {
+      ptr = slist_node_item(sn);
+      len += strlen(ptr) + 1; /* | */
+    }
+  if((str = malloc(len)) == NULL)
+    goto done;
+
+  /* assemble the regex from its component parts */
+  off = 0;
+  if(rem->css->cssc == 2)
+    string_concat(str, len, &off, "%s", rem->css->css);
+  string_concat(str, len, &off, "(?:");
+  i = 0;
+  for(sn=slist_head_node(rem->list); sn != NULL; sn=slist_node_next(sn))
+    {
+      ptr = slist_node_item(sn);
+      if(i > 0) string_concat(str, len, &off, "|%s", ptr);
+      else string_concat(str, len, &off, "%s", ptr);
+      i++;
+    }
+  if(rem->css->cssc == 2)
+    {
+      ptr = rem->css->css;
+      while(*ptr != '\0')
+	ptr++;
+      ptr++;
+    }
+  else ptr = rem->css->css;
+  if(rem->opt != 0)
+    string_concat(str, len, &off, ")?%s", ptr);
+  else
+    string_concat(str, len, &off, ")%s", ptr);
+
+  /* build a new regex */
+  if((re = sc_regex_alloc(str)) != NULL)
+    return re;
+
+ done:
+  if(str != NULL) free(str);
+  return NULL;
+}
+
+static int sc_regex_refine_merge_strok(const char *str)
+{
+  while(*str != '\0')
+    {
+      if(isalnum(*str) != 0 || *str == '-')
+	{
+	  str++;
+	  continue;
+	}
+      else if(*str == '\\' && *(str+1) == 'd' &&
+	      (*(str+2) == '+' || *(str+2) == '*'))
+	{
+	  str += 4;
+	  continue;
+	}
+      return 0;
+    }
+
+  return 1;
+}
+
+static int sc_regex_refine_merge(sc_regex_t *re, slist_node_t *sn)
+{
+  sc_css_t *css = NULL, *S_css = NULL, *T_css = NULL;
+  slist_t *list = NULL, *re_list = NULL;
+  char *S, *T, *dup = NULL;
+  splaytree_t *tree = NULL;
+  sc_regex_t *re2, *re_new = NULL;
+  size_t S_len, T_len;
+  slist_t *X = NULL;
+  sc_remerge_t *rem;
+  int flat[4], flat_len;
+  int rc = -1;
+
+  if(re->rt_c < 2)
+    return 0;
+
+  if((tree = splaytree_alloc((splaytree_cmp_t)sc_remerge_cmp)) == NULL)
+    goto done;
+
+  S = re->regexes[0]->str;
+  S_len = strlen(S);
+
+  while(sn != NULL)
+    {
+      re2 = slist_node_item(sn); sn = slist_node_next(sn);
+      if(re2->rt_c < 2)
+	continue;
+
+      T = re2->regexes[0]->str;
+      T_len = strlen(T);
+
+      if((X = lcs(S, S_len, T, T_len, 1)) == NULL ||
+	 (css = sc_css_alloc_lcs(X, S)) == NULL)
+	goto done;
+
+      if(css->cssc >= 3)
+	goto next;
+
+      /*
+       * ensure the part that is different is only made up of
+       * alphanumeric characters
+       */
+      pt_s_flatten(X, flat, &flat_len);
+      if((S_css = sc_css_alloc_xor(S, S_len, flat, flat_len)) == NULL)
+	goto done;
+      if(S_css->css != NULL && sc_regex_refine_merge_strok(S_css->css) == 0)
+	goto next;
+      pt_t_flatten(X, flat, &flat_len);
+      if((T_css = sc_css_alloc_xor(T, T_len, flat, flat_len)) == NULL)
+	goto done;
+      if(T_css->css != NULL && sc_regex_refine_merge_strok(T_css->css) == 0)
+	goto next;
+
+      /*
+       * record the common part, and the different parts, in a
+       * sc_remerge_t structure
+       */
+      if((rem = sc_remerge_get(tree, css)) == NULL)
+	goto done;
+      if(slist_count(rem->list) == 0)
+	{
+	  if(S_css->css != NULL)
+	    {
+	      if((dup = strdup(S_css->css)) == NULL ||
+		 slist_tail_push(rem->list, dup) == NULL)
+		goto done;
+	      dup = NULL;
+	    }
+	  else rem->opt = 1;
+	}
+      if(T_css->css != NULL)
+	{
+	  if((dup = strdup(T_css->css)) == NULL ||
+	     slist_tail_push(rem->list, dup) == NULL)
+	    goto done;
+	  dup = NULL;
+	}
+      else rem->opt = 1;
+
+    next:
+      slist_free_cb(X, (slist_free_t)sc_lcs_pt_free); X = NULL;
+      sc_css_free(css); css = NULL;
+      if(S_css != NULL)
+	{
+	  sc_css_free(S_css);
+	  S_css = NULL;
+	}
+      if(T_css != NULL)
+	{
+	  sc_css_free(T_css);
+	  T_css = NULL;
+	}
+    }
+
+  if(splaytree_count(tree) == 0)
+    {
+      rc = 0;
+      goto done;
+    }
+
+  if((list = slist_alloc()) == NULL)
+    goto done;
+  splaytree_inorder(tree, (splaytree_inorder_t)tree_to_slist, list);
+  splaytree_free(tree, NULL); tree = NULL;
+
+  if((re_list = slist_alloc()) == NULL)
+    goto done;
+  for(sn=slist_head_node(list); sn != NULL; sn=slist_node_next(sn))
+    {
+      rem = slist_node_item(sn);
+      if(slist_count(rem->list) < 1)
+	continue;
+      if((re_new = sc_regex_refine_merge_do(rem)) == NULL)
+	goto done;
+      re_new->score = re->score;
+      re_new->dom = re->dom;
+
+      if(sc_regex_eval(re_new, NULL) != 0)
+	goto done;
+
+      if(re_new->rt_c == 0)
+	{
+	  sc_regex_free(re_new); re_new = NULL;
+	  continue;
+	}
+
+      if(slist_tail_push(re_list, re_new) == NULL)
+	goto done;
+      re_new = NULL;
+    }
+
+  if(sc_domain_lock(re->dom) != 0)
+    goto done;
+  slist_concat(re->dom->regexes, re_list);
+  sc_domain_unlock(re->dom);
+
+  rc = 0;
+
+ done:
+  if(tree != NULL) splaytree_free(tree, (splaytree_free_t)sc_remerge_free);
+  if(list != NULL) slist_free_cb(list, (slist_free_t)sc_remerge_free);
+  if(re_list != NULL) slist_free_cb(re_list, (slist_free_t)sc_regex_free);
+  if(css != NULL) sc_css_free(css);
+  if(S_css != NULL) sc_css_free(S_css);
+  if(T_css != NULL) sc_css_free(T_css);
+  if(dup != NULL) free(dup);
+  if(X != NULL) slist_free_cb(X, (slist_free_t)sc_lcs_pt_free);
+  if(re_new != NULL) sc_regex_free(re_new);
+  return rc;
+}
+
+static int generate_regexes_domain_alias(sc_domain_t *dom)
+{
+  splaytree_t *re_tree = NULL; /* of sc_regex_t */
+  sc_routerdom_t *rd;
+  slist_node_t *sn; /* of sc_routerdom_t */
   int i, j;
 
   if((re_tree = splaytree_alloc((splaytree_cmp_t)sc_regex_str_cmp)) == NULL)
@@ -11137,9 +13371,73 @@ static int generate_regexes_domain(sc_domain_t *dom)
   return -1;
 }
 
+static int generate_regexes_domain_asn(sc_domain_t *dom)
+{
+  splaytree_t *re_tree = NULL;
+  sc_routerdom_t *rd = NULL;
+  sc_ifacedom_t *ifd1, *ifd2;
+  slist_node_t *sn1, *sn2; /* of sc_ifacedom_t */
+  slist_t *ifaces = NULL; /* of sc_ifacedom_t */
+  int i;
+
+  if((re_tree = splaytree_alloc((splaytree_cmp_t)sc_regex_str_cmp)) == NULL ||
+     (ifaces = slist_alloc()) == NULL)
+    goto err;
+
+  /*
+   * get the hostnames with an apparent hostname embedded and put them
+   * in their own list for easier processing
+   */
+  for(sn1=slist_head_node(dom->routers); sn1 != NULL; sn1=slist_node_next(sn1))
+    {
+      rd = slist_node_item(sn1);
+      for(i=0; i<rd->ifacec; i++)
+	if(rd->ifaces[i]->iface->as_s != -1 &&
+	   slist_tail_push(ifaces, rd->ifaces[i]) == NULL)
+	  goto err;
+    }
+
+  for(sn1=slist_head_node(ifaces); sn1 != NULL; sn1=slist_node_next(sn1))
+    {
+      ifd1 = slist_node_item(sn1);
+      if(ifd1->iface->as_s == -1)
+	continue;
+      for(sn2=slist_node_next(sn1); sn2 != NULL; sn2=slist_node_next(sn2))
+	{
+	  ifd2 = slist_node_item(sn2);
+	  if(ifd2->iface->as_s == -1)
+	    continue;
+
+	  /*
+	   * Does the particular label containing the ASN have more structure?
+	   * This might include the prefix "as" before the number.
+	   */
+	  if(sc_regex_asn_lcs(re_tree, dom, ifd1, ifd2) != 0)
+	    goto err;
+	}
+    }
+  slist_free(ifaces); ifaces = NULL;
+
+  /*
+   * take the regex strings out of the tree and put them in a list
+   * ready to be evaluated
+   */
+  splaytree_inorder(re_tree, tree_to_slist, dom->regexes);
+  splaytree_free(re_tree, NULL); re_tree = NULL;
+  return 0;
+
+ err:
+  if(ifaces != NULL) slist_free(ifaces);
+  if(re_tree != NULL) splaytree_free(re_tree, NULL);
+  return -1;
+}
+
 static void generate_regexes_thread(sc_domain_t *dom)
 {
-  generate_regexes_domain(dom);
+  if(do_learnalias != 0)
+    generate_regexes_domain_alias(dom);
+  else if(do_learnasn != 0)
+    generate_regexes_domain_asn(dom);
   return;
 }
 
@@ -11279,50 +13577,59 @@ static int regex_file_line(char *line, void *param)
   return 0;
 }
 
+static int generate_regexes_supplied(void)
+{
+  sc_domain_t *dom;
+  sc_regex_t *re = NULL;
+  char *dup = NULL;
+  struct stat sb;
+  int rc = -1;
+
+  if(stat(regex_eval, &sb) != 0)
+    {
+      if((dom = slist_head_item(domain_list)) == NULL ||
+	 (dup = strdup(regex_eval)) == NULL ||
+	 (re = sc_regex_alloc_str(dup)) == NULL ||
+	 slist_tail_push(dom->regexes, re) == NULL)
+	goto done;
+      re->dom = dom;
+      re = NULL;
+    }
+  else
+    {
+      if(file_lines(regex_eval, regex_file_line, NULL) != 0)
+	{
+	  fprintf(stderr, "could not read %s\n", regex_eval);
+	  goto done;
+	}
+    }
+  rc = 0;
+
+ done:
+  if(re != NULL) sc_regex_free(re);
+  if(dup != NULL) free(dup);
+  return rc;
+}
+
 static int generate_regexes(void)
 {
   struct timeval start, finish, tv;
-  int regexc = 0, rc = -1;
   sc_domain_t *dom;
   slist_node_t *sn;
-  struct stat sb;
-  sc_regex_t *re = NULL;
-  char *dup = NULL;
+  int regexc = 0;
 
   if(regex_eval != NULL)
-    {
-      if(stat(regex_eval, &sb) != 0)
-	{
-	  if((dom = slist_head_item(domain_list)) == NULL ||
-	     (dup = strdup(regex_eval)) == NULL ||
-	     (re = sc_regex_alloc_str(dup)) == NULL ||
-	     slist_tail_push(dom->regexes, re) == NULL)
-	    goto done;
-	  re->dom = dom;
-	  re = NULL;
-	}
-      else
-	{
-	  if(file_lines(regex_eval, regex_file_line, NULL) != 0)
-	    {
-	      fprintf(stderr, "could not read %s\n", regex_eval);
-	      goto done;
-	    }
-	}
-      rc = 0;
-      goto done;
-    }
+    return generate_regexes_supplied();
 
   gettimeofday_wrap(&start);
   if((tp = threadpool_alloc(threadc)) == NULL)
-    goto done;
+    return -1;
   for(sn=slist_head_node(domain_list); sn != NULL; sn=slist_node_next(sn))
     {
       dom = slist_node_item(sn);
       threadpool_tail_push(tp,(threadpool_func_t)generate_regexes_thread,dom);
     }
   threadpool_join(tp); tp = NULL;
-  rc = 0;
   gettimeofday_wrap(&finish);
 
   for(sn=slist_head_node(domain_list); sn != NULL; sn=slist_node_next(sn))
@@ -11334,10 +13641,7 @@ static int generate_regexes(void)
   fprintf(stderr, "generated %d regexes in %d.%d seconds\n", regexc,
 	  (int)tv.tv_sec, (int)(tv.tv_usec / 100000));
 
- done:
-  if(re != NULL) sc_regex_free(re);
-  if(dup != NULL) free(dup);
-  return rc;
+  return 0;
 }
 
 static void eval_regexes_thread(sc_regex_t *re)
@@ -11525,12 +13829,16 @@ static int refine_regexes_sets_domain_init(dlist_t *out, sc_domain_t *dom)
        * do not consider a regex that is worse than the head regex, or
        * one already in the work set
        */
-      if(head != re && re->tp_c <= head->tp_c && re->fp_c >= head->fp_c)
+      if(head != re && re->tp_c <= head->tp_c &&
+	 ((do_learnalias != 0 && re->fp_c >= head->fp_c) ||
+	  (do_learnasn != 0 && re->fp_c >  head->fp_c)))
 	continue;
       for(s2=slist_head_node(domfn->work); s2 != NULL; s2=slist_node_next(s2))
 	{
 	  work = slist_node_item(s2);
-	  if(re->tp_c <= work->re->tp_c && re->fp_c >= work->re->fp_c)
+	  if(re->tp_c <= work->re->tp_c &&
+	     ((do_learnalias != 0 && re->fp_c >= work->re->fp_c) ||
+	      (do_learnasn != 0 && re->fp_c >  work->re->fp_c)))
 	    break;
 	}
       if(s2 != NULL)
@@ -11583,7 +13891,7 @@ static int refine_regexes_sets(void)
 
   while(dlist_count(domfn_list) > 0)
     {
-      if(do_debug != 0 && threadc == 1)
+      if(do_debug != 0 && threadc <= 1)
 	printf("\n###\n");
       if((tp = threadpool_alloc(threadc)) == NULL)
 	goto done;
@@ -11595,7 +13903,7 @@ static int refine_regexes_sets(void)
 	  for(sn=slist_head_node(domfn->work); sn!=NULL; sn=slist_node_next(sn))
 	    {
 	      work = slist_node_item(sn);
-	      if(do_debug != 0 && threadc == 1)
+	      if(do_debug != 0 && threadc <= 1)
 		printf("%d %s %s\n", work->done,
 		       sc_regex_tostr(work->re, buf, sizeof(buf)),
 		       sc_regex_score_tostr(work->re, score, sizeof(score)));
@@ -11749,6 +14057,34 @@ static int refine_regexes_fnu(void)
   return rc;
 }
 
+static int refine_regexes_merge(void)
+{
+  sc_regex_t *re;
+  slist_node_t *sn, *sn2, *sn_tail;
+  sc_domain_t *dom;
+  int rc = -1;
+
+  fprintf(stderr, "refining regexes: merge\n");
+
+  for(sn=slist_head_node(domain_list); sn != NULL; sn=slist_node_next(sn))
+    {
+      dom = slist_node_item(sn);
+      sn_tail = slist_tail_node(dom->regexes);
+      for(sn2=slist_head_node(dom->regexes);sn2!=NULL;sn2=slist_node_next(sn2))
+	{
+	  re = slist_node_item(sn2);
+	  sc_regex_refine_merge(re, slist_node_next(sn2));
+	  if(sn2 == sn_tail)
+	    break;
+	}
+    }
+
+  thin_regexes(1);
+
+  rc = 0;
+  return rc;
+}
+
 static int refine_regexes_class(void)
 {
   sc_regex_t   *re;
@@ -11860,32 +14196,6 @@ static int refine_regexes_tp(void)
   return rc;
 }
 
-static int refine_regexes(void)
-{
-  if(refine_tp != 0 && refine_regexes_tp() != 0)
-    return -1;
-
-  if(refine_fne != 0 && refine_regexes_fne() != 0)
-    return -1;
-
-  if(refine_class != 0 && refine_regexes_class() != 0)
-    return -1;
-
-  if(refine_fnu != 0 && refine_regexes_fnu() != 0)
-    return -1;
-
-  if(refine_sets != 0 && refine_regexes_sets() != 0)
-    return -1;
-
-  if(refine_ip != 0 && refine_regexes_ip() != 0)
-    return -1;
-
-  if(refine_fp != 0 && refine_regexes_fp() != 0)
-    return -1;
-
-  return 0;
-}
-
 static int assert_domains(void)
 {
   slist_node_t *sn, *s2;
@@ -11915,28 +14225,78 @@ static int assert_domains(void)
   return 0;
 }
 
+static void load_routers_alias(void)
+{
+  slist_node_t *sn, *s2;
+  sc_domain_t *dom;
+
+  /* compute likely names for the routers */
+  tp = threadpool_alloc(threadc);
+  for(sn=slist_head_node(domain_list); sn != NULL; sn=slist_node_next(sn))
+    {
+      dom = slist_node_item(sn);
+      for(s2=slist_head_node(dom->routers); s2 != NULL; s2=slist_node_next(s2))
+	{
+	  threadpool_tail_push(tp, (threadpool_func_t)sc_routerdom_lcs_thread,
+			       slist_node_item(s2));
+	}
+    }
+  threadpool_join(tp); tp = NULL;
+
+  return;
+}
+
+static void load_routers_asn(void)
+{
+  sc_routerdom_t *rd;
+  slist_node_t *sn, *s2;
+  sc_domain_t *dom;
+  int i;
+
+  /* infer if the hostname embeds an ASN */
+  tp = threadpool_alloc(threadc);
+  for(sn=slist_head_node(domain_list); sn != NULL; sn=slist_node_next(sn))
+    {
+      dom = slist_node_item(sn);
+      for(s2=slist_head_node(dom->routers); s2 != NULL; s2=slist_node_next(s2))
+	{
+	  rd = slist_node_item(s2);
+	  for(i=0; i<rd->ifacec; i++)
+	    threadpool_tail_push(tp,
+				 (threadpool_func_t)sc_iface_asn_find_thread,
+				 rd->ifaces[i]);
+	}
+    }
+  threadpool_join(tp); tp = NULL;
+  return;
+}
+
 static int load_routers(void)
 {
+  sc_routerload_t rl;
   struct timeval start, finish, tv;
   slist_node_t *sn, *s2;
   sc_routerdom_t *rd;
   sc_domain_t *dom;
   sc_iface_t *iface;
-  slist_t *list = NULL;
-  int i, rc = -1;
+  slist_t *tmp = NULL;
+  int i, rtrc = 0, rc = -1;
+  int rtr_id, ifd_id;
+  uint32_t rtc;
 
   /* load the routers */
+  memset(&rl, 0, sizeof(rl));
   gettimeofday_wrap(&start);
-  if((domain_tree = splaytree_alloc((splaytree_cmp_t)sc_domain_cmp)) == NULL||
-     (list = slist_alloc()) == NULL ||
-     (router_list = slist_alloc()) == NULL)
+  if((domain_tree = splaytree_alloc((splaytree_cmp_t)sc_domain_cmp)) == NULL ||
+     (router_list = slist_alloc()) == NULL ||
+     (rl.ifaces = slist_alloc()) == NULL)
     goto done;
-  if(file_lines(router_file, router_file_line, list) != 0)
+  if(file_lines(router_file, router_file_line, &rl) != 0)
     {
       fprintf(stderr, "could not read %s\n", router_file);
       goto done;
     }
-  if(slist_count(list) > 0 && sc_router_finish(list) != 0)
+  if(slist_count(rl.ifaces) > 0 && sc_router_finish(&rl) != 0)
     goto done;
   if((domain_list = slist_alloc()) == NULL)
     goto done;
@@ -11946,8 +14306,9 @@ static int load_routers(void)
   tp = threadpool_alloc(threadc);
   for(sn=slist_head_node(domain_list); sn != NULL; sn=slist_node_next(sn))
     {
+      if(do_ip == 0)
+	continue;
       dom = slist_node_item(sn);
-      sc_domain_finish(dom);
       for(s2=slist_head_node(dom->routers); s2 != NULL; s2=slist_node_next(s2))
 	{
 	  rd = slist_node_item(s2);
@@ -11959,34 +14320,62 @@ static int load_routers(void)
 				   iface);
 	    }
 	}
-      for(s2=slist_head_node(dom->routers); s2 != NULL; s2=slist_node_next(s2))
-	{
-	  iface = slist_node_item(s2);
-	  threadpool_tail_push(tp, (threadpool_func_t)sc_iface_ip_find_thread,
-			       iface);
-	}
     }
   threadpool_join(tp); tp = NULL;
 
-  /* compute likely names for the routers */
-  tp = threadpool_alloc(threadc);
+  /* figure out which routers are training routers */
+  if((tmp = slist_alloc()) == NULL)
+    goto done;
   for(sn=slist_head_node(domain_list); sn != NULL; sn=slist_node_next(sn))
     {
       dom = slist_node_item(sn);
-      sc_domain_finish(dom);
-      for(s2=slist_head_node(dom->routers); s2 != NULL; s2=slist_node_next(s2))
+      slist_concat(tmp, dom->routers);
+      while((rd = slist_head_pop(tmp)) != NULL)
 	{
-	  threadpool_tail_push(tp, (threadpool_func_t)sc_routerdom_lcs_thread,
-			       slist_node_item(s2));
+	  if(sc_router_istraining(rd->rtr) != 0)
+	    {
+	      if(slist_tail_push(dom->routers, rd) == NULL)
+		goto done;
+	    }
+	  else
+	    {
+	      if(slist_tail_push(dom->appl, rd) == NULL)
+		goto done;
+	    }
 	}
     }
-  threadpool_join(tp); tp = NULL;
+
+  if(do_learnalias != 0)
+    load_routers_alias();
+  else if(do_learnasn != 0)
+    load_routers_asn();
+
+  for(sn=slist_head_node(domain_list); sn != NULL; sn=slist_node_next(sn))
+    {
+      dom = slist_node_item(sn);
+
+      /* assign router and interface ids to each training router and iface */
+      rtr_id = 1; ifd_id = 1;
+      for(s2=slist_head_node(dom->routers); s2!=NULL; s2=slist_node_next(s2))
+	{
+	  rd = slist_node_item(s2);
+	  rd->id = rtr_id++;
+	  for(i=0; i<rd->ifacec; i++)
+	    rd->ifaces[i]->id = ifd_id++;
+	  dom->ifacec += rd->ifacec;
+	}
+
+      rtc = slist_count(dom->routers);
+      dom->tpmlen = dom->ifacec / 32 + ((dom->ifacec % 32 == 0) ? 0 : 1);
+      dom->rtmlen = rtc / 32 + ((rtc % 32 == 0) ? 0 : 1);
+      rtrc += rtc;
+    }
 
   gettimeofday_wrap(&finish);
 
   timeval_diff_tv(&tv, &start, &finish);
   fprintf(stderr, "loaded %d routers in %d domains in %d.%d seconds\n",
-	  slist_count(router_list), slist_count(domain_list),
+	  rtrc, slist_count(domain_list),
 	  (int)tv.tv_sec, (int)(tv.tv_usec / 100000));
 
   /* run some assertions on the domains */
@@ -11999,7 +14388,8 @@ static int load_routers(void)
   rc = 0;
 
  done:
-  if(list != NULL) slist_free(list);
+  if(tmp != NULL) slist_free_cb(tmp, (slist_free_t)sc_routerdom_free);
+  if(rl.ifaces != NULL) slist_free_cb(rl.ifaces, (slist_free_t)sc_iface_free);
   return rc;
 }
 
@@ -12024,8 +14414,53 @@ static int load_suffix(void)
   return rc;
 }
 
+static int load_siblings(void)
+{
+  slist_t *list = NULL;
+  sc_as2org_t *a2o;
+  int rc = -1, x;
+
+  if(sibling_file == NULL)
+    return 0;
+  if((list = slist_alloc()) == NULL)
+    {
+      fprintf(stderr,"%s: could not malloc list\n", __func__);
+      goto done;
+    }
+  if(file_lines(sibling_file, sibling_file_line, list) != 0)
+    {
+      fprintf(stderr,"%s: could not read %s\n", __func__, sibling_file);
+      goto done;
+    }
+  if((siblingc = slist_count(list)) == 0)
+    {
+      rc = 0;
+      goto done;
+    }
+
+  x = 0;
+  if((siblings = malloc_zero(sizeof(sc_as2org_t *) * siblingc)) == NULL)
+    {
+      fprintf(stderr,"%s: could not malloc %d siblings\n", __func__, siblingc);
+      goto done;
+    }
+  while((a2o = slist_head_pop(list)) != NULL)
+    siblings[x++] = a2o;
+  assert(x == siblingc);
+  array_qsort((void **)siblings, siblingc, (array_cmp_t)sc_as2org_cmp);
+  fprintf(stderr, "loaded %d sibling ases in %d orgs\n",
+	  siblingc, sibling_id-1);
+  rc = 0;
+
+ done:
+  if(list != NULL) slist_free_cb(list, (slist_free_t)free);
+  return rc;
+}
+
 static void cleanup(void)
 {
+  int i;
+
   if(suffix_root != NULL)
     {
       sc_suffix_free(suffix_root);
@@ -12042,6 +14477,14 @@ static void cleanup(void)
     {
       slist_free(domain_list);
       domain_list = NULL;
+    }
+
+  if(siblings != NULL)
+    {
+      for(i=0; i<siblingc; i++)
+	if(siblings[i] != NULL)
+	  free(siblings[i]);
+      free(siblings); siblings = NULL;
     }
 
   if(router_list != NULL)
@@ -12094,6 +14537,14 @@ int main(int argc, char *argv[])
   if(load_routers() != 0)
     return -1;
 
+  /* load the siblings */
+  if(load_siblings() != 0)
+    return -1;
+
+  /* stop if we were told to stop after loading the data */
+  if(do_loadonly != 0)
+    return 0;
+
   /* generate regular expressions */
   if(generate_regexes() != 0)
     return -1;
@@ -12102,12 +14553,46 @@ int main(int argc, char *argv[])
   if(eval_regexes() != 0)
     return -1;
 
-  if(regex_eval == NULL && thin_regexes(0) != 0)
-    return -1;
+  if(do_learnasn != 0)
+    {
+      if(refine_merge != 0 && refine_regexes_merge() != 0)
+	return -1;
 
-  /* refine regular expressions */
-  if(refine_regexes() != 0)
-    return -1;
+      if(refine_class != 0 && refine_regexes_class() != 0)
+	return -1;
+
+      if(refine_merge != 0 && refine_regexes_merge() != 0)
+	return -1;
+
+      if(refine_sets != 0 && refine_regexes_sets() != 0)
+	return -1;
+    }
+  else
+    {
+      if(regex_eval == NULL && thin_regexes(0) != 0)
+	return -1;
+
+      if(refine_tp != 0 && refine_regexes_tp() != 0)
+	return -1;
+
+      if(refine_fne != 0 && refine_regexes_fne() != 0)
+	return -1;
+
+      if(refine_class != 0 && refine_regexes_class() != 0)
+	return -1;
+
+      if(refine_fnu != 0 && refine_regexes_fnu() != 0)
+	return -1;
+
+      if(refine_sets != 0 && refine_regexes_sets() != 0)
+	return -1;
+
+      if(refine_ip != 0 && refine_regexes_ip() != 0)
+	return -1;
+
+      if(refine_fp != 0 && refine_regexes_fp() != 0)
+	return -1;
+    }
 
   rc = dump_funcs[dump_id].func();
   return rc;

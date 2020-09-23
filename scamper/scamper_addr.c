@@ -1,7 +1,7 @@
 /*
  * scamper_addr.c
  *
- * $Id: scamper_addr.c,v 1.73 2020/06/09 07:33:15 mjl Exp $
+ * $Id: scamper_addr.c,v 1.74 2020/08/01 21:22:11 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -725,6 +725,7 @@ static int ipv6_fbd(const scamper_addr_t *sa, const scamper_addr_t *sb)
   a = (const struct in6_addr *)sa->addr;
   b = (const struct in6_addr *)sb->addr;
 
+#ifndef _WIN32
   for(i=0; i<4; i++)
     {
       if((v = ntohl(a->s6_addr32[i] ^ b->s6_addr32[i])) == 0)
@@ -744,6 +745,26 @@ static int ipv6_fbd(const scamper_addr_t *sa, const scamper_addr_t *sb)
 
       return r;
     }
+#else
+  for(i=0; i<8; i++)
+    {
+      if((v = ntohs(a->u.Word[i] ^ b->u.Word[i])) == 0)
+	continue;
+
+#ifdef HAVE___BUILTIN_CLZ
+      r = __builtin_clz(v) + 1 + (i * 16);
+#else
+      r = 0;
+      if(v & 0xFF00)     { v >>= 8;  r += 8;  }
+      if(v & 0xF0)       { v >>= 4;  r += 4;  }
+      if(v & 0xC)        { v >>= 2;  r += 2;  }
+      if(v & 0x2)        {           r += 1;  }
+      r = (16 - r) + (i * 16);
+#endif
+
+      return r;
+    }
+#endif
 
   return 128;
 }

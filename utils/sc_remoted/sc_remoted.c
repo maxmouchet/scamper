@@ -1,7 +1,7 @@
 /*
  * sc_remoted
  *
- * $Id: sc_remoted.c,v 1.88 2020/06/10 08:23:56 mjl Exp $
+ * $Id: sc_remoted.c,v 1.89 2020/08/18 11:00:10 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -2361,7 +2361,8 @@ static int remoted_tlsctx(void)
     }
   SSL_CTX_set_verify(tls_ctx, SSL_VERIFY_NONE, NULL);
   SSL_CTX_set_options(tls_ctx,
-		      SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1);
+		      SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 |
+		      SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
   return 0;
 }
 

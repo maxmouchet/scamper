@@ -394,7 +394,7 @@ static int do_addrfile(void)
     slist_shuffle(list);
 
   gettimeofday_wrap(&now);
-  gap64 = (interval * 1000000) / slist_count(list);
+  gap64 = ((uint64_t)interval * 1000000) / slist_count(list);
   gap.tv_sec = gap64 / 1000000;
   gap.tv_usec = gap64 % 1000000;
   timeval_cpy(&next, &now);

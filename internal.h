@@ -1,7 +1,7 @@
 /*
  * internal.h
  *
- * $Id: internal.h,v 1.48 2020/04/29 06:27:41 mjl Exp $
+ * $Id: internal.h,v 1.49 2020/08/01 21:10:08 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -53,7 +53,11 @@ typedef unsigned short sa_family_t;
 #include <process.h>
 #include <direct.h>
 #include <mmsystem.h>
+#if defined(HAVE_UNISTD_H)
+#include <unistd.h>
+#else
 #include "wingetopt.h"
+#endif
 #define _CRT_RAND_S
 #endif
 
@@ -249,10 +253,18 @@ typedef unsigned short sa_family_t;
 #define SHUT_RDWR SD_BOTH
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
+#ifndef S_IRUSR
 #define S_IRUSR _S_IREAD
+#endif
+#ifndef S_IWUSR
 #define S_IWUSR _S_IWRITE
+#endif
+#ifndef S_IFIFO
 #define S_IFIFO _S_IFIFO
+#endif
+#ifndef S_IFREG
 #define S_IFREG _S_IFREG
+#endif
 #define MAXHOSTNAMELEN 256
 #define close _close
 #define fdopen _fdopen

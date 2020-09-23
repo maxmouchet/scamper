@@ -1,7 +1,7 @@
 /*
  * scamper_do_host
  *
- * $Id: scamper_host_do.c,v 1.41 2020/06/10 09:28:35 mjl Exp $
+ * $Id: scamper_host_do.c,v 1.42 2020/08/01 20:58:51 mjl Exp $
  *
  * Copyright (C) 2018-2020 Matthew Luckie
  *
@@ -1457,9 +1457,10 @@ static int etc_resolv(void)
   fd = scamper_privsep_open_file("/etc/resolv.conf", flags, 0);
 #endif
 
+  /* non-fatal error, but we won't be able to do hostname lookups */
   if(fd == -1)
     {
-      printerror(__func__, "could not open /etc/resolv.conf");
+      scamper_debug(__func__, "could not open /etc/resolv.conf");
       return 0;
     }
 
