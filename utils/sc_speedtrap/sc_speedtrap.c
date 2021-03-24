@@ -1,13 +1,13 @@
 /*
  * sc_speedtrap
  *
- * $Id: sc_speedtrap.c,v 1.44 2020/06/09 20:14:31 mjl Exp $
+ * $Id: sc_speedtrap.c,v 1.62 2020/11/30 22:17:02 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
  *
  * Copyright (C) 2013-2015 The Regents of the University of California
- * Copyright (C) 2016      The University of Waikato
+ * Copyright (C) 2016,2020 The University of Waikato
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,6 +43,7 @@
 #include "mjl_list.h"
 #include "mjl_splaytree.h"
 #include "mjl_heap.h"
+#include "mjl_threadpool.h"
 #include "utils.h"
 
 #define OPT_HELP        0x0001
@@ -52,20 +53,13 @@
 #define OPT_STOP        0x0010
 #define OPT_LOG         0x0020
 #define OPT_UNIX        0x0040
-#define OPT_SKIPFILE    0x0080
-#define OPT_ALIASFILE   0x0100
 #define OPT_DUMP        0x0200
 #define OPT_INCR        0x0400
 #define OPT_THREADC     0x0800
 #define OPT_ALL         0xffff
 
 typedef struct sc_targetipid sc_targetipid_t;
-
-typedef struct sc_skippair
-{
-  scamper_addr_t     *a;
-  scamper_addr_t     *b;
-} sc_skippair_t;
+typedef struct sc_targetset sc_targetset_t;
 
 /*
  * sc_target
@@ -76,8 +70,8 @@ typedef struct sc_target
 {
   scamper_addr_t     *addr;      /* the interface being probed */
   slist_t            *samples;   /* collected samples */
-  sc_targetipid_t    *last;      /* last IPID sample */
-  void               *data;      /* pointer to targetset or classify state */
+  uint32_t            last;      /* last IPID sample */
+  sc_targetset_t     *ts;        /* pointer to ts that has probing lock */
   int                 attempt;   /* how many times we've tried this probe */
   splaytree_node_t   *tree_node;
 } sc_target_t;
@@ -97,18 +91,17 @@ struct sc_targetipid
 /*
  * sc_targetset
  *
- * state kept when probing a set of addresses that we need to detangle
+ * state kept when probing a set of addresses.
  */
-typedef struct sc_targetset
+struct sc_targetset
 {
   slist_t            *targets;
-  slist_node_t       *next;
-  struct timeval      min, max;
-  slist_t            *blocked;
+  slist_node_t       *next;     /* next is used in mode overlap */
+  struct timeval      min, max; /* min + max are used in mode overlap */
+  slist_t            *blocked;  /* blocked is used in mode overlap and ally */
   dlist_node_t       *node;
-  int                 attempt;
-  slist_node_t       *s1, *s2;
-} sc_targetset_t;
+  int                 attempt;  /* attempt is used in mode ally */
+};
 
 typedef struct sc_wait
 {
@@ -121,23 +114,46 @@ typedef struct sc_wait
   } un;
 } sc_wait_t;
 
+/*
+ * sc_router_t
+ *
+ * collect a set of interfaces mapped to a router
+ */
+typedef struct sc_router
+{
+  slist_t            *addrs;
+  dlist_node_t       *node;
+} sc_router_t;
+
+/*
+ * sc_addr2router_t
+ *
+ * map an address to a router.
+ */
+typedef struct sc_addr2router
+{
+  scamper_addr_t     *addr;
+  sc_router_t        *router;
+} sc_addr2router_t;
+
 typedef struct sc_addr2ptr
 {
   scamper_addr_t     *addr;
   void               *ptr;
 } sc_addr2ptr_t;
 
-/*
- * sc_routerset
- *
- * keep a set of routers.  the tree contains sc_addr2ptr_t, the list
- * contains a list of routers.
- */
-typedef struct sc_routerset
+typedef struct sc_pairwise
 {
+  sc_target_t        *ta;    /* the node to consider */
+  slist_node_t       *sb;    /* other nodes after ta in the list */
+} sc_pairwise_t;
+
+typedef struct sc_notaliases
+{
+  sc_router_t        *r;
+  splaytree_node_t   *tree_node;
   splaytree_t        *tree;
-  dlist_t            *list;
-} sc_routerset_t;
+} sc_notaliases_t;
 
 typedef struct sc_dump
 {
@@ -155,17 +171,22 @@ static int  process_2_ping(const scamper_ping_t *);
 static int  process_3_ping(const scamper_ping_t *);
 static int  process_3_ally(const scamper_dealias_t *);
 static void finish_3(void);
+static int  process_4_ping(const scamper_ping_t *);
+static void finish_4(void);
 
 static uint32_t               options       = 0;
 static char                  *addressfile   = NULL;
-static unsigned int           port          = 0;
+static char                  *dst_addr      = NULL;
+static int                    dst_port      = 0;
 static char                  *unix_name     = NULL;
 static splaytree_t           *targets       = NULL;
+static splaytree_t           *addr2routers  = NULL;
+static dlist_t               *routers       = NULL;
+static splaytree_t           *notaliases    = NULL;
 static slist_t               *probelist     = NULL;
-static slist_t               *incr          = NULL;
+static heap_t                *probeheap     = NULL;
+static slist_t               *incr          = NULL; /* descend and overlap */
 static heap_t                *waiting       = NULL;
-static splaytree_t           *skiptree      = NULL;
-static char                  *skipfile      = NULL;
 static int                    scamper_fd    = -1;
 static scamper_linepoll_t    *scamper_lp    = NULL;
 static scamper_writebuf_t    *scamper_wb    = NULL;
@@ -179,16 +200,17 @@ static scamper_writebuf_t    *decode_wb     = NULL;
 static int                    data_left     = 0;
 static int                    more          = 0;
 static int                    probing       = 0;
+static int                    blocked       = 0;
 static int                    mode          = 0;
+static long                   threadc       = -1;
 static struct timeval         now;
 static FILE                  *logfile       = NULL;
-static FILE                  *aliasfile     = NULL;
 static uint32_t               fudge         = 65535;
 static slist_t               *descend       = NULL;
 static dlist_t               *overlap_act   = NULL;
 static slist_t               *candidates    = NULL;
 static const char            *step_names[] = {"classify","descend","overlap",
-					      "descend2","candidates","ally"};
+					      "descend2","ally"};
 static int                    step_namec = sizeof(step_names)/sizeof(char *);
 static char                  *stop_stepname = NULL;
 static int                    stop_stepid   = 0;
@@ -198,10 +220,7 @@ static sc_targetipid_t      **pairwise_tipid  = NULL;
 static int                    pairwise_max    = 0;
 
 #ifdef HAVE_PTHREAD
-static pthread_mutex_t        targets_sn_mutex;
-static slist_t               *targets_sn = NULL;
-static pthread_mutex_t        rset_mutex;
-static long                   threadc       = -1;
+static pthread_mutex_t        candidates_mutex;
 #endif
 
 static int                    dump_id       = 0;
@@ -210,12 +229,14 @@ static char                 **dump_files;
 static int                    dump_filec    = 0;
 static const sc_dump_t        dump_funcs[] = {
   {NULL, NULL, NULL, NULL},
-  {"dump transitive closure",
+  {"dump transitive closure from ally probes",
    process_1_ping, process_1_ally, finish_1},
   {"dump interface classification",
    process_2_ping, NULL,           NULL},
   {"summary table of per-stage statistics",
    process_3_ping, process_3_ally, finish_3},
+  {"dump transitive closure from descend and overlap stages",
+   process_4_ping, NULL,           finish_4},
 };
 static int dump_funcc = sizeof(dump_funcs) / sizeof(sc_dump_t);
 
@@ -223,16 +244,15 @@ static int dump_funcc = sizeof(dump_funcs) / sizeof(sc_dump_t);
 #define MODE_DESCEND    1
 #define MODE_OVERLAP    2
 #define MODE_DESCEND2   3
-#define MODE_CANDIDATES 4
-#define MODE_ALLY       5
+#define MODE_ALLY       4
 
 static void usage(uint32_t opt_mask)
 {
   int i;
 
   fprintf(stderr,
-    "usage: sc_speedtrap [-a addressfile] [-o outfile] [-p port] [-U unix]\n"
-    "                    [-I] [-A aliasfile] [-l log] [-s stop] [-S skipfile]\n"
+    "usage: sc_speedtrap [-a addr-file] [-o outfile] [-p [ip:]port] [-U unix]\n"
+    "                    [-I] [-l log] [-s stop]\n"
 #ifdef HAVE_PTHREAD
     "                    [-t thread-count]\n"
 #endif
@@ -266,10 +286,7 @@ static void usage(uint32_t opt_mask)
     fprintf(stderr, "     -o output warts file\n");
 
   if(opt_mask & OPT_PORT)
-    fprintf(stderr, "     -p port to find scamper on\n");
-
-  if(opt_mask & OPT_SKIPFILE)
-    fprintf(stderr, "     -S input skipfile\n");
+    fprintf(stderr, "     -p [ip:]port to find scamper on\n");
 
   if(opt_mask & OPT_STOP)
     {
@@ -294,16 +311,13 @@ static void usage(uint32_t opt_mask)
 
 static int check_options(int argc, char *argv[])
 {
-  char hostname[255+1];
   long lo;
-  char *opts = "?a:A:d:Il:o:p:s:S:"
+  char *opts = "?a:d:Il:o:p:s:"
 #ifdef HAVE_PTHREAD
     "t:"
 #endif
     "U:w:";
-  char *opt_port = NULL, *opt_unix = NULL, *opt_log = NULL;
-  char *opt_aliasfile = NULL, *opt_dump = NULL;
-  time_t tt;
+  char *opt_port = NULL, *opt_unix = NULL, *opt_log = NULL, *opt_dump = NULL;
   int i, ch;
 
 #ifdef HAVE_PTHREAD
@@ -317,11 +331,6 @@ static int check_options(int argc, char *argv[])
 	case 'a':
 	  options |= OPT_ADDRFILE;
 	  addressfile = optarg;
-	  break;
-
-	case 'A':
-	  options |= OPT_ALIASFILE;
-	  opt_aliasfile = optarg;
 	  break;
 
 	case 'd':
@@ -351,11 +360,6 @@ static int check_options(int argc, char *argv[])
 	case 's':
 	  options |= OPT_STOP;
 	  stop_stepname = optarg;
-	  break;
-
-	case 'S':
-	  options |= OPT_SKIPFILE;
-	  skipfile = optarg;
 	  break;
 
 #ifdef HAVE_PTHREAD
@@ -399,12 +403,11 @@ static int check_options(int argc, char *argv[])
 
       if(options & OPT_PORT)
 	{
-	  if(string_tolong(opt_port, &lo) != 0 || lo < 1 || lo > 65535)
-	    {
-	      usage(OPT_PORT);
-	      return -1;
-	    }
-	  port = lo;
+	  if(string_addrport(opt_port, &dst_addr, &dst_port) != 0)
+            {
+              usage(OPT_PORT);
+              return -1;
+            }
 	}
       else if(options & OPT_UNIX)
 	{
@@ -422,26 +425,6 @@ static int check_options(int argc, char *argv[])
 	  threadc = lo;
 	}
 #endif
-
-      if(opt_aliasfile != NULL)
-	{
-	  if(gethostname(hostname, sizeof(hostname)) != 0)
-	    {
-	      usage(OPT_ALIASFILE);
-	      fprintf(stderr, "could not gethostname\n");
-	      return -1;
-	    }
-	  if((aliasfile = fopen(opt_aliasfile, "a")) == NULL)
-	    {
-	      usage(OPT_ALIASFILE);
-	      fprintf(stderr, "could not open %s\n", opt_aliasfile);
-	      return -1;
-	    }
-	  gettimeofday_wrap(&now);
-	  tt = now.tv_sec;
-	  fprintf(aliasfile, "# %s %s", hostname, asctime(localtime(&tt)));
-	  fflush(aliasfile);
-	}
 
       if(stop_stepname != NULL)
 	{
@@ -524,17 +507,29 @@ static void hms(int x, int *h, int *m, int *s)
   return;
 }
 
-static void logprint(char *format, ...)
+static void logprint(int st, char *format, ...)
 {
   va_list ap;
   char msg[131072];
+  int pl;
 
   if(logfile != NULL)
     {
+      if(st != 0)
+	{
+	  if(probeheap != NULL && heap_count(probeheap) > 0)
+	    pl = heap_count(probeheap);
+	  else
+	    pl = slist_count(probelist);
+	  fprintf(logfile, "%ld: p %d, w %d, l %d, b %d : ",
+		  (long int)now.tv_sec,
+		  probing, heap_count(waiting), pl, blocked);
+	}
+
       va_start(ap, format);
       vsnprintf(msg, sizeof(msg), format, ap);
       va_end(ap);
-      fprintf(logfile, "%ld: %s", (long int)now.tv_sec, msg);
+      fprintf(logfile, "%s", msg);
       fflush(logfile);
     }
 
@@ -583,344 +578,228 @@ static int ipid_incr(uint32_t *ipids, int ipidc)
   return 1;
 }
 
-static void sc_addr2ptr_free(sc_addr2ptr_t *a2p)
+static int sc_addr2router_human_cmp(sc_addr2router_t *a, sc_addr2router_t *b)
 {
-  if(a2p == NULL)
-    return;
-  if(a2p->addr != NULL) scamper_addr_free(a2p->addr);
-  free(a2p);
-  return;
+  return scamper_addr_human_cmp(a->addr, b->addr);
 }
 
-static sc_addr2ptr_t *sc_addr2ptr_find(splaytree_t *tree, scamper_addr_t *addr)
-{
-  sc_addr2ptr_t fm; fm.addr = addr;
-  return splaytree_find(tree, &fm);
-}
-
-static int sc_addr2ptr_add(splaytree_t *tree, scamper_addr_t *addr, void *ptr)
-{
-  sc_addr2ptr_t *a2p = NULL;
-  if((a2p = malloc_zero(sizeof(sc_addr2ptr_t))) == NULL)
-    goto err;
-  a2p->addr = scamper_addr_use(addr);
-  a2p->ptr  = ptr;
-  if(splaytree_insert(tree, a2p) == NULL)
-    goto err;
-  return 0;
-
- err:
-  if(a2p != NULL) sc_addr2ptr_free(a2p);
-  return -1;
-}
-
-static int sc_addr2ptr_cmp(const sc_addr2ptr_t *a, const sc_addr2ptr_t *b)
+static int sc_addr2router_cmp(sc_addr2router_t *a, sc_addr2router_t *b)
 {
   return scamper_addr_cmp(a->addr, b->addr);
 }
 
-static int ping_read(const scamper_ping_t *ping, uint32_t *ipids,
-		     int *ipidc, int *replyc)
+static void sc_addr2router_free(sc_addr2router_t *a2r)
 {
-  scamper_ping_reply_t *reply;
-  int i, maxipidc = *ipidc;
+  if(a2r->addr != NULL) scamper_addr_free(a2r->addr);
+  free(a2r);
+  return;
+}
 
-  *ipidc = 0;
-  *replyc = 0;
+static sc_addr2router_t *sc_addr2router_find(scamper_addr_t *addr)
+{
+  sc_addr2router_t fm; fm.addr = addr;
+  return splaytree_find(addr2routers, &fm);
+}
 
-  for(i=0; i<ping->ping_sent; i++)
-    {
-      if((reply = ping->ping_replies[i]) == NULL)
-	continue;
-      if(SCAMPER_PING_REPLY_IS_ICMP_ECHO_REPLY(reply) == 0)
-	continue;
-      (*replyc)++;
-      if(reply->flags & SCAMPER_PING_REPLY_FLAG_REPLY_IPID)
-	{
-	  if(*ipidc == maxipidc)
-	    return -1;
-	  ipids[*ipidc] = reply->reply_ipid32;
-	  (*ipidc)++;
-	}
-    }
+static sc_addr2router_t *sc_addr2router_alloc(scamper_addr_t *a, sc_router_t *r)
+{
+  sc_addr2router_t *a2r = NULL;
+  if((a2r = malloc_zero(sizeof(sc_addr2router_t))) == NULL)
+    goto err;
+  a2r->addr = scamper_addr_use(a);
+  a2r->router = r;
+  if(splaytree_insert(addr2routers, a2r) == NULL)
+    goto err;
+  return a2r;
+
+ err:
+  if(a2r != NULL) sc_addr2router_free(a2r);
+  return NULL;
+}
+
+static int sc_router_cmp(const sc_router_t *a, const sc_router_t *b)
+{
+  int al = slist_count(a->addrs), bl = slist_count(b->addrs);
+  sc_addr2router_t *aa, *ab;
+  if(al > bl) return -1;
+  if(al < bl) return  1;
+  aa = slist_head_item(a->addrs);
+  ab = slist_head_item(b->addrs);
+  return scamper_addr_human_cmp(aa->addr, ab->addr);
+}
+
+static void sc_router_free(sc_router_t *r)
+{
+  if(r->node != NULL) dlist_node_pop(routers, r->node);
+  if(r->addrs != NULL) slist_free(r->addrs);
+  free(r);
+  return;
+}
+
+static int sc_router_node_setnull(sc_router_t *r, void *param)
+{
+  r->node = NULL;
+  return 0;
+}
+
+static sc_router_t *sc_router_alloc(void)
+{
+  sc_router_t *r;
+  if((r = malloc_zero(sizeof(sc_router_t))) == NULL ||
+     (r->addrs = slist_alloc()) == NULL ||
+     (r->node = dlist_tail_push(routers, r)) == NULL)
+    goto err;
+  return r;
+
+ err:
+  if(r != NULL) sc_router_free(r);
+  return NULL;
+}
+
+static int sc_notaliases_cmp(sc_notaliases_t *a, sc_notaliases_t *b)
+{
+  return ptrcmp(a->r, b->r);
+}
+
+static sc_notaliases_t *sc_notaliases_find(sc_router_t *r)
+{
+  sc_notaliases_t fm; fm.r = r;
+  return splaytree_find(notaliases, &fm);
+}
+
+static void sc_notaliases_free(sc_notaliases_t *na)
+{
+  if(na->tree != NULL) splaytree_free(na->tree, NULL);
+  free(na);
+  return;
+}
+
+static sc_notaliases_t *sc_notaliases_alloc(sc_router_t *r)
+{
+  sc_notaliases_t *na;
+  if((na = malloc_zero(sizeof(sc_notaliases_t))) == NULL ||
+     (na->tree = splaytree_alloc(ptrcmp)) == NULL)
+    goto err;
+  na->r = r;
+  if((na->tree_node = splaytree_insert(notaliases, na)) == NULL)
+    goto err;
+  return na;
+ err:
+  if(na != NULL) sc_notaliases_free(na);
+  return NULL;
+}
+
+/*
+ * sc_notaliases_add
+ *
+ * two routers are inferred to not be aliases, record that.
+ */
+static int sc_notaliases_add(sc_router_t *a, sc_router_t *b)
+{
+  sc_notaliases_t *na;
+
+  /*
+   * get a notaliases node for router a.
+   * if b is already known to be not alias, move on.
+   * otherwise, record the not-alias information.
+   */
+  if((na = sc_notaliases_find(a)) == NULL &&
+     (na = sc_notaliases_alloc(a)) == NULL)
+    return -1;
+  if(splaytree_find(na->tree, b) == NULL &&
+     splaytree_insert(na->tree, b) == NULL)
+    return -1;
+
+  /*
+   * get a notaliases node for router b.
+   * if a is already known to be not alias, move on.
+   * otherwise, record the not-alias information.
+   */
+  if((na = sc_notaliases_find(b)) == NULL &&
+     (na = sc_notaliases_alloc(b)) == NULL)
+    return -1;
+  if(splaytree_find(na->tree, a) == NULL &&
+     splaytree_insert(na->tree, a) == NULL)
+    return -1;
 
   return 0;
 }
 
-static splaytree_t *d1_tree = NULL;
-
-static int process_1_ping(const scamper_ping_t *ping)
+/*
+ * sc_notaliases_merge_r
+ *
+ * merge c into na, and update c's notaliases by replacing b with a.
+ */
+static int sc_notaliases_merge_r(sc_notaliases_t *na,
+				 sc_router_t *b, sc_router_t *c)
 {
-  uint32_t ipids[10];
+  sc_notaliases_t *nc;
+
+  /* add c to na */
+  if(splaytree_find(na->tree, c) == NULL &&
+     splaytree_insert(na->tree, c) == NULL)
+    return -1;
+
+  /* remove b, replace with a */
+  if((nc = sc_notaliases_find(c)) == NULL ||
+     splaytree_remove_item(nc->tree, b) != 0)
+    return -1;
+  if(splaytree_find(nc->tree, na->r) == NULL &&
+     splaytree_insert(nc->tree, na->r) == NULL)
+    return -1;
+
+  return 0;
+}
+
+/*
+ * sc_notaliases_merge
+ *
+ * two routers (a and b) are inferred to be aliases.  merge their
+ * notalias state and free b.
+ */
+static int sc_notaliases_merge(sc_router_t *a, sc_router_t *b)
+{
   slist_t *list = NULL;
-  int ipidc, replyc;
+  sc_notaliases_t *na, *nb;
+  sc_router_t *c;
+  int rc = -1;
 
-  if(ping->userid != 0)
-    return 0;
-
-  ipidc = sizeof(ipids) / sizeof(uint32_t);
-  if(ping_read(ping, ipids, &ipidc, &replyc) != 0)
-    return -1;
-  if(ipid_incr(ipids, ipidc) == 0)
-    return 0;
-
-  if(d1_tree == NULL &&
-     (d1_tree = splaytree_alloc((splaytree_cmp_t)sc_addr2ptr_cmp)) == NULL)
-    return -1;
-
-  if(sc_addr2ptr_find(d1_tree, ping->dst) != NULL)
+  /* if we haven't got "not aliases" nodes for b, move on */
+  if((nb = sc_notaliases_find(b)) == NULL)
     return 0;
 
   if((list = slist_alloc()) == NULL ||
-     slist_tail_push(list, scamper_addr_use(ping->dst)) == NULL ||
-     sc_addr2ptr_add(d1_tree, ping->dst, list) != 0)
-    goto err;
+     ((na = sc_notaliases_find(a)) == NULL &&
+      (na = sc_notaliases_alloc(a)) == NULL))
+    goto done;
 
-  return 0;
-
- err:
-  if(list != NULL) slist_free_cb(list, (slist_free_t)scamper_addr_free);
-  return -1;
-}
-
-static int process_1_ally(const scamper_dealias_t *dealias)
-{
-  const scamper_dealias_ally_t *ally = dealias->data;
-  sc_addr2ptr_t *a2p_a, *a2p_b, *a2p_x;
-  slist_t *list_a, *list_b, *list_x;
-  scamper_addr_t *a = ally->probedefs[0].dst;
-  scamper_addr_t *b = ally->probedefs[1].dst;
-  scamper_addr_t *x;
-
-  if(dealias->result != SCAMPER_DEALIAS_RESULT_ALIASES)
-    return 0;
-
-  a2p_a = sc_addr2ptr_find(d1_tree, a);
-  a2p_b = sc_addr2ptr_find(d1_tree, b);
-
-  if(a2p_a != NULL && a2p_b != NULL)
+  splaytree_inorder(nb->tree, tree_to_slist, list);
+  while((c = slist_head_pop(list)) != NULL)
     {
-      list_a = a2p_a->ptr; list_b = a2p_b->ptr;
-      if(list_a == list_b)
-	return 0;
-      while((x = slist_head_pop(list_b)) != NULL)
-	{
-	  if(slist_tail_push(list_a, x) == NULL)
-	    goto err;
-	  a2p_x = sc_addr2ptr_find(d1_tree, x);
-	  a2p_x->ptr = list_a;
-	}
-      slist_free(list_b);
+      if(sc_notaliases_merge_r(na, b, c) != 0)
+	goto done;
     }
-  else if(a2p_a != NULL)
-    {
-      list_a = a2p_a->ptr;
-      if(slist_tail_push(list_a, scamper_addr_use(b)) == NULL ||
-	 sc_addr2ptr_add(d1_tree, b, list_a) != 0)
-	goto err;
-    }
-  else if(a2p_b != NULL)
-    {
-      list_b = a2p_b->ptr;
-      if(slist_tail_push(list_b, scamper_addr_use(a)) == NULL ||
-	 sc_addr2ptr_add(d1_tree, a, list_b) != 0)
-	goto err;
-    }
-  else
-    {
-      if((list_x = slist_alloc()) == NULL ||
-	 slist_tail_push(list_x, scamper_addr_use(a)) == NULL ||
-	 slist_tail_push(list_x, scamper_addr_use(b)) == NULL ||
-	 sc_addr2ptr_add(d1_tree, a, list_x) != 0 ||
-	 sc_addr2ptr_add(d1_tree, b, list_x) != 0)
-	goto err;
-    }
-
-  return 0;
-
- err:
-  return -1;
-}
-
-static int d1_cmp(const slist_t *a, const slist_t *b)
-{
-  int al = slist_count(a), bl = slist_count(b);
-  scamper_addr_t *aa, *ab;
-  if(al > bl) return -1;
-  if(al < bl) return  1;
-  aa = slist_head_item(a);
-  ab = slist_head_item(b);
-  return scamper_addr_human_cmp(aa, ab);
-}
-
-static void d1_free(slist_t *list)
-{
-  scamper_addr_t *a;
-  while((a = slist_head_pop(list)) != NULL)
-    scamper_addr_free(a);
-  slist_free(list);
-  return;
-}
-
-static void finish_1(void)
-{
-  splaytree_t *tree = NULL;
-  scamper_addr_t *addr;
-  sc_addr2ptr_t *a2p;
-  slist_t *a2ps = NULL;
-  slist_t *sets = NULL;
-  slist_t *addrs = NULL;
-  char buf[128];
-  int x;
-
-  if((a2ps = slist_alloc()) == NULL || (sets = slist_alloc()) == NULL ||
-     (tree = splaytree_alloc((splaytree_cmp_t)ptrcmp)) == NULL)
-    {
-      fprintf(stderr, "%s: could not alloc lists\n", __func__);
-      goto done;
-    }
-
-  /*
-   * get all the addr2ptr structures and put them into a list.
-   * we no longer need the tree.
-   */
-  splaytree_inorder(d1_tree, tree_to_slist, a2ps);
-  splaytree_free(d1_tree, NULL); d1_tree = NULL;
-
-  /*
-   * for each sc_addr2ptr_t, take the router and put it in a tree
-   * so we only store unique routers.
-   */
-  while((a2p = slist_head_pop(a2ps)) != NULL)
-    {
-      addrs = a2p->ptr; a2p->ptr = NULL;
-      sc_addr2ptr_free(a2p);
-
-      if(splaytree_find(tree, addrs) != NULL)
-	continue;
-      if(splaytree_insert(tree, addrs) == NULL)
-	{
-	  fprintf(stderr, "%s: could not add addrs to tree\n", __func__);
-	  goto done;
-	}
-      slist_qsort(addrs, (slist_cmp_t)scamper_addr_human_cmp);
-    }
-  slist_free(a2ps); a2ps = NULL;
-
-  /*
-   * get the router sets and put them in a list.  perform a canonical
-   * sort of the router sets.
-   */
-  splaytree_inorder(tree, tree_to_slist, sets);
-  splaytree_free(tree, NULL); tree = NULL;
-  slist_qsort(sets, (slist_cmp_t)d1_cmp);
-
-  /* print out each router */
-  while((addrs = slist_head_pop(sets)) != NULL)
-    {
-      x = 0;
-      while((addr = slist_head_pop(addrs)) != NULL)
-	{
-	  if(x != 0) printf(" ");
-	  printf("%s", scamper_addr_tostr(addr, buf, sizeof(buf)));
-	  scamper_addr_free(addr);
-	  x++;
-	}
-      printf("\n");
-      slist_free(addrs);
-    }
+  splaytree_remove_node(notaliases, nb->tree_node);
+  sc_notaliases_free(nb);
+  rc = 0;
 
  done:
-  if(tree != NULL) splaytree_free(tree, (splaytree_free_t)d1_free);
-  if(sets != NULL) slist_free_cb(sets, (slist_free_t)d1_free);
-  if(d1_tree != NULL)
-    splaytree_free(d1_tree, (splaytree_free_t)sc_addr2ptr_free);
-  if(a2ps != NULL) slist_free_cb(a2ps, (slist_free_t)sc_addr2ptr_free);
-  return;
+  if(list != NULL) slist_free(list);
+  return rc;
 }
 
-static int process_2_ping(const scamper_ping_t *ping)
+/*
+ * sc_notaliases_check
+ *
+ * check to see if two routers are already known to not be aliases
+ */
+static int sc_notaliases_check(sc_router_t *a, sc_router_t *b)
 {
-  uint32_t ipids[10];
-  int ipidc, replyc;
-  char buf[64];
-
-  if(ping->userid != 0)
-    {
-      dump_stop = 1;
-      return 0;
-    }
-
-  ipidc = sizeof(ipids) / sizeof(uint32_t);
-  if(ping_read(ping, ipids, &ipidc, &replyc) != 0)
-    return -1;
-
-  scamper_addr_tostr(ping->dst, buf, sizeof(buf));
-  if(ipidc == 0)
-    {
-      if(replyc == 0)
-	printf("%s unresponsive\n", buf);
-      else if(replyc == 1)
-	printf("%s gone-silent\n", buf);
-      else
-	printf("%s no-frags\n", buf);
-    }
-  else if(ipidc < 3)
-    printf("%s insuff-ipids\n", buf);
-  else if(ipid_incr(ipids, ipidc) == 0)
-    printf("%s random\n", buf);
-  else
-    printf("%s incr\n", buf);
-
-  return 0;
-}
-
-static int            d3_states_probec[6];
-static struct timeval d3_states_first[6];
-static struct timeval d3_states_last[6];
-
-static int process_3_ping(const scamper_ping_t *ping)
-{
-  uint32_t id = ping->userid;
-  if(timeval_cmp(&d3_states_first[id], &ping->start) > 0 ||
-     d3_states_first[id].tv_sec == 0)
-    timeval_cpy(&d3_states_first[id], &ping->start);
-  if(timeval_cmp(&d3_states_last[id], &ping->start) < 0)
-    timeval_cpy(&d3_states_last[id], &ping->start);
-  d3_states_probec[id] += ping->ping_sent;
-  return 0;
-}
-
-static int process_3_ally(const scamper_dealias_t *dealias)
-{
-  uint32_t id = 5;
-  d3_states_probec[id] += dealias->probec;
-  if(timeval_cmp(&d3_states_first[id], &dealias->start) > 0 ||
-     d3_states_first[id].tv_sec == 0)
-    timeval_cpy(&d3_states_first[id], &dealias->start);
-  if(timeval_cmp(&d3_states_last[id], &dealias->start) < 0)
-    timeval_cpy(&d3_states_last[id], &dealias->start);
-  return 0;
-}
-
-static void finish_3(void)
-{
-  int h, m, s, i, sum_time = 0, sum_probes = 0;
-  struct timeval tv;
-
-  for(i=0; i<6; i++)
-    {
-      timeval_diff_tv(&tv, &d3_states_first[i], &d3_states_last[i]);
-      hms(tv.tv_sec, &h, &m, &s);
-      assert((h * 3600) + (m * 60) + s == tv.tv_sec);
-      printf("%d: %d %d:%02d:%02d\n", i, d3_states_probec[i], h, m, s);
-      sum_time += tv.tv_sec;
-      sum_probes += d3_states_probec[i];
-    }
-  hms(sum_time, &h, &m, &s);
-  printf("total: %d %d:%02d:%02d\n", sum_probes, h, m, s);
-
-  return;
+  sc_notaliases_t *na;
+  if((na = sc_notaliases_find(a)) == NULL ||
+     splaytree_find(na->tree, b) == NULL)
+    return 0;
+  return 1;
 }
 
 static int sc_wait_target(struct timeval *tv, sc_target_t *target)
@@ -953,13 +832,6 @@ static void sc_wait_free(sc_wait_t *w)
   return;
 }
 
-static void sc_target_set(sc_target_t *tg, int attempt, void *data)
-{
-  tg->attempt = attempt;
-  tg->data = data;
-  return;
-}
-
 static int sc_wait_cmp(const sc_wait_t *a, const sc_wait_t *b)
 {
   return timeval_cmp(&b->tv, &a->tv);
@@ -972,9 +844,8 @@ static int sc_target_addr_cmp(const sc_target_t *a, const sc_target_t *b)
 
 static int sc_target_ipid_cmp(const sc_target_t *a, const sc_target_t *b)
 {
-  assert(a->last != NULL); assert(b->last != NULL);
-  if(a->last->ipid > b->last->ipid) return -1;
-  if(a->last->ipid < b->last->ipid) return  1;
+  if(a->last > b->last) return -1;
+  if(a->last < b->last) return  1;
   return 0;
 }
 
@@ -1012,7 +883,7 @@ static sc_targetipid_t *sc_target_sample(sc_target_t *tg, sc_targetipid_t *x)
       free(ti);
       return NULL;
     }
-  tg->last = ti;
+  tg->last = ti->ipid;
   return ti;
 }
 
@@ -1032,155 +903,19 @@ static sc_target_t *sc_target_free(sc_target_t *tg)
   return NULL;
 }
 
-static int sc_target_new(char *addr, void *param)
+static sc_target_t *sc_target_alloc(scamper_addr_t *addr)
 {
-  splaytree_t *tree = param;
   sc_target_t *target = NULL;
-  scamper_addr_t *a;
-
-  if(addr[0] == '#' || addr[0] == '\0')
-    return 0;
-
-  if((a = scamper_addr_resolve(AF_INET6, addr)) == NULL)
-    {
-      fprintf(stderr, "could not resolve '%s'\n", addr);
-      goto err;
-    }
-
-  /*
-   * make sure the address is in 2000::/3
-   * and is not already in the probelist
-   */
-  if(scamper_addr_isunicast(a) != 1 || splaytree_find(tree, a) != NULL)
-    {
-      scamper_addr_free(a);
-      return 0;
-    }
-
-  /* make a note that the address is in the list to be probed */
-  if(splaytree_insert(tree, a) == NULL)
-    goto err;
-  scamper_addr_use(a);
 
   if((target = malloc_zero(sizeof(sc_target_t))) == NULL ||
      (target->samples = slist_alloc()) == NULL)
     goto err;
-  target->addr = a; a = NULL;
-
-  if(slist_tail_push(probelist, target) == NULL ||
-     ((options & OPT_INCR) && slist_tail_push(incr, target) == NULL))
-    {
-      fprintf(stderr, "could push '%s'\n", addr);
-      goto err;
-    }
-
-  return 0;
+  target->addr = scamper_addr_use(addr);
+  return target;
 
  err:
-  if(a != NULL) scamper_addr_free(a);
-  if(target != NULL)
-    {
-      if(target->addr != NULL) scamper_addr_free(target->addr);
-      free(target);
-    }
-  return -1;
-}
-
-static int sc_skippair_cmp(const sc_skippair_t *a, const sc_skippair_t *b)
-{
-  int rc;
-  if((rc = scamper_addr_cmp(a->a, b->a)) != 0)
-    return rc;
-  return scamper_addr_cmp(a->b, b->b);
-}
-
-static int sc_skippair_test(scamper_addr_t *a, scamper_addr_t *b)
-{
-  sc_skippair_t fm;
-  if(scamper_addr_cmp(a, b) < 0) {
-    fm.a = a; fm.b = b;
-  } else {
-    fm.a = b; fm.b = a;
-  }
-  if(splaytree_find(skiptree, &fm) == NULL)
-    return 0;
-  return 1;
-}
-
-static void sc_skippair_free(sc_skippair_t *pair)
-{
-  if(pair == NULL)
-    return;
-  if(pair->a != NULL) scamper_addr_free(pair->a);
-  if(pair->b != NULL) scamper_addr_free(pair->b);
-  free(pair);
-  return;
-}
-
-static int sc_skippair_add(scamper_addr_t *a, scamper_addr_t *b)
-{
-  sc_skippair_t *pair = NULL;
-  if((pair = malloc_zero(sizeof(sc_skippair_t))) == NULL)
-    return -1;
-  if(scamper_addr_cmp(a, b) < 0)
-    {
-      pair->a = scamper_addr_use(a);
-      pair->b = scamper_addr_use(b);
-    }
-  else
-    {
-      pair->a = scamper_addr_use(b);
-      pair->b = scamper_addr_use(a);
-    }
-  if(splaytree_insert(skiptree, pair) == NULL)
-    {
-      sc_skippair_free(pair);
-      return -1;
-    }
-  return 0;
-}
-
-static int sc_skippair_new(char *line, void *param)
-{
-  scamper_addr_t *a = NULL, *b = NULL;
-  char *astr, *bstr, *ptr;
-
-  if(line[0] == '#' || line[0] == '\0')
-    return 0;
-  astr = ptr = line;
-  while(*ptr != '\0' && isspace((int)*ptr) == 0)
-    ptr++;
-  if(*ptr == '\0')
-    goto err;
-  *ptr = '\0'; ptr++;
-  while(isspace((int)*ptr) != 0)
-    ptr++;
-  bstr = ptr;
-  while(*ptr != '\0' && isspace((int)*ptr) == 0)
-    ptr++;
-  *ptr = '\0';
-
-  if((a = scamper_addr_resolve(AF_INET6, astr)) == NULL)
-    {
-      fprintf(stderr, "could not resolve '%s'\n", astr);
-      goto err;
-    }
-  if((b = scamper_addr_resolve(AF_INET6, bstr)) == NULL)
-    {
-      fprintf(stderr, "could not resolve '%s'\n", bstr);
-      goto err;
-    }
-  if(sc_skippair_test(a, b) == 0 && sc_skippair_add(a, b) != 0)
-    goto err;
-
-  scamper_addr_free(a);
-  scamper_addr_free(b);
-  return 0;
-
- err:
-  if(a != NULL) scamper_addr_free(a);
-  if(b != NULL) scamper_addr_free(b);
-  return -1;
+  if(target != NULL) sc_target_free(target);
+  return NULL;
 }
 
 static int sc_targetipid_tx_cmp(const sc_targetipid_t *a,
@@ -1189,7 +924,7 @@ static int sc_targetipid_tx_cmp(const sc_targetipid_t *a,
   return timeval_cmp(&a->tx, &b->tx);
 }
 
-static void sc_targetset_print(const sc_targetset_t *ts)
+static void sc_targetset_logprint(const sc_targetset_t *ts)
 {
   sc_target_t *tg;
   slist_node_t *ss;
@@ -1202,12 +937,22 @@ static void sc_targetset_print(const sc_targetset_t *ts)
       string_concat(buf, sizeof(buf), &off, " %s",
 		    scamper_addr_tostr(tg->addr, a, sizeof(a)));
     }
-  logprint("%s\n", buf);
+  logprint(0, "%s\n", buf);
   return;
 }
 
-static int sc_targetset_targetcount_cmp(const sc_targetset_t *a,
+static int sc_targetset_targetc_asc_cmp(const sc_targetset_t *a,
 					const sc_targetset_t *b)
+{
+  int ac = slist_count(a->targets);
+  int bc = slist_count(b->targets);
+  if(ac < bc) return -1;
+  if(ac > bc) return  1;
+  return 0;
+}
+
+static int sc_targetset_targetc_desc_cmp(const sc_targetset_t *a,
+					 const sc_targetset_t *b)
 {
   int ac = slist_count(a->targets);
   int bc = slist_count(b->targets);
@@ -1216,10 +961,13 @@ static int sc_targetset_targetcount_cmp(const sc_targetset_t *a,
   return 0;
 }
 
-static int sc_targetset_min_cmp(const sc_targetset_t *a,
-				const sc_targetset_t *b)
+static int sc_targetset_length_cmp(const sc_targetset_t *a,
+				   const sc_targetset_t *b)
 {
-  return timeval_cmp(&a->min, &b->min);
+  struct timeval a_len, b_len;
+  timeval_diff_tv(&a_len, &a->min, &a->max);
+  timeval_diff_tv(&b_len, &b->min, &b->max);
+  return timeval_cmp(&b_len, &a_len);
 }
 
 static void sc_targetset_free(sc_targetset_t *ts)
@@ -1245,97 +993,32 @@ static sc_targetset_t *sc_targetset_alloc(void)
   return ts;
 }
 
-static void sc_routerset_free(sc_routerset_t *set)
+static int timeval_overlap(const struct timeval *a1, const struct timeval *a2,
+			   const struct timeval *b1, const struct timeval *b2)
 {
-  if(set == NULL)
-    return;
-  if(set->tree != NULL)
-    splaytree_free(set->tree, (splaytree_free_t)sc_addr2ptr_free);
-  if(set->list != NULL)
-    dlist_free(set->list);
-  free(set);
-  return;
-}
+  int rc = timeval_cmp(a1, b1);
 
-static sc_routerset_t *sc_routerset_alloc(void)
-{
-  sc_routerset_t *set = NULL;
-  if((set = malloc_zero(sizeof(sc_routerset_t))) == NULL ||
-     (set->tree = splaytree_alloc((splaytree_cmp_t)sc_addr2ptr_cmp)) == NULL ||
-     (set->list = dlist_alloc()) == NULL)
+  if(rc < 0)
     {
-      sc_routerset_free(set);
-      return NULL;
+      if(timeval_cmp(a2, b1) < 0)
+	return 0; /* a=0,1 b=2,3 */
+      else
+	return 1; /* a=1,3 b=2,4 + a=0,6 b=1,5 */
     }
-  return set;
-}
-
-static int sc_routerset_do(sc_routerset_t *set, sc_target_t *a, sc_target_t *b)
-{
-  sc_addr2ptr_t *a2ts, *a2ts_a, *a2ts_b;
-  sc_targetset_t *ts, *tsa, *tsb;
-  sc_target_t *tg;
-
-  a2ts_a = sc_addr2ptr_find(set->tree, a->addr);
-  a2ts_b = sc_addr2ptr_find(set->tree, b->addr);
-  if(a2ts_a != NULL && a2ts_b != NULL)
+  else if(rc > 0)
     {
-      tsa = a2ts_a->ptr; tsb = a2ts_b->ptr;
-      if(tsa != tsb)
-	{
-	  while((tg = slist_head_pop(tsb->targets)) != NULL)
-	    {
-	      if(slist_tail_push(tsa->targets, tg) == NULL)
-		return -1;
-	      a2ts = sc_addr2ptr_find(set->tree, tg->addr);
-	      a2ts->ptr = tsa;
-	    }
-	  dlist_node_pop(set->list, tsb->node);
-	  sc_targetset_free(tsb);
-	}
-    }
-  else if(a2ts_a != NULL)
-    {
-      ts = a2ts_a->ptr;
-      if(slist_tail_push(ts->targets, b) == NULL ||
-	 sc_addr2ptr_add(set->tree, b->addr, ts) != 0)
-	return -1;
-    }
-  else if(a2ts_b != NULL)
-    {
-      ts = a2ts_b->ptr;
-      if(slist_tail_push(ts->targets, a) == NULL ||
-	 sc_addr2ptr_add(set->tree, a->addr, ts) != 0)
-	return -1;
-    }
-  else
-    {
-      if((ts = sc_targetset_alloc()) == NULL ||
-	 (ts->node = dlist_tail_push(set->list, ts)) == NULL ||
-	 slist_tail_push(ts->targets, a) == NULL ||
-	 slist_tail_push(ts->targets, b) == NULL ||
-	 sc_addr2ptr_add(set->tree, a->addr, ts) != 0 ||
-	 sc_addr2ptr_add(set->tree, b->addr, ts) != 0)
-	return -1;
+      if(timeval_cmp(b2, a1) < 0)
+	return 0; /* a=2,3 b=0,1 */
+      else
+	return 1; /* a=2,4 b=1,3 + a=1,5 b=0,6 */
     }
 
-  return 0;
+  return 1;
 }
 
 static int sample_overlap(const sc_targetipid_t *a, const sc_targetipid_t *b)
 {
-  int rc = timeval_cmp(&a->tx, &b->tx);
-  if(rc < 0)
-    {
-      if(timeval_cmp(&a->rx, &b->tx) <= 0)
-	return 0;
-    }
-  else if(rc > 0)
-    {
-      if(timeval_cmp(&b->rx, &a->tx) <= 0)
-	return 0;
-    }
-  return 1;
+  return timeval_overlap(&a->tx, &a->rx, &b->tx, &b->rx);
 }
 
 static int pairwise_test(sc_targetipid_t **tis, int tc, uint32_t *pairwise_u32)
@@ -1423,270 +1106,140 @@ static int pairwise(sc_target_t *ta, sc_target_t *tb)
   return pairwise_test(pairwise_tipid, tc, pairwise_uint32);
 }
 
-#ifdef HAVE_PTHREAD
-static void *pairwise_all_thread(void *param)
+static void pairwise_all_thread(void *param)
 {
-  sc_routerset_t *rset = param;
+  sc_pairwise_t *pw = param;
   sc_targetipid_t **pairwise_tipid = NULL;
+  sc_targetset_t *ts = NULL;
   uint32_t *pairwise_uint32 = NULL;
   int pairwise_max = 0;
-  int rset_mutex_held = 0;
-  slist_node_t *sa, *sb, *ss;
-  sc_target_t *ta, *tb;
-  slist_t *list;
+  slist_node_t *sb, *ss;
+  sc_target_t *ta = pw->ta, *tb;
+  slist_t *list = NULL;
   size_t len;
   int tc;
 
+#if defined(HAVE_PTHREAD)
+  int candidates_mutex_held = 0;
+#endif
+
   if((list = slist_alloc()) == NULL)
-    return NULL;
+    goto done;
 
-  for(;;)
+  for(sb=pw->sb; sb != NULL; sb=slist_node_next(sb))
     {
-      pthread_mutex_lock(&targets_sn_mutex);
-      for(;;)
+      tb = slist_node_item(sb);
+      if(slist_count(tb->samples) == 0)
+	continue;
+
+      tc = slist_count(ta->samples) + slist_count(tb->samples);
+      if(tc > pairwise_max)
 	{
-	  if((sa = slist_head_pop(targets_sn)) == NULL)
-	    break;
-	  ta = slist_node_item(sa);
-	  if(slist_count(ta->samples) > 0)
-	    break;
-	}
-      pthread_mutex_unlock(&targets_sn_mutex);
-      if(sa == NULL)
-	break;
-
-      for(sb=slist_node_next(sa); sb != NULL; sb=slist_node_next(sb))
-	{
-	  tb = slist_node_item(sb);
-	  if(slist_count(tb->samples) == 0)
-	    continue;
-
-	  tc = slist_count(ta->samples) + slist_count(tb->samples);
-	  if(tc > pairwise_max)
-	    {
-	      len = tc * sizeof(sc_targetipid_t *);
-	      if(realloc_wrap((void **)&pairwise_tipid, len) != 0)
-		goto done;
-	      len = tc * sizeof(uint32_t);
-	      if(realloc_wrap((void **)&pairwise_uint32, len) != 0)
-		goto done;
-	      pairwise_max = tc;
-	    }
-
-	  tc = 0;
-	  for(ss=slist_head_node(ta->samples); ss!=NULL; ss=slist_node_next(ss))
-	    pairwise_tipid[tc++] = slist_node_item(ss);
-	  for(ss=slist_head_node(tb->samples); ss!=NULL; ss=slist_node_next(ss))
-	    pairwise_tipid[tc++] = slist_node_item(ss);
-	  array_qsort((void **)pairwise_tipid, tc,
-		      (array_cmp_t)sc_targetipid_tx_cmp);
-
-	  if(pairwise_test(pairwise_tipid, tc, pairwise_uint32) != 0 &&
-	     slist_tail_push(list, tb) == NULL)
+	  len = tc * sizeof(sc_targetipid_t *);
+	  if(realloc_wrap((void **)&pairwise_tipid, len) != 0)
 	    goto done;
+	  len = tc * sizeof(uint32_t);
+	  if(realloc_wrap((void **)&pairwise_uint32, len) != 0)
+	    goto done;
+	  pairwise_max = tc;
 	}
 
-      if(slist_count(list) > 0)
-	{
-	  /* so merge the addresses into a router */
-	  pthread_mutex_lock(&rset_mutex);
-	  rset_mutex_held = 1;
-	  while((tb = slist_head_pop(list)) != NULL)
-	    if(sc_routerset_do(rset, ta, tb) != 0)
-	      goto done;
-	  pthread_mutex_unlock(&rset_mutex);
-	  rset_mutex_held = 0;
-	}
+      tc = 0;
+      for(ss=slist_head_node(ta->samples); ss!=NULL; ss=slist_node_next(ss))
+	pairwise_tipid[tc++] = slist_node_item(ss);
+      for(ss=slist_head_node(tb->samples); ss!=NULL; ss=slist_node_next(ss))
+	pairwise_tipid[tc++] = slist_node_item(ss);
+      array_qsort((void **)pairwise_tipid, tc,
+		  (array_cmp_t)sc_targetipid_tx_cmp);
+
+      if(pairwise_test(pairwise_tipid, tc, pairwise_uint32) != 0 &&
+	 slist_tail_push(list, tb) == NULL)
+	goto done;
+    }
+
+  if(slist_count(list) > 0)
+    {
+      /* merge the addresses into a targetset */
+      if((ts = sc_targetset_alloc()) == NULL ||
+	 slist_tail_push(ts->targets, ta) == NULL)
+	goto done;
+      slist_concat(ts->targets, list);
+
+#if defined(HAVE_PTHREAD)
+      pthread_mutex_lock(&candidates_mutex);
+      candidates_mutex_held = 1;
+#endif
+      if(slist_tail_push(candidates, ts) == NULL)
+	goto done;
+      ts = NULL;
+#if defined(HAVE_PTHREAD)
+      pthread_mutex_unlock(&candidates_mutex);
+      candidates_mutex_held = 0;
+#endif
     }
 
  done:
-  if(rset_mutex_held != 0)
-    pthread_mutex_unlock(&rset_mutex);
+#if defined(HAVE_PTHREAD)
+  if(candidates_mutex_held != 0)
+    pthread_mutex_unlock(&candidates_mutex);
+#endif
   if(pairwise_tipid != NULL)
     free(pairwise_tipid);
   if(pairwise_uint32 != NULL)
     free(pairwise_uint32);
   if(list != NULL)
     slist_free(list);
-  return NULL;
-}
-#endif
-
-static int pairwise_all(slist_t *targets, slist_t *sets)
-{
-  sc_routerset_t *rset = NULL;
-  slist_node_t *sa, *sb;
-  sc_target_t *ta, *tb;
-  sc_targetset_t *ts;
-
-#if defined(HAVE_PTHREAD)
-  pthread_t *threads = NULL;
-  int targets_sn_mutex_ok = 0;
-  int rset_mutex_ok = 0;
-  long i, threadn;
-#endif
-
-#if defined(HAVE_PTHREAD) && defined(_SC_NPROCESSORS_ONLN)
-  if(threadc == -1)
-    {
-      if((i = sysconf(_SC_NPROCESSORS_ONLN)) < 1)
-	threadc = 1;
-      else
-	threadc = i;
-    }
-#endif
-
-  if((rset = sc_routerset_alloc()) == NULL)
-    goto err;
-
-#if defined(HAVE_PTHREAD)
-  if(threadc < 2)
-    {
-#endif
-      for(sa=slist_head_node(targets); sa != NULL; sa=slist_node_next(sa))
-	{
-	  ta = slist_node_item(sa);
-	  if(slist_count(ta->samples) == 0)
-	    continue;
-	  for(sb=slist_node_next(sa); sb != NULL; sb=slist_node_next(sb))
-	    {
-	      tb = slist_node_item(sb);
-	      if(slist_count(tb->samples) == 0)
-		continue;
-	      if(pairwise(ta, tb) != 1)
-		continue;
-	      if(sc_routerset_do(rset, ta, tb) != 0)
-		goto err;
-	    }
-	}
-#if defined(HAVE_PTHREAD)
-    }
-  else
-    {
-      /* construct a list of slist_node_t pointing to targets */
-      if((targets_sn = slist_alloc()) == NULL)
-	goto err;
-      for(sa=slist_head_node(targets); sa != NULL; sa=slist_node_next(sa))
-	slist_tail_push(targets_sn, sa);
-
-      /* create a thread pool to work over the targets */
-      if((threads = malloc(sizeof(pthread_t) * threadc)) == NULL)
-	goto err;
-      if(pthread_mutex_init(&targets_sn_mutex, NULL) != 0)
-	goto err;
-      targets_sn_mutex_ok = 1;
-      if(pthread_mutex_init(&rset_mutex, NULL) != 0)
-	goto err;
-      rset_mutex_ok = 1;
-      for(threadn=0; threadn<threadc; threadn++)
-	{
-	  if(pthread_create(&threads[threadn],NULL,pairwise_all_thread,rset)!=0)
-	    goto err;
-	}
-
-      /* wait for threads to complete and clean up */
-      for(i=0; i<threadc; i++)
-	pthread_join(threads[i], NULL);
-      free(threads);
-      pthread_mutex_destroy(&rset_mutex); rset_mutex_ok = 0;
-      pthread_mutex_destroy(&targets_sn_mutex); targets_sn_mutex_ok = 0;
-    }
-#endif
-
-  while((ts = dlist_head_pop(rset->list)) != NULL)
-    {
-      sc_targetset_print(ts);
-      if(slist_tail_push(sets, ts) == NULL)
-	goto err;
-    }
-  sc_routerset_free(rset);
-  return 0;
-
- err:
-  if(rset != NULL) sc_routerset_free(rset);
-
-#if defined(HAVE_PTHREAD)
-  if(threads != NULL)
-    {
-      for(i=0; i<threadc; i++)
-	pthread_cancel(threads[i]);
-      for(i=0; i<threadc; i++)
-	pthread_join(threads[i], NULL);
-      free(threads);
-    }
-  if(rset_mutex_ok != 0)
-    pthread_mutex_destroy(&rset_mutex);
-  if(targets_sn_mutex_ok != 0)
-    pthread_mutex_destroy(&targets_sn_mutex);
-#endif
-
-  return -1;
-}
-
-static void overlap_dump(void)
-{
-  sc_targetset_t *ts;
-  sc_targetipid_t *ti;
-  sc_target_t *tg;
-  slist_node_t *sn, *so;
-  char buf[64];
-
-  for(sn=slist_head_node(probelist); sn != NULL; sn=slist_node_next(sn))
-    {
-      ts = slist_node_item(sn);
-      logprint("# set %p %d.%06d %d.%06d\n", ts,
-	       ts->min.tv_sec, (int)ts->min.tv_usec,
-	       ts->max.tv_sec, (int)ts->max.tv_usec);
-      for(so=slist_head_node(ts->targets); so != NULL; so=slist_node_next(so))
-	{
-	  tg = slist_node_item(so);
-	  ti = slist_node_item(slist_tail_node(tg->samples));
-	  logprint("%d.%06d %d.%06d %s %08x\n",
-		   ti->tx.tv_sec, (int)ti->tx.tv_usec,
-		   ti->rx.tv_sec, (int)ti->rx.tv_usec,
-		   scamper_addr_tostr(tg->addr, buf, sizeof(buf)),
-		   ti->ipid);
-	}
-    }
+  if(ts != NULL)
+    sc_targetset_free(ts);
+  free(pw);
   return;
 }
 
-static void sc_targetset_nextpair(sc_targetset_t *ts)
+static int pairwise_all(slist_t *targets)
 {
-  sc_target_t *t1, *t2;
+  sc_pairwise_t *pw = NULL;
+  threadpool_t *tp = NULL;
+  slist_node_t *sa;
+  sc_target_t *ta;
+  int rc = -1;
 
-  for(;;)
+#if defined(HAVE_PTHREAD)
+  int candidates_mutex_ok = 0;
+#endif
+
+  if((tp = threadpool_alloc(threadc)) == NULL)
+    goto done;
+
+#if defined(HAVE_PTHREAD)
+  if(pthread_mutex_init(&candidates_mutex, NULL) != 0)
+    goto done;
+  candidates_mutex_ok = 1;
+#endif
+
+  for(sa=slist_head_node(targets); sa != NULL; sa=slist_node_next(sa))
     {
-      if(ts->s1 == NULL)
-	{
-	  ts->s1 = slist_head_node(ts->targets);
-	  ts->s2 = slist_node_next(ts->s1);
-	}
-      else
-	{
-	  if((ts->s2 = slist_node_next(ts->s2)) == NULL)
-	    {
-	      if((ts->s1 = slist_node_next(ts->s1)) == NULL ||
-		 (ts->s2 = slist_node_next(ts->s1)) == NULL)
-		{
-		  ts->s1 = ts->s2 = NULL;
-		}
-	    }
-	}
-
-      if(ts->s1 == NULL)
-	break;
-
-      t1 = slist_node_item(ts->s1);
-      t2 = slist_node_item(ts->s2);
-      if(sc_skippair_test(t1->addr, t2->addr) != 0)
+      ta = slist_node_item(sa);
+      if(slist_count(ta->samples) <= 0)
 	continue;
-      if(pairwise(t1, t2) == 1)
-	break;
+      if((pw = malloc(sizeof(sc_pairwise_t))) == NULL)
+	goto done;
+      pw->sb = slist_node_next(sa);
+      pw->ta = ta;
+      if(threadpool_tail_push(tp, pairwise_all_thread, pw) != 0)
+	goto done;
+      pw = NULL;
     }
 
-  ts->attempt = 0;
-  return;
+  threadpool_join(tp); tp = NULL;
+  rc = 0;
+
+ done:
+#if defined(HAVE_PTHREAD)
+  if(candidates_mutex_ok != 0)
+    pthread_mutex_destroy(&candidates_mutex);
+#endif
+
+  return rc;
 }
 
 static int test_ping6(sc_target_t *target, char *cmd, size_t len)
@@ -1733,13 +1286,14 @@ static sc_target_t *target_overlap(void)
       for(dn=dlist_head_node(overlap_act); dn != NULL; dn=dlist_node_next(dn))
 	{
 	  tt = dlist_node_item(dn);
-	  if(timeval_cmp(&ts->min, &tt->max) < 0)
+	  if(timeval_overlap(&ts->min, &ts->max, &tt->min, &tt->max) != 0)
 	    break;
 	}
       if(dn == NULL)
 	break;
       if(slist_tail_push(tt->blocked, ts) == NULL)
 	return NULL;
+      blocked++;
     }
 
   if((ts->node = dlist_tail_push(overlap_act, ts)) == NULL)
@@ -1748,7 +1302,8 @@ static sc_target_t *target_overlap(void)
   slist_qsort(ts->targets, (slist_cmp_t)sc_target_ipid_cmp);
   sn = slist_head_node(ts->targets);
   tg = slist_node_item(sn);
-  sc_target_set(tg, 0, ts);
+  tg->attempt = 0;
+  tg->ts = ts;
   ts->next = slist_node_next(sn);
 
   return tg;
@@ -1759,33 +1314,85 @@ static sc_target_t *target_descend2(void)
   return slist_head_pop(probelist);
 }
 
-static sc_target_t *target_candidates(void)
-{
-  sc_targetset_t *ts;
-  sc_target_t *tg;
-  if((ts = slist_head_pop(probelist)) == NULL)
-    return NULL;
-  slist_qsort(ts->targets, (slist_cmp_t)sc_target_ipid_cmp);
-  ts->s1 = slist_head_node(ts->targets);
-  ts->s2 = NULL;
-  tg = slist_node_item(ts->s1);
-  sc_target_set(tg, 0, ts);
-  return tg;
-}
-
 static sc_targetset_t *targetset_ally(void)
 {
+  sc_addr2router_t *a2r_a, *a2r_b;
   sc_targetset_t *ts;
-  for(;;)
+  slist_node_t *sn;
+  sc_target_t *tg;
+  char addr[256];
+
+  while((ts = heap_remove(probeheap)) != NULL)
     {
-      if((ts = slist_head_pop(probelist)) == NULL)
-	break;
-      sc_targetset_nextpair(ts);
-      if(ts->s1 != NULL)
-	return ts;
-      sc_targetset_free(ts);
+      /*
+       * check if something else is already probing an overlap of
+       * these addresses
+       */
+      for(sn=slist_head_node(ts->targets); sn != NULL; sn=slist_node_next(sn))
+	{
+	  tg = slist_node_item(sn);
+	  if(splaytree_find(targets, tg) != NULL)
+	    break;
+	}
+
+      /*
+       * if there is something else probing an address in this targetset,
+       * we block this targetset and move onto the next
+       */
+      if(sn != NULL)
+	{
+	  tg = slist_node_item(sn);
+	  if(slist_tail_push(tg->ts->blocked, ts) == NULL)
+	    {
+	      fprintf(stderr, "could not block on %s\n",
+		      scamper_addr_tostr(tg->addr, addr, sizeof(addr)));
+	      return NULL;
+	    }
+	  blocked++;
+	  continue;
+	}
+
+      /* check to see if we already know the answers for this set */
+      tg = slist_head_item(ts->targets);
+      a2r_a = sc_addr2router_find(tg->addr); assert(a2r_a != NULL);
+      sn = slist_node_next(slist_head_node(ts->targets)); assert(sn != NULL);
+      while(sn != NULL)
+	{
+	  tg = slist_node_item(sn);
+	  a2r_b = sc_addr2router_find(tg->addr); assert(a2r_b != NULL);
+	  if(a2r_a->router != a2r_b->router &&
+	     sc_notaliases_check(a2r_a->router, a2r_b->router) == 0)
+	    break;
+	  sn = slist_node_next(sn);
+	}
+
+      /* if we already know the answer, we free the targetset and move on */
+      if(sn == NULL)
+	{
+	  sc_targetset_free(ts);
+	  continue;
+	}
+      break;
     }
-  return NULL;
+  if(ts == NULL)
+    return NULL;
+
+  /* install all of the addresses into the targets tree */
+  for(sn=slist_head_node(ts->targets); sn != NULL; sn=slist_node_next(sn))
+    {
+      tg = slist_node_item(sn);
+      if((tg->tree_node = splaytree_insert(targets, tg)) == NULL)
+	{
+	  fprintf(stderr, "could not add %s to tree\n",
+		  scamper_addr_tostr(tg->addr, addr, sizeof(addr)));
+	  return NULL;
+	}
+      tg->ts = ts;
+    }
+
+  ts->next = slist_node_next(slist_head_node(ts->targets));
+  ts->attempt = 0;
+  return ts;
 }
 
 static int do_method_ping(void)
@@ -1795,14 +1402,12 @@ static int do_method_ping(void)
     test_ping1,
     test_ping1,
     test_ping1,
-    test_ping1,
   };
   static sc_target_t * (*const target_func[])(void) = {
     target_classify,
     target_descend,
     target_overlap,
     target_descend2,
-    target_candidates,
   };
 
   sc_target_t *tg;
@@ -1836,8 +1441,7 @@ static int do_method_ping(void)
   probing++;
   more--;
 
-  logprint("p %d, w %d, l %d : %s", probing, heap_count(waiting),
-	   slist_count(probelist), buf);
+  logprint(1, "%s", buf);
   return 0;
 }
 
@@ -1858,20 +1462,12 @@ static int do_method_ally(void)
   else if((ts = targetset_ally()) == NULL)
     return 0;
 
-  tg = slist_node_item(ts->s1);
-  if((tg->tree_node = splaytree_insert(targets, tg)) == NULL)
-    {
-      fprintf(stderr, "could not add %s to tree\n",
-	      scamper_addr_tostr(tg->addr, addr, sizeof(addr)));
-      return -1;
-    }
-  sc_target_set(tg, 0, ts);
-
+  tg = slist_head_item(ts->targets);
   string_concat(cmd, sizeof(cmd), &off,
-		"dealias -U %d -m ally -W 1000 -p '%s' %s",
-		mode, "-P icmp-echo -s 1300 -M 1280",
+		"dealias -U %d -m ally -f %u -w 2 -W 1000 -p '%s' %s",
+		mode, fudge, "-P icmp-echo -s 1300 -M 1280",
 		scamper_addr_tostr(tg->addr, addr, sizeof(addr)));
-  tg = slist_node_item(ts->s2);
+  tg = slist_node_item(ts->next);
   string_concat(cmd, sizeof(cmd), &off, " %s\n",
 		scamper_addr_tostr(tg->addr, addr, sizeof(addr)));
 
@@ -1879,8 +1475,7 @@ static int do_method_ally(void)
   probing++;
   more--;
 
-  logprint("p %d, w %d, l %d : %s", probing, heap_count(waiting),
-	   slist_count(probelist), cmd);
+  logprint(1, "%s", cmd);
   return 0;
 }
 
@@ -1928,7 +1523,8 @@ static int finish_classify(void)
   for(sn=slist_head_node(incr); sn != NULL; sn=slist_node_next(sn))
     {
       target = slist_node_item(sn);
-      sc_target_set(target, 0, NULL);
+      target->attempt = 0;
+      target->ts = NULL;
       slist_tail_push(probelist, target);
     }
 
@@ -1950,7 +1546,7 @@ static int reply_classify(sc_target_t *target, sc_targetipid_t *p,
   /* no responses at all: unresponsive */
   if(rxd == 0)
     {
-      logprint("%s unresponsive\n", addr);
+      logprint(1, "%s unresponsive\n", addr);
       sc_target_free(target);
       goto done;
     }
@@ -1958,7 +1554,7 @@ static int reply_classify(sc_target_t *target, sc_targetipid_t *p,
   /* less than three IPID samples, sort of unresponsive */
   if(ipidc < 3)
     {
-      logprint("%s ipidc %d\n", addr, ipidc);
+      logprint(1, "%s ipidc %d\n", addr, ipidc);
       sc_target_free(target);
       goto done;
     }
@@ -1968,15 +1564,14 @@ static int reply_classify(sc_target_t *target, sc_targetipid_t *p,
     {
       if(ipid_inseq3(p[u16].ipid, p[u16+1].ipid, p[u16+2].ipid) == 0)
 	{
-	  logprint("%s not inseq %d\n", addr, u16);
+	  logprint(1, "%s not inseq %d\n", addr, u16);
 	  sc_target_free(target);
 	  goto done;
 	}
     }
 
-  logprint("%s incr\n", addr);
-  if(sc_target_sample(target, &p[ipidc-1]) == NULL)
-    return -1;
+  logprint(1, "%s incr\n", addr);
+  target->last = p[ipidc-1].ipid;
   slist_tail_push(incr, target);
 
  done:
@@ -2022,7 +1617,12 @@ static int finish_descend(void)
       slist_tail_push(ts->targets, ti->target);
     }
   slist_free(descend); descend = NULL;
-  overlap_dump();
+
+  /*
+   * sort the probelist so that longer-length target sets are probed
+   * first in an attempt to reduce the overall runtime
+   */
+  slist_qsort(probelist, (slist_cmp_t)sc_targetset_length_cmp);
   return 0;
 }
 
@@ -2071,9 +1671,9 @@ static int finish_overlap(void)
   for(sn=slist_head_node(incr); sn != NULL; sn=slist_node_next(sn))
     {
       target = slist_node_item(sn);
-      sc_target_set(target, 0, NULL);
-      if(target->last != NULL)
-	slist_tail_push(probelist, target);
+      target->attempt = 0;
+      target->ts = NULL;
+      slist_tail_push(probelist, target);
     }
   slist_qsort(probelist, (slist_cmp_t)sc_target_ipid_cmp);
   return 0;
@@ -2083,7 +1683,7 @@ static int reply_overlap(sc_target_t *target, sc_targetipid_t *ipids,
 			 uint16_t ipidc, uint16_t rxd)
 {
   sc_targetipid_t *ti;
-  sc_targetset_t *ts, *tt;
+  sc_targetset_t *ts, *tsb;
   sc_target_t *tg;
   struct timeval tv;
 
@@ -2102,11 +1702,12 @@ static int reply_overlap(sc_target_t *target, sc_targetipid_t *ipids,
     return -1;
 
  done:
-  ts = target->data;
+  ts = target->ts;
   if(ts->next != NULL)
     {
       tg = slist_node_item(ts->next);
-      sc_target_set(tg, 0, ts);
+      tg->attempt = 0;
+      tg->ts = ts;
       ts->next = slist_node_next(ts->next);
       timeval_add_s(&tv, &now, 1);
       if(sc_wait_target(&tv, tg) != 0)
@@ -2114,12 +1715,14 @@ static int reply_overlap(sc_target_t *target, sc_targetipid_t *ipids,
     }
   else
     {
-      if(slist_count(ts->blocked) > 0)
+      while((tsb = slist_head_pop(ts->blocked)) != NULL)
 	{
-	  while((tt = slist_head_pop(ts->blocked)) != NULL)
-	    slist_tail_push(probelist, tt);
-	  slist_qsort(probelist, (slist_cmp_t)sc_targetset_min_cmp);
+	  /* put the blocked items at the front of the probelist */
+	  if(slist_head_push(probelist, tsb) == NULL)
+	    return -1;
+	  blocked--;
 	}
+
       dlist_node_pop(overlap_act, ts->node);
       sc_targetset_free(ts);
     }
@@ -2129,44 +1732,49 @@ static int reply_overlap(sc_target_t *target, sc_targetipid_t *ipids,
 
 static int finish_descend2(void)
 {
+  slist_node_t *sa, *sb;
+  sc_router_t *r;
+  sc_addr2router_t *a2r;
   sc_targetset_t *ts;
-  slist_t *list = NULL;
-  int tc;
+  sc_target_t *tg;
 
   if(isdone() == 0)
     return 0;
 
-  if(mode_ok(MODE_CANDIDATES) == 0)
-    goto done;
-  mode = MODE_CANDIDATES;
+  if(mode_ok(MODE_ALLY) == 0)
+    return 0;
+  mode = MODE_ALLY;
 
-  if((list = slist_alloc()) == NULL || pairwise_all(incr, list) != 0)
-    goto err;
-  while((ts = slist_head_pop(list)) != NULL)
+  if(pairwise_all(incr) != 0)
+    return -1;
+  slist_qsort(candidates, (slist_cmp_t)sc_targetset_targetc_asc_cmp);
+
+  /* create router nodes for all addresses to probe */
+  for(sa=slist_head_node(candidates); sa != NULL; sa=slist_node_next(sa))
     {
-      tc = slist_count(ts->targets);
-      if(slist_tail_push(tc > 3 ? probelist : candidates, ts) == NULL)
-	goto err;
-    }
-  if(slist_count(probelist) == 0)
-    {
-      if(mode_ok(MODE_ALLY) == 0)
-	goto done;
-      mode = MODE_ALLY;
-      slist_concat(probelist, candidates);
-    }
-  else
-    {
-      slist_qsort(probelist, (slist_cmp_t)sc_targetset_targetcount_cmp);
+      ts = slist_node_item(sa);
+      sc_targetset_logprint(ts);
+      for(sb=slist_head_node(ts->targets); sb != NULL; sb=slist_node_next(sb))
+	{
+	  tg = slist_node_item(sb);
+	  if((a2r = sc_addr2router_find(tg->addr)) != NULL)
+	    continue;
+	  if((r = sc_router_alloc()) == NULL ||
+	     (a2r = sc_addr2router_alloc(tg->addr, r)) == NULL ||
+	     slist_tail_push(r->addrs, a2r) == NULL)
+	    return -1;
+	}
     }
 
- done:
-  if(list != NULL) slist_free(list);
+  if((probeheap=heap_alloc((heap_cmp_t)sc_targetset_targetc_desc_cmp)) == NULL)
+    return -1;
+  while((ts = slist_head_pop(candidates)) != NULL)
+    {
+      if(heap_insert(probeheap, ts) == NULL)
+	return -1;
+    }
+
   return 0;
-
- err:
-  if(list != NULL) slist_free(list);
-  return -1;
 }
 
 static int reply_descend2(sc_target_t *target, sc_targetipid_t *ipids,
@@ -2189,117 +1797,6 @@ static int reply_descend2(sc_target_t *target, sc_targetipid_t *ipids,
   return finish_descend2();
 }
 
-static int finish_candidates(void)
-{
-  sc_targetset_t *ts;
-  slist_node_t *sn;
-
-  if(isdone() == 0)
-    return 0;
-  if(mode_ok(MODE_ALLY) == 0)
-    return 0;
-  mode = MODE_ALLY;
-
-  while((ts = slist_head_pop(candidates)) != NULL)
-    {
-      if(slist_count(ts->targets) > 3)
-	{
-	  if(pairwise_all(ts->targets, probelist) != 0)
-	    return -1;
-	  sc_targetset_free(ts);
-	}
-      else
-	{
-	  if(slist_tail_push(probelist, ts) == NULL)
-	    return -1;
-	}
-    }
-
-  slist_qsort(probelist, (slist_cmp_t)sc_targetset_targetcount_cmp);
-  for(sn=slist_head_node(probelist); sn != NULL; sn=slist_node_next(sn))
-    sc_targetset_print(slist_node_item(sn));
-
-  return 0;
-}
-
-static int reply_candidates(sc_target_t *target, sc_targetipid_t *ipids,
-			    uint16_t ipidc, uint16_t rxd)
-{
-  sc_targetipid_t *ti = NULL;
-  sc_targetset_t *ts = target->data;
-  sc_target_t *tg = NULL, *t1, *t2;
-  slist_node_t *s2 = NULL;
-  struct timeval tv;
-
-  timeval_add_s(&tv, &now, 1);
-
-  if(ipidc == 0)
-    {
-      if(target->attempt < 2)
-	{
-	  target->attempt++;
-	  if(sc_wait_target(&tv, target) != 0)
-	    return -1;
-	  return 0;
-	}
-    }
-  else
-    {
-      if((ti = sc_target_sample(target, &ipids[0])) == NULL)
-	return -1;
-    }
-
-  t1 = ts->s1 != NULL ? slist_node_item(ts->s1) : NULL;
-  t2 = ts->s2 != NULL ? slist_node_item(ts->s2) : NULL;
-
-  if(target == t2 && ti != NULL && pairwise(t1, t2) == 1)
-    {
-      tg = t1;
-    }
-  else
-    {
-      /* advance to the next t2, if available */
-      if(ts->s2 == NULL)
-	s2 = slist_node_next(ts->s1);
-      else
-	s2 = slist_node_next(ts->s2);
-      while(s2 != NULL)
-	{
-	  if(pairwise(t1, slist_node_item(s2)) == 1)
-	    break;
-	  s2 = slist_node_next(s2);
-	}
-
-      if(s2 != NULL)
-	{
-	  ts->s2 = s2;
-	  tg = slist_node_item(s2);
-	}
-      else
-	{
-	  ts->s1 = slist_node_next(ts->s1);
-	  ts->s2 = NULL;
-	  if(slist_node_next(ts->s1) == NULL)
-	    ts->s1 = NULL;
-	  if(ts->s1 != NULL)
-	    tg = slist_node_item(ts->s1);
-	}
-    }
-
-  if(tg != NULL)
-    {
-      sc_target_set(tg, 0, ts);
-      if(sc_wait_target(&tv, tg) != 0)
-	return -1;
-    }
-  else
-    {
-      slist_tail_push(candidates, ts);
-    }
-
-  return finish_candidates();
-}
-
 static int do_decoderead_ping(scamper_ping_t *ping)
 {
   static int (*const func[])(sc_target_t *, sc_targetipid_t *,
@@ -2308,7 +1805,6 @@ static int do_decoderead_ping(scamper_ping_t *ping)
     reply_descend,
     reply_overlap,
     reply_descend2,
-    reply_candidates,
   };
   sc_target_t            *target;
   char                    buf[64];
@@ -2353,57 +1849,119 @@ static int do_decoderead_ping(scamper_ping_t *ping)
 static int do_decoderead_dealias(scamper_dealias_t *dealias)
 {
   scamper_dealias_ally_t *ally = dealias->data;
+  sc_addr2router_t *a2r_a, *a2r_b, *a2r_c;
+  scamper_addr_t *a, *b;
   sc_targetset_t *ts;
-  sc_target_t *target;
+  sc_target_t *tg;
   struct timeval tv;
-  char a[64], b[64], r[16];
+  char ab[64], bb[64], r[16];
+  slist_node_t *sn;
+  slist_t *list;
+  int rc = -1;
 
   assert(SCAMPER_DEALIAS_METHOD_IS_ALLY(dealias));
 
-  scamper_addr_tostr(ally->probedefs[0].dst, a, sizeof(a));
-  scamper_addr_tostr(ally->probedefs[1].dst, b, sizeof(b));
+  a = ally->probedefs[0].dst; scamper_addr_tostr(a, ab, sizeof(ab));
+  b = ally->probedefs[1].dst; scamper_addr_tostr(b, bb, sizeof(bb));
 
-  if((target = sc_target_findtree(ally->probedefs[0].dst)) == NULL)
+  a2r_a = sc_addr2router_find(a);
+  assert(a2r_a != NULL); assert(a2r_a->router != NULL);
+  a2r_b = sc_addr2router_find(b);
+  assert(a2r_b != NULL); assert(a2r_b->router != NULL);
+
+  if((tg = sc_target_findtree(a)) == NULL)
     {
-      fprintf(stderr, "do_decoderead: could not find dst %s\n", a);
+      fprintf(stderr, "do_decoderead: could not find dst %s\n", ab);
       goto done;
     }
-  sc_target_detachtree(target);
-  ts = target->data;
+  ts = tg->ts;
 
-  if(dealias->result == SCAMPER_DEALIAS_RESULT_NONE)
+  logprint(1, "%s %s %s\n", ab, bb,
+	   scamper_dealias_result_tostr(dealias, r, sizeof(r)));
+
+  if(dealias->result == SCAMPER_DEALIAS_RESULT_ALIASES)
     {
-      if(ts->attempt >= 2)
-	sc_targetset_nextpair(ts);
-      else
-	ts->attempt++;
-    }
-  else
-    {
-      if(SCAMPER_DEALIAS_RESULT_IS_ALIASES(dealias) && aliasfile != NULL)
+      /* merge two routers together */
+      if(a2r_a->router != a2r_b->router)
 	{
-	  fprintf(aliasfile, "%s %s\n", a, b);
-	  fflush(aliasfile);
+	  /* merge the sets of "not aliases" together */
+	  if(sc_notaliases_merge(a2r_a->router, a2r_b->router) != 0)
+	    goto done;
+
+	  /* copy across b's aliases into a */
+	  list = a2r_b->router->addrs; a2r_b->router->addrs = NULL;
+	  sc_router_free(a2r_b->router); a2r_b->router = NULL;
+	  for(sn=slist_head_node(list); sn != NULL; sn=slist_node_next(sn))
+	    {
+	      a2r_c = slist_node_item(sn);
+	      a2r_c->router = a2r_a->router;
+	    }
+	  slist_concat(a2r_a->router->addrs, list);
+	  slist_free(list);
+	  assert(a2r_b->router == a2r_a->router);
 	}
-      logprint("%s %s %s\n", a, b,
-	       scamper_dealias_result_tostr(dealias,r,sizeof(r)));
-      sc_targetset_nextpair(ts);
+    }
+  else if(dealias->result == SCAMPER_DEALIAS_RESULT_NOTALIASES)
+    {
+      /* mark these routers as not being aliases to save further probing */
+      if(a2r_a->router != a2r_b->router)
+	{
+	  if(sc_notaliases_add(a2r_a->router, a2r_b->router) != 0)
+	    goto done;
+	}
+    }
+  else if(dealias->result == SCAMPER_DEALIAS_RESULT_NONE && ts->attempt < 2)
+    {
+      ts->attempt++;
+      timeval_add_s(&tv, &now, 1);
+      if(sc_wait_targetset(&tv, ts) == 0)
+	rc = 0;
+      goto done;
     }
 
-  if(ts->s1 != NULL)
+  for(;;)
     {
-      timeval_add_s(&tv, &now, 1);
-      if(sc_wait_targetset(&tv, ts) != 0)
-	return -1;
+      /*
+       * if we are at the end of the list of targets for this set, free
+       * the targetset and move on.
+       */
+      if((ts->next = slist_node_next(ts->next)) == NULL)
+	{
+	  while((tg = slist_head_pop(ts->targets)) != NULL)
+	    {
+	      tg->ts = NULL;
+	      sc_target_detachtree(tg);
+	    }
+	  while((tg = slist_head_pop(ts->blocked)) != NULL)
+	    {
+	      if(heap_insert(probeheap, tg) == NULL)
+		goto done;
+	      blocked--;
+	    }
+
+	  sc_targetset_free(ts);
+	  rc = 0;
+	  goto done;
+	}
+
+      /* skip over if the transitive closure implies we know the answer */
+      tg = slist_node_item(ts->next);
+      a2r_c = sc_addr2router_find(tg->addr); assert(a2r_c != NULL);
+      if(a2r_a->router == a2r_c->router ||
+	 sc_notaliases_check(a2r_a->router, a2r_c->router) == 1)
+	continue;
+
+      /* probe this address */
+      break;
     }
-  else
-    {
-      sc_targetset_free(ts);
-    }
+  ts->attempt = 0;
+  timeval_cpy(&tv, &now);
+  if(sc_wait_targetset(&tv, ts) == 0)
+    rc = 0;
 
  done:
   if(dealias != NULL) scamper_dealias_free(dealias);
-  return 0;
+  return rc;
 }
 
 static int do_decoderead(void)
@@ -2533,22 +2091,76 @@ static int do_scamperread(void)
   return -1;
 }
 
-static int do_addressfile(void)
+static int addressfile_line(char *addr, void *param)
 {
-  splaytree_t *tree = NULL;
-  int rc = 0;
-  if((tree = splaytree_alloc((splaytree_cmp_t)scamper_addr_cmp)) == NULL ||
-     file_lines(addressfile, sc_target_new, tree) != 0)
-    rc = -1;
-  splaytree_free(tree, (splaytree_free_t)scamper_addr_free);
-  return rc;
+  splaytree_t *tree = param;
+  scamper_addr_t *a = NULL;
+
+  if(addr[0] == '#' || addr[0] == '\0')
+    return 0;
+
+  if((a = scamper_addr_resolve(AF_INET6, addr)) == NULL)
+    {
+      fprintf(stderr, "could not resolve '%s'\n", addr);
+      return -1;
+    }
+
+  /*
+   * make sure the address is in 2000::/3
+   * and is not already in the probelist
+   */
+  if(scamper_addr_isunicast(a) != 1 || splaytree_find(tree, a) != NULL)
+    {
+      scamper_addr_free(a);
+      return 0;
+    }
+
+  /* make a note that the address is in the list to be probed */
+  if(splaytree_insert(tree, a) == NULL)
+    {
+      scamper_addr_free(a);
+      return -1;
+    }
+
+  return 0;
 }
 
-static int do_skipfile(void)
+static int do_addressfile(void)
 {
-  if(skipfile == NULL)
-    return 0;
-  return file_lines(skipfile, sc_skippair_new, NULL);
+  scamper_addr_t *addr = NULL;
+  splaytree_t *tree = NULL;
+  slist_t *list = NULL;
+  sc_target_t *target = NULL;
+  int rc = -1;
+
+  if((tree = splaytree_alloc((splaytree_cmp_t)scamper_addr_cmp)) == NULL ||
+     (list = slist_alloc()) == NULL ||
+     file_lines(addressfile, addressfile_line, tree) != 0)
+    goto done;
+
+  splaytree_inorder(tree, tree_to_slist, list);
+  splaytree_free(tree, NULL); tree = NULL;
+
+  while((addr = slist_head_pop(list)) != NULL)
+    {
+      if((target = sc_target_alloc(addr)) == NULL)
+	goto done;
+      scamper_addr_free(addr); addr = NULL;
+
+      if(slist_tail_push(probelist, target) == NULL ||
+	 ((options & OPT_INCR) && slist_tail_push(incr, target) == NULL))
+	{
+	  fprintf(stderr, "could push target\n");
+	  goto done;
+	}
+    }
+
+  rc = 0;
+
+ done:
+  if(tree != NULL) splaytree_free(tree, (splaytree_free_t)scamper_addr_free);
+  if(list != NULL) slist_free_cb(list, (slist_free_t)scamper_addr_free);
+  return rc;
 }
 
 /*
@@ -2560,19 +2172,33 @@ static int do_skipfile(void)
 static int do_scamperconnect(void)
 {
   struct sockaddr_un sun;
-  struct sockaddr_in sin;
+  struct sockaddr_storage sas;
+  struct sockaddr *sa = (struct sockaddr *)&sas;
   struct in_addr in;
 
   if(options & OPT_PORT)
     {
-      inet_aton("127.0.0.1", &in);
-      sockaddr_compose((struct sockaddr *)&sin, AF_INET, &in, port);
+      if(dst_addr != NULL)
+	{
+	  if(sockaddr_compose_str(sa, dst_addr, dst_port) != 0)
+	    {
+	      fprintf(stderr, "%s: could not compose sockaddr from %s:%d\n",
+		      __func__, dst_addr, dst_port);
+	      return -1;
+	    }
+	}
+      else
+	{
+	  in.s_addr = htonl(INADDR_LOOPBACK);
+	  sockaddr_compose(sa, AF_INET, &in, dst_port);
+	}
+
       if((scamper_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
 	{
 	  fprintf(stderr, "could not allocate new socket\n");
 	  return -1;
 	}
-      if(connect(scamper_fd, (const struct sockaddr *)&sin, sizeof(sin)) != 0)
+      if(connect(scamper_fd, sa, sockaddr_len(sa)) != 0)
 	{
 	  fprintf(stderr, "could not connect to scamper process\n");
 	  return -1;
@@ -2626,6 +2252,7 @@ static int speedtrap_data_select(void)
 	   */
 	  w = heap_head_item(waiting);
 	  if(slist_count(probelist) > 0 ||
+	     (probeheap != NULL && heap_count(probeheap) > 0) ||
 	     (w != NULL && timeval_cmp(&w->tv, &now) <= 0))
 	    {
 	      if(do_method() != 0)
@@ -2676,9 +2303,10 @@ static int speedtrap_data_select(void)
 	}
 
       if(splaytree_count(targets) == 0 && slist_count(probelist) == 0 &&
+	 (probeheap == NULL || heap_count(probeheap) == 0) &&
 	 heap_count(waiting) == 0)
 	{
-	  logprint("done\n");
+	  logprint(1, "done\n");
 	  break;
 	}
 
@@ -2738,9 +2366,9 @@ static int speedtrap_data(void)
      (probelist = slist_alloc()) == NULL ||
      (incr = slist_alloc()) == NULL ||
      (candidates = slist_alloc()) == NULL ||
+     (notaliases = splaytree_alloc((splaytree_cmp_t)sc_notaliases_cmp))==NULL||
      (overlap_act = dlist_alloc()) == NULL ||
-     (skiptree = splaytree_alloc((splaytree_cmp_t)sc_skippair_cmp)) == NULL ||
-     do_addressfile() != 0 || do_skipfile() != 0 || do_scamperconnect() != 0 ||
+     do_addressfile() != 0 || do_scamperconnect() != 0 ||
      (scamper_lp = scamper_linepoll_alloc(do_scamperread_line, NULL)) == NULL ||
      (scamper_wb = scamper_writebuf_alloc()) == NULL ||
      (decode_wb = scamper_writebuf_alloc()) == NULL ||
@@ -2766,6 +2394,326 @@ static int speedtrap_data(void)
     }
 
   return speedtrap_data_select();
+}
+
+static int ping_read(const scamper_ping_t *ping, uint32_t *ipids,
+		     int *ipidc, int *replyc)
+{
+  scamper_ping_reply_t *reply;
+  int i, maxipidc = *ipidc;
+
+  *ipidc = 0;
+  *replyc = 0;
+
+  for(i=0; i<ping->ping_sent; i++)
+    {
+      if((reply = ping->ping_replies[i]) == NULL)
+	continue;
+      if(SCAMPER_PING_REPLY_IS_ICMP_ECHO_REPLY(reply) == 0)
+	continue;
+      (*replyc)++;
+      if(reply->flags & SCAMPER_PING_REPLY_FLAG_REPLY_IPID)
+	{
+	  if(*ipidc == maxipidc)
+	    return -1;
+	  ipids[*ipidc] = reply->reply_ipid32;
+	  (*ipidc)++;
+	}
+    }
+
+  return 0;
+}
+
+static int process_1_ping(const scamper_ping_t *ping)
+{
+  sc_router_t *r;
+  sc_addr2router_t *a2r;
+  uint32_t ipids[10];
+  int ipidc, replyc;
+
+  if(ping->userid != 0)
+    return 0;
+
+  ipidc = sizeof(ipids) / sizeof(uint32_t);
+  if(ping_read(ping, ipids, &ipidc, &replyc) != 0)
+    return -1;
+  if(ipid_incr(ipids, ipidc) == 0)
+    return 0;
+
+  if(sc_addr2router_find(ping->dst) != NULL)
+    return 0;
+
+  if((r = sc_router_alloc()) == NULL ||
+     (a2r = sc_addr2router_alloc(ping->dst, r)) == NULL ||
+     slist_tail_push(r->addrs, a2r) == NULL)
+    return -1;
+  return 0;
+}
+
+static int process_1_ally(const scamper_dealias_t *dealias)
+{
+  const scamper_dealias_ally_t *ally = dealias->data;
+  sc_addr2router_t *a2r_a, *a2r_b, *a2r_c;
+  slist_t *list;
+  sc_router_t *r;
+  slist_node_t *sn;
+  scamper_addr_t *a = ally->probedefs[0].dst;
+  scamper_addr_t *b = ally->probedefs[1].dst;
+
+  if(dealias->result != SCAMPER_DEALIAS_RESULT_ALIASES)
+    return 0;
+
+  a2r_a = sc_addr2router_find(a);
+  a2r_b = sc_addr2router_find(b);
+
+  if(a2r_a != NULL && a2r_b != NULL)
+    {
+      if(a2r_a->router != a2r_b->router)
+	{
+	  list = a2r_b->router->addrs; a2r_b->router->addrs = NULL;
+	  sc_router_free(a2r_b->router); a2r_b->router = NULL;
+	  for(sn=slist_head_node(list); sn != NULL; sn=slist_node_next(sn))
+	    {
+	      a2r_c = slist_node_item(sn);
+	      a2r_c->router = a2r_a->router;
+	    }
+	  slist_concat(a2r_a->router->addrs, list);
+	  slist_free(list);
+	}
+    }
+  else if(a2r_a != NULL)
+    {
+      r = a2r_a->router;
+      if((a2r_b = sc_addr2router_alloc(b, r)) == NULL ||
+	 slist_tail_push(a2r_a->router->addrs, a2r_b) == NULL)
+	goto err;
+    }
+  else if(a2r_b != NULL)
+    {
+      r = a2r_b->router;
+      if((a2r_a = sc_addr2router_alloc(a, r)) == NULL ||
+	 slist_tail_push(a2r_b->router->addrs, a2r_a) == NULL)
+	goto err;
+    }
+  else
+    {
+      if((r = sc_router_alloc()) == NULL ||
+	 (a2r_a = sc_addr2router_alloc(a, r)) == NULL ||
+	 slist_tail_push(r->addrs, a2r_a) == NULL ||
+	 (a2r_b = sc_addr2router_alloc(b, r)) == NULL ||
+	 slist_tail_push(r->addrs, a2r_b) == NULL)
+	goto err;
+    }
+
+  return 0;
+
+ err:
+  return -1;
+}
+
+static void finish_1(void)
+{
+  sc_addr2router_t *a2r;
+  dlist_node_t *dn;
+  slist_node_t *sn;
+  sc_router_t *r;
+  char buf[128];
+  int x;
+
+  for(dn=dlist_head_node(routers); dn != NULL; dn=dlist_node_next(dn))
+    {
+      r = dlist_node_item(dn);
+      slist_qsort(r->addrs, (slist_cmp_t)sc_addr2router_human_cmp);
+    }
+  dlist_qsort(routers, (dlist_cmp_t)sc_router_cmp);
+  for(dn=dlist_head_node(routers); dn != NULL; dn=dlist_node_next(dn))
+    {
+      r = dlist_node_item(dn); x = 0;
+      for(sn=slist_head_node(r->addrs); sn != NULL; sn=slist_node_next(sn))
+	{
+	  a2r = slist_node_item(sn);
+	  if(x != 0) printf(" ");
+	  printf("%s", scamper_addr_tostr(a2r->addr, buf, sizeof(buf)));
+	  x++;
+	}
+      printf("\n");
+    }
+
+  return;
+}
+
+static int process_2_ping(const scamper_ping_t *ping)
+{
+  uint32_t ipids[10];
+  int ipidc, replyc;
+  char buf[64];
+
+  if(ping->userid != 0)
+    {
+      dump_stop = 1;
+      return 0;
+    }
+
+  ipidc = sizeof(ipids) / sizeof(uint32_t);
+  if(ping_read(ping, ipids, &ipidc, &replyc) != 0)
+    return -1;
+
+  scamper_addr_tostr(ping->dst, buf, sizeof(buf));
+  if(ipidc == 0)
+    {
+      if(replyc == 0)
+	printf("%s unresponsive\n", buf);
+      else if(replyc == 1)
+	printf("%s gone-silent\n", buf);
+      else
+	printf("%s no-frags\n", buf);
+    }
+  else if(ipidc < 3)
+    printf("%s insuff-ipids\n", buf);
+  else if(ipid_incr(ipids, ipidc) == 0)
+    printf("%s random\n", buf);
+  else
+    printf("%s incr\n", buf);
+
+  return 0;
+}
+
+static int            d3_states_probec[6];
+static struct timeval d3_states_first[6];
+static struct timeval d3_states_last[6];
+
+static int process_3_ping(const scamper_ping_t *ping)
+{
+  uint32_t id = ping->userid;
+  if(timeval_cmp(&d3_states_first[id], &ping->start) > 0 ||
+     d3_states_first[id].tv_sec == 0)
+    timeval_cpy(&d3_states_first[id], &ping->start);
+  if(timeval_cmp(&d3_states_last[id], &ping->start) < 0)
+    timeval_cpy(&d3_states_last[id], &ping->start);
+  d3_states_probec[id] += ping->ping_sent;
+  return 0;
+}
+
+static int process_3_ally(const scamper_dealias_t *dealias)
+{
+  uint32_t id = dealias->userid;
+  d3_states_probec[id] += dealias->probec;
+  if(timeval_cmp(&d3_states_first[id], &dealias->start) > 0 ||
+     d3_states_first[id].tv_sec == 0)
+    timeval_cpy(&d3_states_first[id], &dealias->start);
+  if(timeval_cmp(&d3_states_last[id], &dealias->start) < 0)
+    timeval_cpy(&d3_states_last[id], &dealias->start);
+  return 0;
+}
+
+static void finish_3(void)
+{
+  int h, m, s, i, sum_time = 0, sum_probes = 0;
+  struct timeval tv;
+
+  for(i=0; i<6; i++)
+    {
+      if(d3_states_probec[i] == 0)
+	continue;
+      timeval_diff_tv(&tv, &d3_states_first[i], &d3_states_last[i]);
+      hms(tv.tv_sec, &h, &m, &s);
+      assert((h * 3600) + (m * 60) + s == tv.tv_sec);
+      printf("%d: %d %d:%02d:%02d\n", i, d3_states_probec[i], h, m, s);
+      sum_time += tv.tv_sec;
+      sum_probes += d3_states_probec[i];
+    }
+  hms(sum_time, &h, &m, &s);
+  printf("total: %d %d:%02d:%02d\n", sum_probes, h, m, s);
+
+  return;
+}
+
+static int process_4_ping(const scamper_ping_t *ping)
+{
+  scamper_ping_reply_t *reply;
+  sc_target_t *target;
+  sc_targetipid_t ti;
+  uint16_t u16;
+
+  /* only interested in the first three stages */
+  if(ping->userid != MODE_DESCEND &&
+     ping->userid != MODE_OVERLAP &&
+     ping->userid != MODE_DESCEND2)
+    return 0;
+
+  if(targets == NULL &&
+     (targets = splaytree_alloc((splaytree_cmp_t)sc_target_addr_cmp)) == NULL)
+    return -1;
+
+  if((target = sc_target_findtree(ping->dst)) == NULL)
+    {
+      if((target = sc_target_alloc(ping->dst)) == NULL ||
+	 (target->tree_node = splaytree_insert(targets, target)) == NULL)
+	return -1;
+    }
+
+  for(u16=0; u16<ping->ping_sent; u16++)
+    {
+      if((reply = ping->ping_replies[u16]) == NULL ||
+	 SCAMPER_PING_REPLY_IS_ICMP_ECHO_REPLY(reply) == 0 ||
+	 (reply->flags & SCAMPER_PING_REPLY_FLAG_REPLY_IPID) == 0)
+	continue;
+
+      /* record the response */
+      ti.target = target;
+      ti.ipid = reply->reply_ipid32;
+      timeval_cpy(&ti.tx, &reply->tx);
+      timeval_add_tv3(&ti.rx, &reply->tx, &reply->rtt);
+      if(sc_target_sample(target, &ti) == NULL)
+	return -1;
+    }
+
+  return 0;
+}
+
+static void finish_4(void)
+{
+  slist_t *tg_list = NULL, *sets = NULL;
+  slist_node_t *sa, *sb;
+  sc_target_t *ta, *tb;
+  sc_targetset_t *ts;
+  char ba[128], bb[128];
+  int i = 0;
+
+  if((candidates = slist_alloc()) == NULL)
+    goto done;
+  if((tg_list = slist_alloc()) == NULL || (sets = slist_alloc()) == NULL)
+    goto done;
+  splaytree_inorder(targets, tree_to_slist, tg_list);
+  if(pairwise_all(tg_list) != 0)
+    goto done;
+  slist_qsort(candidates, (slist_cmp_t)sc_targetset_targetc_asc_cmp);
+
+  while((ts = slist_head_pop(candidates)) != NULL)
+    {
+      if(i > 0)
+	printf("\n");
+
+      sa = slist_head_node(ts->targets);
+      ta = slist_node_item(sa);
+
+      for(sb=slist_node_next(sa); sb != NULL; sb=slist_node_next(sb))
+	{
+	  tb = slist_node_item(sb);
+	  if(pairwise(ta, tb) == 1)
+	    printf("%s %s\n",
+		   scamper_addr_tostr(ta->addr, ba, sizeof(ba)),
+		   scamper_addr_tostr(tb->addr, bb, sizeof(bb)));
+	}
+
+      sc_targetset_free(ts);
+      i++;
+    }
+
+ done:
+  if(tg_list != NULL) slist_free(tg_list);
+  if(sets != NULL) slist_free_cb(sets, (slist_free_t)sc_targetset_free);
+  return;
 }
 
 static int speedtrap_read(void)
@@ -2836,14 +2784,57 @@ static int speedtrap_read(void)
 static int speedtrap_init(void)
 {
   uint16_t types[] = {SCAMPER_FILE_OBJ_PING, SCAMPER_FILE_OBJ_DEALIAS};
-  int typec   = sizeof(types) / sizeof(uint16_t);
+  int typec = sizeof(types) / sizeof(uint16_t);
+
+#ifdef HAVE_PTHREAD
+  int i;
+#endif
+
   if((ffilter = scamper_file_filter_alloc(types, typec)) == NULL)
     return -1;
+
+#ifdef HAVE_PTHREAD
+  if(threadc == -1)
+    {
+      threadc = 1;
+#ifdef _SC_NPROCESSORS_ONLN
+      if((i = sysconf(_SC_NPROCESSORS_ONLN)) > 1)
+	threadc = i;
+#endif
+    }
+#else
+  threadc = 0;
+#endif
+
+  if((addr2routers =
+      splaytree_alloc((splaytree_cmp_t)sc_addr2router_cmp)) == NULL ||
+     (routers = dlist_alloc()) == NULL)
+    return -1;
+
   return 0;
 }
 
 static void cleanup(void)
 {
+  if(dst_addr != NULL)
+    {
+      free(dst_addr);
+      dst_addr = NULL;
+    }
+
+  if(addr2routers != NULL)
+    {
+      splaytree_free(addr2routers, (splaytree_free_t)sc_addr2router_free);
+      addr2routers = NULL;
+    }
+
+  if(routers != NULL)
+    {
+      dlist_foreach(routers, (dlist_foreach_t)sc_router_node_setnull, NULL);
+      dlist_free_cb(routers, (dlist_free_t)sc_router_free);
+      routers = NULL;
+    }
+
   if(pairwise_uint32 != NULL)
     {
       free(pairwise_uint32);
@@ -2854,6 +2845,12 @@ static void cleanup(void)
     {
       free(pairwise_tipid);
       pairwise_tipid = NULL;
+    }
+
+  if(notaliases != NULL)
+    {
+      splaytree_free(notaliases, (splaytree_free_t)sc_notaliases_free);
+      notaliases = NULL;
     }
 
   if(descend != NULL)
@@ -2892,10 +2889,10 @@ static void cleanup(void)
       probelist = NULL;
     }
 
-  if(skiptree != NULL)
+  if(probeheap != NULL)
     {
-      splaytree_free(skiptree, (splaytree_free_t)sc_skippair_free);
-      skiptree = NULL;
+      heap_free(probeheap, NULL);
+      probeheap = NULL;
     }
 
   if(waiting != NULL)
@@ -2926,6 +2923,24 @@ static void cleanup(void)
     {
       fclose(logfile);
       logfile = NULL;
+    }
+
+  if(scamper_wb != NULL)
+    {
+      scamper_writebuf_free(scamper_wb);
+      scamper_wb = NULL;
+    }
+
+  if(scamper_lp != NULL)
+    {
+      scamper_linepoll_free(scamper_lp, 0);
+      scamper_lp = NULL;
+    }
+
+  if(decode_wb != NULL)
+    {
+      scamper_writebuf_free(decode_wb);
+      decode_wb = NULL;
     }
 
   return;

@@ -10,6 +10,7 @@ sc_speedtrap_SOURCES = \
 	../../mjl_heap.c \
 	../../mjl_list.c \
 	../../mjl_splaytree.c \
+	../../mjl_threadpool.c \
 	../../scamper/scamper_linepoll.c \
 	../../scamper/scamper_writebuf.c
 

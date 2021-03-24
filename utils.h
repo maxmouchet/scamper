@@ -1,12 +1,12 @@
 /*
  * utils.h
  *
- * $Id: utils.h,v 1.121 2020/04/09 22:32:18 mjl Exp $
+ * $Id: utils.h,v 1.122 2021/03/23 07:28:45 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
- * Copyright (C) 2015-2020 Matthew Luckie
+ * Copyright (C) 2015-2021 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -136,10 +136,12 @@ char *string_nextword(char *str);
 char *string_nullterm(char *str, const char *delim, char **next);
 char *string_nullterm_char(char *str, const char delim, char **next);
 int   string_isprint(const char *str, const size_t len);
+int   string_isalpha(const char *str);
 int   string_isnumber(const char *str);
 int   string_isdigit(const char *str);
 int   string_isalnum(const char *str);
 int   string_isfloat(const char *str);
+char *string_toupper(char *buf, size_t len, const char *in);
 int   string_tolong(const char *str, long *l);
 int   string_tollong(const char *str, long long *ll);
 char *string_lastof(char *str, const char *delim);

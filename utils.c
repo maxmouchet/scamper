@@ -1,13 +1,13 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.197 2020/07/16 22:52:47 mjl Exp $
+ * $Id: utils.c,v 1.198 2021/03/23 07:28:45 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2011      Matthew Luckie
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2015-2020 Matthew Luckie
+ * Copyright (C) 2015-2021 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -997,6 +997,18 @@ int string_isprint(const char *str, const size_t len)
   return 1;
 }
 
+char *string_toupper(char *buf, size_t len, const char *in)
+{
+  size_t off = 0;
+  while(in[off] != '\0' && len - off > 1)
+    {
+      buf[off] = toupper(in[off]);
+      off++;
+    }
+  buf[off] = '\0';
+  return buf;
+}
+
 int string_tolong(const char *str, long *l)
 {
   char *endptr;
@@ -1065,6 +1077,23 @@ int string_isdigit(const char *str)
   if(*str == '\0')
     return 0;
   while(isdigit(*str) != 0)
+    str++;
+  if(*str == '\0')
+    return 1;
+  return 0;
+}
+
+/*
+ * string_isalpha
+ *
+ * scan the string to establish if it is made up entirely of alphabetic
+ * characters.
+ */
+int string_isalpha(const char *str)
+{
+  if(*str == '\0')
+    return 0;
+  while(isalpha(*str) != 0)
     str++;
   if(*str == '\0')
     return 1;

@@ -1,7 +1,7 @@
 /*
  * scamper_do_trace.c
  *
- * $Id: scamper_trace_do.c,v 1.310 2020/06/12 23:29:25 mjl Exp $
+ * $Id: scamper_trace_do.c,v 1.311 2020/11/12 03:43:17 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -82,10 +82,6 @@
 #define SCAMPER_DO_TRACE_GAPACTION_MIN 1
 #define SCAMPER_DO_TRACE_GAPACTION_DEF SCAMPER_TRACE_GAPACTION_STOP
 #define SCAMPER_DO_TRACE_GAPACTION_MAX 2
-
-#define SCAMPER_DO_TRACE_HOLDTIME_MIN  0
-#define SCAMPER_DO_TRACE_HOLDTIME_DEF  0
-#define SCAMPER_DO_TRACE_HOLDTIME_MAX  255
 
 #define SCAMPER_DO_TRACE_HOPLIMIT_MIN  0
 #define SCAMPER_DO_TRACE_HOPLIMIT_DEF  0
