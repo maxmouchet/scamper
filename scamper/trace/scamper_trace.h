@@ -1,14 +1,14 @@
 /*
  * scamper_trace.h
  *
- * $Id: scamper_trace.h,v 1.140 2020/06/12 23:29:25 mjl Exp $
+ * $Id: scamper_trace.h,v 1.141 2021/05/02 05:55:58 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2008      Alistair King
  * Copyright (C) 2015      The Regents of the University of California
  * Copyright (C) 2015      The University of Waikato
- * Copyright (C) 2019-2020 Matthew Luckie
+ * Copyright (C) 2019-2021 Matthew Luckie
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
  *
@@ -345,6 +345,7 @@ typedef struct scamper_trace
   uint8_t                flags;
   uint8_t                attempts;
   uint8_t                hoplimit;
+  uint8_t                squeries;
   uint8_t                gaplimit;
   uint8_t                gapaction;
   uint8_t                firsthop;

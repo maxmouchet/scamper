@@ -5,10 +5,10 @@
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2014      The Regents of the University of California
  * Copyright (C) 2015      The University of Waikato
- * Copyright (C) 2015-2020 Matthew Luckie
+ * Copyright (C) 2015-2021 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_warts.c,v 1.27 2020/06/12 22:35:03 mjl Exp $
+ * $Id: scamper_trace_warts.c,v 1.28 2021/05/02 05:55:58 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -86,6 +86,7 @@
 #define WARTS_TRACE_USERID         28  /* user id */
 #define WARTS_TRACE_OFFSET         29  /* IP offset to use in fragments */
 #define WARTS_TRACE_ADDR_RTR       30  /* destination address key */
+#define WARTS_TRACE_SQUERIES       31  /* squeries */
 
 static const warts_var_t trace_vars[] =
 {
@@ -119,6 +120,7 @@ static const warts_var_t trace_vars[] =
   {WARTS_TRACE_USERID,       4, -1},
   {WARTS_TRACE_OFFSET,       2, -1},
   {WARTS_TRACE_ADDR_RTR,    -1, -1},
+  {WARTS_TRACE_SQUERIES,     1, -1},
 };
 #define trace_vars_mfb WARTS_VAR_MFB(trace_vars)
 
@@ -274,7 +276,8 @@ static void warts_trace_params(const scamper_trace_t *trace,
 	 var->id == WARTS_TRACE_ADDR_DST_GID ||
 	 (var->id == WARTS_TRACE_USERID && trace->userid == 0) ||
 	 (var->id == WARTS_TRACE_OFFSET && trace->offset == 0) ||
-	 (var->id == WARTS_TRACE_ADDR_RTR && trace->rtr == NULL))
+	 (var->id == WARTS_TRACE_ADDR_RTR && trace->rtr == NULL) ||
+	 (var->id == WARTS_TRACE_SQUERIES && trace->squeries < 2))
 	{
 	  continue;
 	}
@@ -340,6 +343,7 @@ static int warts_trace_params_read(scamper_trace_t *trace,warts_state_t *state,
     {&trace->userid,      (wpr_t)extract_uint32,   NULL},
     {&trace->offset,      (wpr_t)extract_uint16,   NULL},
     {&trace->rtr,         (wpr_t)extract_addr_static, NULL},
+    {&trace->squeries,    (wpr_t)extract_byte,     NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
   int rc;
@@ -350,6 +354,8 @@ static int warts_trace_params_read(scamper_trace_t *trace,warts_state_t *state,
     return -1;
   if(trace->firsthop == 0)
     trace->firsthop = 1;
+  if(trace->squeries < 2)
+    trace->squeries = 1;
 
   return 0;
 }
@@ -395,6 +401,7 @@ static int warts_trace_params_write(const scamper_trace_t *trace,
     {&trace->userid,      (wpw_t)insert_uint32,  NULL},
     {&trace->offset,      (wpw_t)insert_uint16,  NULL},
     {trace->rtr,          (wpw_t)insert_addr_static, NULL},
+    {&trace->squeries,    (wpw_t)insert_byte,    NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);
 

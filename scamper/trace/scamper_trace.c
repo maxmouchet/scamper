@@ -1,13 +1,13 @@
 /*
  * scamper_trace.c
  *
- * $Id: scamper_trace.c,v 1.97 2020/03/17 07:32:16 mjl Exp $
+ * $Id: scamper_trace.c,v 1.98 2021/08/28 21:36:31 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2003-2011 The University of Waikato
  * Copyright (C) 2008      Alistair King
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2019      Matthew Luckie
+ * Copyright (C) 2019-2021 Matthew Luckie
  *
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
@@ -269,7 +269,7 @@ const char *scamper_trace_type_tostr(const scamper_trace_t *t, char *b, size_t l
     "udp-paris",
     "tcp-ack",
   };
-  if(t->type > sizeof(m) / sizeof(char *) || m[t->type] == NULL)
+  if(t->type >= sizeof(m) / sizeof(char *) || m[t->type] == NULL)
     {
       snprintf(b, l, "%d", t->type);
       return b;
@@ -291,7 +291,7 @@ const char *scamper_trace_stop_tostr(const scamper_trace_t *t, char *b, size_t l
     "GSS",
     "HALTED",
   };
-  if(t->stop_reason > sizeof(r) / sizeof(char *) || r[t->stop_reason] == NULL)
+  if(t->stop_reason >= sizeof(r) / sizeof(char *) || r[t->stop_reason] == NULL)
     {
       snprintf(b, l, "%d", t->stop_reason);
       return b;
