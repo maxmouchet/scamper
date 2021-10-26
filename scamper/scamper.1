@@ -9,7 +9,7 @@
 .\" Copyright (c) 2015-2021 Matthew Luckie
 .\"                         All rights reserved
 .\"
-.\" $Id: scamper.1,v 1.93 2021/08/22 02:44:34 mjl Exp $
+.\" $Id: scamper.1,v 1.95 2021/10/23 04:49:21 mjl Exp $
 .\"
 .\"  nroff -man scamper.1
 .\"  groff -man -Tascii scamper.1 | man2html -title scamper.1
@@ -113,27 +113,43 @@ specifies the command for
 to use by default. The current choices for this option are:
 .Bl -dash -offset 2n -compact -width 1n
 .It
-.Sy dealias
+.Sy dealias:
+use Ally, Mercator, or Radargun-style probing to infer which IP addresses
+belong to the same system.
 .It
-.Sy host
+.Sy host:
+issue simple DNS queries to a domain name server.
 .It
-.Sy neighbourdisc
+.Sy neighbourdisc:
+issue an IPv4 ARP or IPv6 Neighbour discovery query to determine the
+layer-2 address of an IP address on the same network.
 .It
-.Sy ping
+.Sy ping:
+conduct simple delay measurements with various probe types.
 .It
-.Sy trace
+.Sy trace:
+conduct classic and Paris-style traceroute probing, which infers a
+single path towards a destination.
 .It
-.Sy tracelb
+.Sy tracelb:
+use the multipath discovery algorithm (MDA) to infer the presence
+of load-balanced paths towards a destination.
 .It
-.Sy sniff
+.Sy sniff:
+capture a subset of packets arriving at the host using a subset of
+tcpdump-style filter expressions.
 .It
-.Sy sting
+.Sy sting:
+use the sting method to infer one-way packet loss with a TCP receiver.
 .It
-.Sy tbit
+.Sy tbit:
+use techniques from the TCP behavior inference tool (TBIT) to infer
+properties of a TCP receiver.
 .El
 .Nm
 uses trace by default.
-The available commands and their options are documented below.
+The options for each of these commands are documented in their own
+sections of this manual page.
 .It Fl p Ar pps
 specifies the target packets-per-second rate for
 .Nm
@@ -308,7 +324,8 @@ domain.
 .El
 .\""""""""""""
 .Sh TRACE OPTIONS
-The trace command is used for conducting traceroute.
+The trace command is used for conducting classic and Paris-style
+traceroute probing, which infers a single path towards a destination.
 The following variations of the
 .Xr traceroute 8
 options are available:
@@ -389,13 +406,16 @@ specifies optional arguments to use.
 The current choices for this option are:
 .Bl -dash -offset 2n -compact -width 1n
 .It
-.Sy dl
+.Sy dl:
 specifies that the datalink socket should be used to timestamp packets,
 and to receive certain packets.
 .It
-.Sy dtree-noback
+.Sy dtree-noback:
 specifies that the traceroute should not do backwards probing when using
 doubletree.
+.It
+.Sy ptr:
+lookup hostnames for intermediate traceroute hops.
 .El
 .It Fl p Ar payload
 specifies the payload of the probe to use as a base.
@@ -447,7 +467,8 @@ halt probing backwards; used with the double-tree algorithm.
 .El
 .\""""""""""""
 .Sh PING OPTIONS
-The ping command is used for conducting ping.
+The ping command is used for conducting simple delay measurements with
+various probe types.
 The following variations of the
 .Xr ping 8
 options are available:
@@ -510,21 +531,21 @@ default, all probes are sent.
 The current choices for this option are:
 .Bl -dash -offset 2n -compact -width 1n
 .It
-.Sy dl
+.Sy dl:
 specifies that the ping should use datalink sockets, rather than raw sockets.
 .It
-.Sy nosrc
+.Sy nosrc:
 specifies that the real address of the host should not be embedded in
 the payload of the packet when the spoof option is used.
 .It
-.Sy spoof
+.Sy spoof:
 specifies that the source address is to be spoofed according to the address
 specified with the
 .Fl S
 option.  The address scamper would otherwise use as the source address is
 embedded in the payload of the probe unless the nosrc option is used.
 .It
-.Sy tbt
+.Sy tbt:
 specifies that the goal of the ping is to obtain fragmented responses, so that
 the
 .Fl c
@@ -629,15 +650,15 @@ allows alias resolution behaviour to be further tailored.
 The current choices for this option are:
 .Bl -dash -offset 2n -compact -width 1n
 .It
-.Sy inseq
+.Sy inseq:
 where IP-ID values are required to be strictly in sequence (with no tolerance
 for packet reordering)
 .It
-.Sy shuffle
+.Sy shuffle:
 randomise the order of probes sent each round; only valid for radargun
 probing.
 .It
-.Sy nobs
+.Sy nobs:
 do not allow for byte swapped IP-ID values in responses.
 Valid for ally and prefixscan.
 .El
@@ -898,7 +919,8 @@ specifies the window scale option to use when establishing the TCP connection.
 .\""""""""""""
 .Sh TRACELB OPTIONS
 The tracelb command is used to infer all per-flow load-balanced paths
-between a source and destination.
+between a source and destination using the multipath discovery algorithm
+(MDA).
 The following options are available for the
 .Nm
 tracelb command:

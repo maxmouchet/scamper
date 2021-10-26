@@ -1,7 +1,7 @@
 /*
  * sc_wartsdump
  *
- * $Id: sc_wartsdump.c,v 1.232 2021/08/27 10:06:55 mjl Exp $
+ * $Id: sc_wartsdump.c,v 1.233 2021/10/23 04:46:52 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -153,9 +153,12 @@ static void dump_trace_hop(const scamper_trace_t *trace,
   int i;
   char *comma = "";
 
-  printf("hop %2d  %s\n",
+  printf("hop %2d  %s",
 	 hop->hop_probe_ttl,
 	 scamper_addr_tostr(hop->hop_addr, addr, sizeof(addr)));
+  if(hop->hop_name != NULL)
+    printf(" name %s", hop->hop_name);
+  printf("\n");
 
   printf(" attempt: %d", hop->hop_probe_id);
   if(hop->hop_tx.tv_sec != 0)
@@ -373,6 +376,8 @@ static void dump_trace(scamper_trace_t *trace)
 	printf(" const-payload");
       if(trace->flags & SCAMPER_TRACE_FLAG_RXERR)
 	printf(" rxerr");
+      if(trace->flags & SCAMPER_TRACE_FLAG_PTR)
+	printf(" ptr");
       printf(" )");
     }
   printf("\n");

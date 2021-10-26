@@ -1,7 +1,7 @@
 /*
  * scamper_trace.c
  *
- * $Id: scamper_trace.c,v 1.98 2021/08/28 21:36:31 mjl Exp $
+ * $Id: scamper_trace.c,v 1.99 2021/10/23 04:46:52 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2003-2011 The University of Waikato
@@ -214,6 +214,8 @@ void scamper_trace_hop_free(scamper_trace_hop_t *hop)
   if(hop == NULL)
     return;
 
+  if(hop->hop_name != NULL)
+    free(hop->hop_name);
   scamper_icmpext_free(hop->hop_icmpext);
   scamper_addr_free(hop->hop_addr);
   free(hop);
