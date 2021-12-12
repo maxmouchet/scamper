@@ -1,7 +1,7 @@
 /*
  * scamper_control.c
  *
- * $Id: scamper_control.c,v 1.233.10.1 2022/02/09 07:19:19 mjl Exp $
+ * $Id: scamper_control.c,v 1.233.10.3 2022/07/23 00:50:24 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -265,7 +265,7 @@ static control_unix_t *ctrl_unix = NULL;
 static control_inet_t *ctrl_inet = NULL;
 
 #ifdef HAVE_OPENSSL
-extern SSL_CTX *tls_ctx;
+extern SSL_CTX *remote_tls_ctx;
 #endif
 
 #define CONTROL_MASTER_NEW   0 /* scamper --> remoted */
@@ -2677,6 +2677,9 @@ static void remote_free(control_remote_t *rm, int mode)
   rm->snd_nxt = 0;
   rm->rcv_nxt = 0;
 
+  if(rm->messages != NULL)
+    slist_empty_cb(rm->messages, (slist_free_t)client_message_free);
+
   if(mode != REMOTE_FREE_ALL)
     return;
 
@@ -2692,12 +2695,6 @@ static void remote_free(control_remote_t *rm, int mode)
       rm->server_name = NULL;
     }
 
-  if(rm->alias != NULL)
-    {
-      free(rm->alias);
-      rm->alias = NULL;
-    }
-
   if(rm->list != NULL)
     {
       dlist_free(rm->list);
@@ -2706,7 +2703,7 @@ static void remote_free(control_remote_t *rm, int mode)
 
   if(rm->messages != NULL)
     {
-      slist_free_cb(rm->messages, (slist_free_t)client_message_free);
+      slist_free(rm->messages);
       rm->messages = NULL;
     }
 
@@ -2802,7 +2799,7 @@ static int remote_sock_ssl_init(control_remote_t *rm)
 
   if((rm->ssl_wbio = BIO_new(BIO_s_mem())) == NULL ||
      (rm->ssl_rbio = BIO_new(BIO_s_mem())) == NULL ||
-     (rm->ssl = SSL_new(tls_ctx)) == NULL)
+     (rm->ssl = SSL_new(remote_tls_ctx)) == NULL)
     {
       scamper_debug(__func__, "could not create bios / ssl");
       return -1;
@@ -3282,8 +3279,19 @@ static int remote_read_control_ack(control_remote_t *rm,
 static int remote_read_control_master_rej(control_remote_t *rm,
 					  const uint8_t *buf, size_t len)
 {
+  uint32_t u32;
+
   scamper_debug(__func__, "rejected");
+
+  /* can't resume */
   rm->resume = 0;
+
+  /*
+   * generate a new magic value in case remote controller is holding on
+   * to the magic value used by the prior instance
+   */
+  random_u32(&u32); memcpy(rm->magic+0, &u32, 4);
+  random_u32(&u32); memcpy(rm->magic+4, &u32, 4);
   return -1;
 }
 
@@ -3903,7 +3911,7 @@ static int remote_connect(control_remote_t *rm)
     {
       if(scamper_do_host_do_a(rm->server_name, rm,
 			      (scamper_host_do_a_cb_t)remote_host_cb) == NULL)
-	return -1;
+	remote_retry(rm, 0);
       return 0;
     }
 

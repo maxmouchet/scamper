@@ -9,7 +9,7 @@
 .\" Copyright (c) 2015-2022 Matthew Luckie
 .\"                         All rights reserved
 .\"
-.\" $Id: scamper.1,v 1.95.4.1 2022/02/09 07:22:05 mjl Exp $
+.\" $Id: scamper.1,v 1.95.4.3 2022/06/12 07:01:56 mjl Exp $
 .\"
 .\"  nroff -man scamper.1
 .\"  groff -man -Tascii scamper.1 | man2html -title scamper.1
@@ -295,6 +295,14 @@ do not use TLS anywhere in scamper, including tbit.
 .Sy cafile=file:
 load the CA certificates in the specified file into scamper, instead of
 the default certificates.
+.It
+.Sy client-certfile=file:
+load the certificate in the specified file into scamper and present it
+to the remote controller for client authentication.
+.It
+.Sy client-privfile=file:
+load the private key in the specified file into scamper and use it
+for client authentication with the remote controller.
 .El
 .It Fl i Ar IP 1..N
 specifies a list of one or more addresses to probe, on the command
@@ -519,6 +527,10 @@ ICMP sequence number to use in ICMP probes.
 .It Fl F Ar sport
 specifies the source port to use in each TCP/UDP probe, and the ICMP ID to
 use in ICMP probes.
+By default,
+.Nm
+uses a value it derives from the process ID, but can be told to generate
+a random value between 32768 and 65535 by specifying zero.
 .It Fl i Ar wait
 specifies the length of time to wait, in seconds, between probes.  By default,
 a value of 1 is used.

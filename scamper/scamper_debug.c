@@ -1,7 +1,7 @@
 /*
  * scamper_debug.c
  *
- * $Id: scamper_debug.c,v 1.39.8.1 2022/02/09 07:17:37 mjl Exp $
+ * $Id: scamper_debug.c,v 1.39.8.2 2022/06/13 20:20:28 mjl Exp $
  *
  * routines to reduce the impact of debugging cruft in scamper's code.
  *
@@ -32,7 +32,6 @@
 
 #include "scamper.h"
 #include "scamper_debug.h"
-#include "scamper_privsep.h"
 #include "utils.h"
 
 #ifndef WITHOUT_DEBUGFILE
@@ -317,7 +316,7 @@ int scamper_debug_open(const char *file)
   mode_t mode;
   int flags, fd;
 
-#if defined(WITHOUT_PRIVSEP) && !defined(_WIN32)
+#ifndef _WIN32
   uid_t uid = getuid();
 #endif
 
@@ -332,13 +331,7 @@ int scamper_debug_open(const char *file)
   else
     flags = O_WRONLY | O_CREAT | O_APPEND;
 
-#ifndef WITHOUT_PRIVSEP
-  fd = scamper_privsep_open_file(file, flags, mode);
-#else
-  fd = open(file, flags, mode);
-#endif
-
-  if(fd == -1)
+  if((fd = open(file, flags, mode)) == -1)
     {
       printerror(__func__, "could not open debugfile %s", file);
       return -1;
@@ -350,7 +343,7 @@ int scamper_debug_open(const char *file)
       return -1;
     }
 
-#if defined(WITHOUT_PRIVSEP) && !defined(_WIN32)
+#ifndef _WIN32
   if(uid != geteuid() && fchown(fd, uid, -1) != 0)
     {
       printerror(__func__, "could not fchown");
