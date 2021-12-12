@@ -7,7 +7,7 @@
  * Copyright (C) 2020      Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping.c,v 1.38 2021/08/28 21:36:31 mjl Exp $
+ * $Id: scamper_ping.c,v 1.38.4.1 2022/10/29 22:20:51 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -47,6 +47,7 @@ char *scamper_ping_method2str(const scamper_ping_t *ping, char *buf, size_t len)
     "tcp-syn",
     "tcp-synack",
     "tcp-rst",
+    "tcp-syn-sport",
   };
 
   if(ping->probe_method >= sizeof(m) / sizeof(char *))

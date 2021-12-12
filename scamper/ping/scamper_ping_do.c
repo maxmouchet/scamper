@@ -1,12 +1,12 @@
 /*
  * scamper_do_ping.c
  *
- * $Id: scamper_ping_do.c,v 1.156.10.6 2022/08/10 22:39:49 mjl Exp $
+ * $Id: scamper_ping_do.c,v 1.156.10.8 2022/11/18 19:13:58 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2016-2020 Matthew Luckie
+ * Copyright (C) 2016-2022 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -395,7 +395,8 @@ static void do_ping_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
 	  else
 	    seq = state->seq - 1;
 	}
-      else if(ping->probe_method == SCAMPER_PING_METHOD_TCP_ACK_SPORT)
+      else if(ping->probe_method == SCAMPER_PING_METHOD_TCP_ACK_SPORT ||
+	      ping->probe_method == SCAMPER_PING_METHOD_TCP_SYN_SPORT)
 	{
 	  seq = dl->dl_tcp_dport;
 	  if(dl->dl_tcp_dport < ping->probe_sport)
@@ -1126,6 +1127,11 @@ static void do_ping_probe(scamper_task_t *task)
 	    {
 	      probe.pr_tcp_flags = TH_RST;
 	    }
+	  else if(ping->probe_method == SCAMPER_PING_METHOD_TCP_SYN_SPORT)
+	    {
+	      probe.pr_tcp_flags = TH_SYN;
+	      probe.pr_tcp_sport += state->seq;
+	    }
 	}
       else if(SCAMPER_PING_METHOD_IS_UDP(ping))
 	{
@@ -1314,6 +1320,8 @@ static int ping_arg_param_validate(int optid, char *param, long long *out)
 	tmp = SCAMPER_PING_METHOD_TCP_SYNACK;
       else if(strcasecmp(param, "tcp-rst") == 0)
 	tmp = SCAMPER_PING_METHOD_TCP_RST;
+      else if(strcasecmp(param, "tcp-syn-sport") == 0)
+	tmp = SCAMPER_PING_METHOD_TCP_SYN_SPORT;
       else
 	goto err;
       break;
@@ -1903,6 +1911,7 @@ void *scamper_do_ping_alloc(char *str)
 	goto err;
 
       if(ping->probe_method == SCAMPER_PING_METHOD_TCP_SYN ||
+	 ping->probe_method == SCAMPER_PING_METHOD_TCP_SYN_SPORT ||
 	 ping->probe_method == SCAMPER_PING_METHOD_TCP_RST)
 	{
 	  ping->probe_tcpseq = probe_tcpack;

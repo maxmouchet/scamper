@@ -1,7 +1,7 @@
 /*
  * scamper_ping.h
  *
- * $Id: scamper_ping.h,v 1.52.10.1 2022/06/12 05:20:50 mjl Exp $
+ * $Id: scamper_ping.h,v 1.52.10.2 2022/10/29 22:20:33 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -78,7 +78,8 @@
   (ping)->probe_method == SCAMPER_PING_METHOD_TCP_ACK_SPORT || \
   (ping)->probe_method == SCAMPER_PING_METHOD_TCP_SYN || \
   (ping)->probe_method == SCAMPER_PING_METHOD_TCP_SYNACK || \
-  (ping)->probe_method == SCAMPER_PING_METHOD_TCP_RST))
+  (ping)->probe_method == SCAMPER_PING_METHOD_TCP_RST || \
+  (ping)->probe_method == SCAMPER_PING_METHOD_TCP_SYN_SPORT))
 
 #define SCAMPER_PING_METHOD_IS_UDP(ping) (                \
  ((ping)->probe_method == SCAMPER_PING_METHOD_UDP ||      \
@@ -118,6 +119,7 @@
 #define SCAMPER_PING_METHOD_TCP_SYN       0x06
 #define SCAMPER_PING_METHOD_TCP_SYNACK    0x07
 #define SCAMPER_PING_METHOD_TCP_RST       0x08
+#define SCAMPER_PING_METHOD_TCP_SYN_SPORT 0x09
 
 #define SCAMPER_PING_FLAG_V4RR            0x01 /* -R: IPv4 record route */
 #define SCAMPER_PING_FLAG_SPOOF           0x02 /* -O spoof: spoof src */
