@@ -1,12 +1,12 @@
 /*
  * scamper_privsep.c: code that does root-required tasks
  *
- * $Id: scamper_privsep.c,v 1.93 2020/04/30 07:17:14 mjl Exp $
+ * $Id: scamper_privsep.c,v 1.93.10.1 2022/12/10 04:57:38 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2013-2014 The Regents of the University of California
- * Copyright (C) 2016-2020 Matthew Luckie
+ * Copyright (C) 2016-2022 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -127,7 +127,7 @@ static int privsep_open_rtsock(uint16_t plen, const uint8_t *param)
 {
   if(plen != 0)
     {
-      scamper_debug(__func__, "plen %d != 0", plen, 0);
+      scamper_debug(__func__, "plen %d != 0", plen);
       errno = EINVAL;
       return -1;
     }
@@ -422,7 +422,7 @@ static int privsep_pf_init(uint16_t plen, const uint8_t *param)
   const char *name = (const char *)param;
   if(plen == 0)
     {
-      scamper_debug(__func__, "plen == 0", plen);
+      scamper_debug(__func__, "plen == 0");
       errno = EINVAL;
       return -1;
     }

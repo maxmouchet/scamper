@@ -1,7 +1,7 @@
 /*
  * scamper_control.c
  *
- * $Id: scamper_control.c,v 1.233.10.3 2022/07/23 00:50:24 mjl Exp $
+ * $Id: scamper_control.c,v 1.233.10.4 2022/12/10 04:57:38 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -1412,13 +1412,13 @@ static int command_outfile_swap(client_t *client, char *buf)
 
   if((a = scamper_outfiles_get(files[0])) == NULL)
     {
-      client_send(client, "ERR unknown outfile '%s'", a);
+      client_send(client, "ERR unknown outfile '%s'", files[0]);
       return -1;
     }
 
   if((b = scamper_outfiles_get(files[1])) == NULL)
     {
-      client_send(client, "ERR unknown outfile '%s'", b);
+      client_send(client, "ERR unknown outfile '%s'", files[1]);
       return -1;
     }
 

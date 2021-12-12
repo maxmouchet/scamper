@@ -1,7 +1,7 @@
 /*
  * scamper_ping.h
  *
- * $Id: scamper_ping.h,v 1.52.10.2 2022/10/29 22:20:33 mjl Exp $
+ * $Id: scamper_ping.h,v 1.52.10.3 2022/12/09 06:21:59 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -90,6 +90,13 @@
 
 #define SCAMPER_PING_METHOD_IS_ICMP_ECHO(ping) (\
  ((ping)->probe_method == SCAMPER_PING_METHOD_ICMP_ECHO))
+
+#define SCAMPER_PING_METHOD_VARY_SPORT(ping) (			\
+ ((ping)->probe_method == SCAMPER_PING_METHOD_TCP_ACK_SPORT ||	\
+  (ping)->probe_method == SCAMPER_PING_METHOD_TCP_SYN_SPORT))
+
+#define SCAMPER_PING_METHOD_VARY_DPORT(ping) (			\
+ ((ping)->probe_method == SCAMPER_PING_METHOD_UDP_DPORT))
 
 #define SCAMPER_PING_REPLY_FROM_TARGET(ping, reply) ( \
  (SCAMPER_PING_METHOD_IS_ICMP_ECHO(ping) &&           \

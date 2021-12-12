@@ -1,7 +1,7 @@
 /*
  * sc_hoiho: Holistic Orthography of Internet Hostname Observations
  *
- * $Id: sc_hoiho.c,v 1.12 2021/12/12 00:05:06 mjl Exp $
+ * $Id: sc_hoiho.c,v 1.12.2.1 2022/12/10 04:57:38 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@luckie.org.nz
@@ -16526,7 +16526,7 @@ static int sc_regex_refine_class_do(sc_regex_t *re, slist_t *ifd_list,
   sc_segscore_t *ss;
   slist_node_t *sn;
   sc_css_t *css = NULL;
-  char *str = NULL, *ptr, buf[256], tmp[8], *alpha_ptr, *digit_ptr;
+  char *str = NULL, *ptr, buf[256], tmp[16], *alpha_ptr, *digit_ptr;
   int switchc, alpha, digit, score;
   int i, j, x, cc = 0, rc = -1;
   size_t off, len, seglen;

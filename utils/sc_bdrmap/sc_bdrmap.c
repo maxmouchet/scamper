@@ -1,7 +1,7 @@
 /*
  * sc_bdrmap: driver to map first hop border routers of networks
  *
- * $Id: sc_bdrmap.c,v 1.32 2021/08/22 08:11:53 mjl Exp $
+ * $Id: sc_bdrmap.c,v 1.32.4.1 2022/12/10 04:57:38 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@caida.org / mjl@wand.net.nz
@@ -10,7 +10,7 @@
  * Copyright (C) 2015-2016 The University of Waikato
  * Copyright (C) 2017      The Regents of the University of California
  * Copyright (C) 2018-2020 The University of Waikato
- * Copyright (C) 2020      Matthew Luckie
+ * Copyright (C) 2020-2022 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -4192,7 +4192,7 @@ static int do_method_allyconf(sc_test_t *test, char *cmd, size_t len)
       if((aseq = sc_ping_find(act->ally->a)) == NULL ||
 	 (bseq = sc_ping_find(act->ally->b)) == NULL)
 	{
-	  logerr("%s: could not find ipidseq\n");
+	  logerr("%s: could not find ipidseq\n", __func__);
 	  return -1;
 	}
       a = aseq->indir.dst;

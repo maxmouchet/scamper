@@ -1,11 +1,11 @@
 /*
  * sc_radargun : scamper driver to do radargun-style probing.
  *
- * $Id: sc_radargun.c,v 1.12 2020/06/09 08:25:23 mjl Exp $
+ * $Id: sc_radargun.c,v 1.12.10.1 2022/12/10 04:57:45 mjl Exp $
  *
- * Copyright (C) 2014 The Regents of the University of California
- * Copyright (C) 2016 The University of Waikato
- * Copyright (C) 2020 Matthew Luckie
+ * Copyright (C) 2014      The Regents of the University of California
+ * Copyright (C) 2016      The University of Waikato
+ * Copyright (C) 2020-2022 Matthew Luckie
  * Author: Matthew Luckie
  *
  * Radargun technique authored by:
@@ -913,7 +913,7 @@ static int do_method_radargun(sc_test_t *test, char **cmd_out, size_t *len_out)
 
   if((flags & FLAG_NOBUDGET) == 0 && (1000 / pps) > rg_waitprobe)
     {
-      print("%s: unable to use available probing budget: %d > %d, %d\n",
+      print("%s: unable to use available probing budget: %d > %d\n",
 	    __func__, 1000/pps, rg_waitprobe);
       sc_radargun_free(rg);
       return 0;
@@ -961,7 +961,7 @@ static int do_method_radargun(sc_test_t *test, char **cmd_out, size_t *len_out)
 		    scamper_addr_tostr(addr, buf, sizeof(buf)));
       if((defs[i] = strdup(tmp)) == NULL)
 	{
-	  print("%s: could not dup str %s\n", __func__);
+	  print("%s: could not dup str\n", __func__);
 	  goto err;
 	}
       len += off; i++;

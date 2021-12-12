@@ -3,12 +3,12 @@
  *
  * the warts file format
  *
- * $Id: scamper_file_warts.c,v 1.259 2021/08/24 09:03:07 mjl Exp $
+ * $Id: scamper_file_warts.c,v 1.259.4.1 2022/12/08 05:44:29 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2015-2021 Matthew Luckie
+ * Copyright (C) 2015-2022 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -1094,7 +1094,7 @@ int warts_addr_read(scamper_file_t *sf, const warts_hdr_t *hdr,
   size_t          size;
 
   /* the data has to be at least 3 bytes long to be valid */
-  if(hdr->len > 2)
+  if(hdr->len < 3)
     goto err;
 
   if((state->addr_count % WARTS_ADDR_TABLEGROW) == 0)

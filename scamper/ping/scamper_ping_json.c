@@ -9,7 +9,7 @@
  * Copyright (c) 2019-2020 Matthew Luckie
  * Authors: Brian Hammond, Matthew Luckie
  *
- * $Id: scamper_ping_json.c,v 1.21.10.1 2022/06/12 05:24:32 mjl Exp $
+ * $Id: scamper_ping_json.c,v 1.21.10.2 2022/12/09 06:23:26 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -166,7 +166,7 @@ static char *ping_reply(const scamper_ping_t *ping,
   scamper_ping_reply_v4rr_t *v4rr;
   scamper_ping_reply_v4ts_t *v4ts;
   struct timeval tv;
-  char buf[512], tmp[64];
+  char buf[512], tmp[64], *pt = "bug";
   uint8_t i;
   size_t off = 0;
 
@@ -190,6 +190,42 @@ static char *ping_reply(const scamper_ping_t *ping,
     }
   string_concat(buf, sizeof(buf), &off, ", \"rtt\":%s",
 		timeval_tostr_us(&reply->rtt, tmp, sizeof(tmp)));
+
+  if(SCAMPER_PING_METHOD_VARY_SPORT(ping))
+    {
+      if(SCAMPER_PING_METHOD_IS_TCP(ping))
+	pt = "tcp";
+      string_concat(buf, sizeof(buf), &off,
+		    ", \"%s_sport\":%u, \"%s_dport\":%u",
+		    pt, ping->probe_sport + reply->probe_id,
+		    pt, ping->probe_dport);
+    }
+  else if(SCAMPER_PING_METHOD_VARY_DPORT(ping))
+    {
+      if(SCAMPER_PING_METHOD_IS_UDP(ping))
+	pt = "udp";
+      string_concat(buf, sizeof(buf), &off,
+		    ", \"%s_sport\":%u, \"%s_dport\":%u",
+		    pt, ping->probe_sport,
+		    pt, ping->probe_dport + reply->probe_id);
+    }
+  else if(SCAMPER_PING_METHOD_IS_ICMP(ping))
+    {
+      string_concat(buf, sizeof(buf), &off,
+		    ", \"icmp_id\":%u, \"icmp_seq\":%u",
+		    ping->probe_sport,
+		    ping->probe_dport + reply->probe_id);
+    }
+  else if(SCAMPER_PING_METHOD_IS_UDP(ping) || SCAMPER_PING_METHOD_IS_TCP(ping))
+    {
+      if(SCAMPER_PING_METHOD_IS_UDP(ping))
+	pt = "udp";
+      else if(SCAMPER_PING_METHOD_IS_TCP(ping))
+	pt = "tcp";
+      string_concat(buf, sizeof(buf), &off,
+		    ", \"%s_sport\":%u, \"%s_dport\":%u",
+		    pt, ping->probe_sport, pt, ping->probe_dport);
+    }
 
   if(SCAMPER_ADDR_TYPE_IS_IPV4(reply->addr))
     {
