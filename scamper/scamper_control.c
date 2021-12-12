@@ -1,12 +1,12 @@
 /*
  * scamper_control.c
  *
- * $Id: scamper_control.c,v 1.233 2020/06/10 09:12:00 mjl Exp $
+ * $Id: scamper_control.c,v 1.233.10.1 2022/02/09 07:19:19 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
- * Copyright (C) 2014-2020 Matthew Luckie
+ * Copyright (C) 2014-2022 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -3560,7 +3560,7 @@ static int remote_read_sock(control_remote_t *rm)
   int fd = scamper_fd_fd_get(rm->fd);
 
 #ifdef HAVE_OPENSSL
-  int rc;
+  int ecode, ret;
 #endif
 
   if((rrc = read(fd, buf, sizeof(buf))) < 0)
@@ -3595,7 +3595,7 @@ static int remote_read_sock(control_remote_t *rm)
 	    }
 
 	  ERR_clear_error();
-	  if((rc = SSL_do_handshake(rm->ssl)) > 0)
+	  if((ret = SSL_do_handshake(rm->ssl)) > 0)
 	    {
 	      if(remote_sock_is_valid_cert(rm) == 0)
 		return -1;
@@ -3606,23 +3606,23 @@ static int remote_read_sock(control_remote_t *rm)
       else
 	{
 	  ERR_clear_error();
-	  while((rc = SSL_read(rm->ssl, buf, sizeof(buf))) > 0)
+	  while((ret = SSL_read(rm->ssl, buf, sizeof(buf))) > 0)
 	    {
-	      if(remote_read_payload(rm, buf, (size_t)rc) != 0)
+	      if(remote_read_payload(rm, buf, (size_t)ret) != 0)
 		return -1;
 	    }
 	}
 
-      if((rc = SSL_get_error(rm->ssl, rc)) == SSL_ERROR_WANT_READ)
+      if((ecode = SSL_get_error(rm->ssl, ret)) == SSL_ERROR_WANT_READ)
 	{
 	  if(remote_sock_ssl_want_read(rm) < 0)
 	    return -1;
 	}
-      else if(rc != SSL_ERROR_WANT_WRITE)
+      else if(ecode != SSL_ERROR_WANT_WRITE)
 	{
-	  printerror_msg(__func__, "mode %s rc %d",
+	  printerror_ssl(__func__, "mode %s",
 			 rm->ssl_mode == SSL_MODE_HANDSHAKE ?
-			 "connect" : "estab", rc);
+			 "handshake" : "estab");
 	  return -1;
 	}
 

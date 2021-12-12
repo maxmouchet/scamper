@@ -6,15 +6,15 @@
 .\"
 .\" Copyright (c) 2007-2011 University of Waikato
 .\" Copyright (c) 2012-2015 The Regents of the University of California
-.\" Copyright (c) 2015-2021 Matthew Luckie
+.\" Copyright (c) 2015-2022 Matthew Luckie
 .\"                         All rights reserved
 .\"
-.\" $Id: scamper.1,v 1.95 2021/10/23 04:49:21 mjl Exp $
+.\" $Id: scamper.1,v 1.95.4.1 2022/02/09 07:22:05 mjl Exp $
 .\"
 .\"  nroff -man scamper.1
 .\"  groff -man -Tascii scamper.1 | man2html -title scamper.1
 .\"
-.Dd April 27, 2020
+.Dd February 9, 2022
 .Dt SCAMPER 1
 .Os
 .\""""""""""""
@@ -291,6 +291,10 @@ option.
 .It
 .Sy notls:
 do not use TLS anywhere in scamper, including tbit.
+.It
+.Sy cafile=file:
+load the CA certificates in the specified file into scamper, instead of
+the default certificates.
 .El
 .It Fl i Ar IP 1..N
 specifies a list of one or more addresses to probe, on the command
@@ -1426,6 +1430,15 @@ probe.
 .Pp
 .in +.5i
 scamper -I "tracelb -P udp-sport -c 99 192.0.2.6"
+.in -.5i
+.Pp
+The following command connects to the remote controller running
+.Xr sc_remoted 1
+at foo.example.com:31337, loading the CA certificates specified in the
+file.
+.Pp
+.in +.5i
+scamper -R foo.example.com:31337 -O cafile=/etc/ssl/certs/ca-certificates.crt
 .in -.5i
 .Sh SEE ALSO
 .Xr ping 8 ,

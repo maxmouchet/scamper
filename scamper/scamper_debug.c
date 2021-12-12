@@ -1,13 +1,13 @@
 /*
  * scamper_debug.c
  *
- * $Id: scamper_debug.c,v 1.39 2020/08/01 20:59:22 mjl Exp $
+ * $Id: scamper_debug.c,v 1.39.8.1 2022/02/09 07:17:37 mjl Exp $
  *
  * routines to reduce the impact of debugging cruft in scamper's code.
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
- * Copyright (C) 2012-2020 Matthew Luckie
+ * Copyright (C) 2012-2022 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -207,6 +207,57 @@ void printerror_msg(const char *func, const char *format, ...)
 
   return;
 }
+
+#ifdef HAVE_OPENSSL
+void printerror_ssl(const char *func, const char *format, ...)
+{
+  char msg[512], ts[16];
+  char sslbuf[1024], buf[256];
+  va_list ap;
+  size_t off = 0;
+  int ecode;
+
+  if(isdaemon != 0)
+    {
+#ifndef WITHOUT_DEBUGFILE
+      if(debugfile == NULL)
+	return;
+#else
+      return;
+#endif
+    }
+
+  va_start(ap, format);
+  vsnprintf(msg, sizeof(msg), format, ap);
+  va_end(ap);
+  timestamp_str(ts, sizeof(ts));
+
+  for(;;)
+    {
+      if((ecode = ERR_get_error()) == 0)
+	break;
+      ERR_error_string_n(ecode, buf, sizeof(buf));
+      string_concat(sslbuf, sizeof(sslbuf), &off, "%s%s",
+		    off > 0 ? " " : "", buf);
+    }
+  
+  if(isdaemon == 0)
+    {
+      fprintf(stderr, "%s %s: %s: %s\n", ts, func, msg, sslbuf);
+      fflush(stderr);
+    }
+
+#ifndef WITHOUT_DEBUGFILE
+  if(debugfile != NULL)
+    {
+      fprintf(debugfile, "%s %s: %s: %s\n", ts, func, msg, sslbuf);
+      fflush(debugfile);
+    }
+#endif
+
+  return;
+}
+#endif
 
 #ifdef HAVE_SCAMPER_DEBUG
 void scamper_debug(const char *func, const char *format, ...)

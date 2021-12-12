@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.280 2020/04/30 06:22:05 mjl Exp $
+ * $Id: scamper.c,v 1.280.10.1 2022/02/09 07:21:29 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -10,7 +10,7 @@
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2014      The Regents of the University of California
- * Copyright (C) 2014-2020 Matthew Luckie
+ * Copyright (C) 2014-2022 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -178,6 +178,7 @@ scamper_addrcache_t *addrcache = NULL;
 /* central TLS context with CA certificates loaded */
 #ifdef HAVE_OPENSSL
 SSL_CTX *tls_ctx = NULL;
+static char *cafile = NULL;
 #endif
 
 /* Source port to use in our probes */
@@ -297,8 +298,11 @@ static void usage(uint32_t opt_mask)
 #if defined(IP_RECVERR) || defined(IPV6_RECVERR)
       usage_line("icmp-rxerr: use recverr cmsg to receive ICMP responses");
 #endif
+#ifdef HAVE_OPENSSL
       usage_line("notls: do not use TLS anywhere in scamper");
       usage_line("notls-remote: do not use TLS on remote control sockets");
+      usage_line("cafile=file: use the CA certificates in the specified file");
+#endif
 #ifndef _WIN32
       usage_line("select: use select(2) rather than poll(2)");
 #endif
@@ -635,6 +639,10 @@ static int check_options(int argc, char *argv[])
 #ifndef WITHOUT_DEBUGFILE
 	  else if(strcasecmp(optarg, "debugfileappend") == 0)
 	    flags |= FLAG_DEBUGFILEAPPEND;
+#endif
+#ifdef HAVE_OPENSSL
+	  else if(strncasecmp(optarg, "cafile=", 7) == 0)
+	    cafile = optarg+7;
 #endif
 	  else
 	    {
@@ -1263,11 +1271,22 @@ static int scamper(int argc, char *argv[])
 			  SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1);
       SSL_CTX_set_verify(tls_ctx, SSL_VERIFY_PEER, NULL);
 
-      /* load the default set of certs into the SSL context */
-      if(SSL_CTX_set_default_verify_paths(tls_ctx) != 1)
+      if(cafile == NULL)
 	{
-	  printerror_msg(__func__, "could not load default CA certs");
-	  return -1;
+	  /* load the default set of certs into the SSL context */
+	  if(SSL_CTX_set_default_verify_paths(tls_ctx) != 1)
+	    {
+	      printerror_ssl(__func__, "could not load default CA certs");
+	      return -1;
+	    }
+	}
+      else
+	{
+	  if(SSL_CTX_load_verify_locations(tls_ctx, cafile, NULL) != 1)
+	    {
+	      printerror_ssl(__func__, "could not load certs from %s", cafile);
+	      return -1;
+	    }
 	}
     }
 #endif
