@@ -1,7 +1,7 @@
 /*
  * sc_remoted
  *
- * $Id: sc_remoted.c,v 1.90.2.2 2022/06/13 20:02:28 mjl Exp $
+ * $Id: sc_remoted.c,v 1.90.2.4 2022/08/25 19:33:38 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -1427,9 +1427,11 @@ static int sc_master_control_master(sc_master_t *ms, uint8_t *buf, size_t len)
       assert(off <= len);
     }
 
+#ifdef HAVE_OPENSSL
   /* verify the monitorname if we are verifying TLS client certificates */
   if(sc_master_is_valid_client_cert_1(ms) == 0)
     goto err;
+#endif
 
   /* copy the magic value out.  check that the magic value is unique */
   if((ms->magic = memdup(magic, magic_len)) == NULL)
@@ -1911,6 +1913,11 @@ static void sc_master_inet_read_do(sc_master_t *ms)
 	    }
 	}
 
+      /*
+       * equivalent to checking if ms->inet_mode == SSL_MODE_ESTABLISHED,
+       * but silenced warning about rc possibly being used without
+       * first being initialised
+       */
       if(ms->inet_mode != SSL_MODE_ACCEPT)
 	{
 	  assert(ms->inet_mode == SSL_MODE_ESTABLISHED);
@@ -1957,9 +1964,11 @@ static void sc_master_inet_read_do(sc_master_t *ms)
     sc_master_zombie(ms);
   return;
 
+#ifdef HAVE_OPENSSL
  err:
   sc_unit_gc(ms->unit);
   return;
+#endif
 }
 
 /*

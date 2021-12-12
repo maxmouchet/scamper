@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.280.10.2 2022/06/12 05:37:33 mjl Exp $
+ * $Id: scamper.c,v 1.280.10.3 2022/08/25 19:33:16 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -891,6 +891,7 @@ static int check_options(int argc, char *argv[])
 	}
     }
 
+#ifdef HAVE_OPENSSL
   if(options & OPT_CTRL_REMOTE)
     {
       /* need both client private key and certificate if either is specified */
@@ -911,6 +912,7 @@ static int check_options(int argc, char *argv[])
 	  return -1;
 	}
     }
+#endif
 
   return 0;
 }
