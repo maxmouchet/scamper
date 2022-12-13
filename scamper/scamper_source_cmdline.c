@@ -1,7 +1,7 @@
 /*
  * scamper_source_cmdline.c
  *
- * $Id: scamper_source_cmdline.c,v 1.10 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_source_cmdline.c,v 1.12 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2010 The University of Waikato
@@ -22,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_source_cmdline.c,v 1.10 2014/06/12 19:59:48 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -53,8 +48,7 @@ static int command_assemble(char **out, size_t *len,
 	{
 	  if((tmp = realloc(*out, reqlen)) == NULL)
 	    {
-	      printerror(errno, strerror, __func__,
-			 "could not realloc %d bytes for tmp", reqlen);
+	      printerror(__func__, "could not realloc %d bytes", reqlen);
 	      return -1;
 	    }
 	}
@@ -62,8 +56,7 @@ static int command_assemble(char **out, size_t *len,
 	{
 	  if((tmp = malloc_zero(reqlen)) == NULL)
 	    {
-	      printerror(errno, strerror, __func__,
-			 "could not malloc %d bytes for tmp", reqlen);
+	      printerror(__func__, "could not malloc %d bytes", reqlen);
 	      return -1;
 	    }
 

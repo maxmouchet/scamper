@@ -1,12 +1,13 @@
 /*
  * scamper_probe.h
  *
- * $Id: scamper_probe.h,v 1.44 2015/04/06 18:31:17 mjl Exp $
+ * $Id: scamper_probe.h,v 1.47 2020/06/12 23:29:25 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2012-2015 The Regents of the University of California
+ * Copyright (C) 2020      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -89,6 +90,7 @@ typedef struct scamper_probe_ipopt
 #define SCAMPER_PROBE_FLAG_NOFRAG     0x0002
 #define SCAMPER_PROBE_FLAG_SPOOF      0x0004
 #define SCAMPER_PROBE_FLAG_DL         0x0008
+#define SCAMPER_PROBE_FLAG_RXERR      0x0010 /* socket is an rxerr variant */
 
 #define SCAMPER_PROBE_TCPOPT_SACK     0x01
 #define SCAMPER_PROBE_TCPOPT_TS       0x02
@@ -121,6 +123,9 @@ typedef struct scamper_probe
 
   /* flags set on input */
   uint16_t               pr_flags;
+
+  /* IP address of router to send the packet to.  null means default router */
+  scamper_addr_t        *pr_rtr;
 
   /* IP header parameters */
   scamper_addr_t        *pr_ip_src;

@@ -1,7 +1,7 @@
 /*
  * internal.h
  *
- * $Id: internal.h,v 1.42 2016/09/17 01:38:13 mjl Exp $
+ * $Id: internal.h,v 1.51 2021/07/07 04:37:50 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -53,7 +53,11 @@ typedef unsigned short sa_family_t;
 #include <process.h>
 #include <direct.h>
 #include <mmsystem.h>
+#if defined(HAVE_UNISTD_H)
+#include <unistd.h>
+#else
 #include "wingetopt.h"
+#endif
 #define _CRT_RAND_S
 #endif
 
@@ -120,7 +124,9 @@ typedef unsigned short sa_family_t;
 #include <sys/un.h>
 #include <sys/utsname.h>
 #include <sys/ioctl.h>
+#ifdef HAVE_SYS_SOCKETVAR_H
 #include <sys/socketvar.h>
+#endif
 #include <net/if.h>
 #include <net/route.h>
 #include <netinet/in.h>
@@ -142,7 +148,7 @@ typedef unsigned short sa_family_t;
 #include <grp.h>
 #endif
 
-#ifdef HAVE_SYS_SYSCTL_H
+#if defined(HAVE_SYS_SYSCTL_H) && !defined(__linux__)
 #include <sys/sysctl.h>
 #endif
 
@@ -173,7 +179,14 @@ typedef unsigned short sa_family_t;
 #include <linux/types.h>
 #include <linux/filter.h>
 #include <linux/netfilter_ipv4/ip_tables.h>
+#include <linux/sockios.h>
+#include <linux/errqueue.h>
 #include <limits.h>
+
+#ifdef HAVE_LINUX_NETLINK_H
+#include <linux/netlink.h>
+#endif
+
 #ifndef SOL_PACKET
 #define SOL_PACKET 263
 #endif
@@ -240,10 +253,18 @@ typedef unsigned short sa_family_t;
 #define SHUT_RDWR SD_BOTH
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
+#ifndef S_IRUSR
 #define S_IRUSR _S_IREAD
+#endif
+#ifndef S_IWUSR
 #define S_IWUSR _S_IWRITE
+#endif
+#ifndef S_IFIFO
 #define S_IFIFO _S_IFIFO
+#endif
+#ifndef S_IFREG
 #define S_IFREG _S_IFREG
+#endif
 #define MAXHOSTNAMELEN 256
 #define close _close
 #define fdopen _fdopen
@@ -374,6 +395,84 @@ struct iovec
 # define s6_addr32 _S6_un._S6_u32
 #elif !defined(s6_addr32)
 # define s6_addr32 __u6_addr.__u6_addr32
+#endif
+
+#if defined(__linux__)
+#if !defined(HAVE_STRUCT_NLMSGHDR)
+struct nlmsghdr
+{
+  uint32_t        nlmsg_len;
+  uint16_t        nlmsg_type;
+  uint16_t        nlmsg_flags;
+  uint32_t        nlmsg_seq;
+  uint32_t        nlmsg_pid;
+};
+#endif
+
+#if !defined(HAVE_STRUCT_NLMSGERR)
+struct nlmsgerr
+{
+  int             error;
+  struct nlmsghdr msg;
+};
+#endif
+
+#if !defined(HAVE_STRUCT_SOCKADDR_NL)
+struct sockaddr_nl
+{
+  sa_family_t     nl_family;
+  unsigned short  nl_pad;
+  uint32_t        nl_pid;
+  uint32_t        nl_groups;
+};
+#endif
+
+#ifndef NLMSG_ERROR
+#define NLMSG_ERROR         0x2
+#endif
+
+#ifndef NLMSG_DONE
+#define NLMSG_DONE          0x3
+#endif
+
+#ifndef NLMSG_ALIGNTO
+#define NLMSG_ALIGNTO       4
+#endif
+
+#ifndef NLMSG_ALIGN
+#define NLMSG_ALIGN(len)    (((len)+NLMSG_ALIGNTO-1) & ~(NLMSG_ALIGNTO-1))
+#endif
+
+#ifndef NLMSG_LENGTH
+#define NLMSG_LENGTH(len)   ((len)+NLMSG_ALIGN(sizeof(struct nlmsghdr)))
+#endif
+
+#ifndef NLMSG_DATA
+#define NLMSG_DATA(nlh)     ((void*)(((char*)nlh) + NLMSG_LENGTH(0)))
+#endif
+
+#ifndef NLMSG_NEXT
+#define NLMSG_NEXT(nlh,len) ((len) -= NLMSG_ALIGN((nlh)->nlmsg_len), \
+                             (struct nlmsghdr*)(((char*)(nlh)) + NLMSG_ALIGN((nlh)->nlmsg_len)))
+#endif
+
+#ifndef NLMSG_OK
+#define NLMSG_OK(nlh,len)   ((len) > 0 && (nlh)->nlmsg_len >= sizeof(struct nlmsghdr) && \
+                             (nlh)->nlmsg_len <= (len))
+#endif
+
+#ifndef NLM_F_REQUEST
+#define NLM_F_REQUEST   1
+#endif
+
+#ifndef NLM_F_ROOT
+#define NLM_F_ROOT      0x100
+#endif
+
+#ifndef NLM_F_MATCH
+#define NLM_F_MATCH     0x200
+#endif
+
 #endif
 
 #ifndef S_ISREG

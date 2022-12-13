@@ -6,7 +6,7 @@
  * Copyright (C) 2012-2014 The Regents of the University of California
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping_text.c,v 1.14.4.1 2017/06/22 08:22:20 mjl Exp $
+ * $Id: scamper_ping_text.c,v 1.17 2020/03/17 07:32:16 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_ping_text.c,v 1.14.4.1 2017/06/22 08:22:20 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -74,7 +69,7 @@ static char *ping_reply(const scamper_ping_t *ping,
   size_t off = 0;
 
   scamper_addr_tostr(reply->addr, a, sizeof(a));
-  timeval_tostr(&reply->rtt, rtt, sizeof(rtt));
+  timeval_tostr_us(&reply->rtt, rtt, sizeof(rtt));
 
   string_concat(buf, sizeof(buf), &off, "%d bytes from %s, seq=%d ",
 		reply->reply_size, a, reply->probe_id);
@@ -172,13 +167,13 @@ static char *ping_stats(const scamper_ping_t *ping)
     {
       string_concat(buf, sizeof(buf), &off, "round-trip min/avg/max/stddev =");
       string_concat(buf, sizeof(buf), &off, " %s",
-		    timeval_tostr(&stats.min_rtt, str, sizeof(str)));
+		    timeval_tostr_us(&stats.min_rtt, str, sizeof(str)));
       string_concat(buf, sizeof(buf), &off, "/%s",
-		    timeval_tostr(&stats.avg_rtt, str, sizeof(str)));
+		    timeval_tostr_us(&stats.avg_rtt, str, sizeof(str)));
       string_concat(buf, sizeof(buf), &off, "/%s",
-		    timeval_tostr(&stats.max_rtt, str, sizeof(str)));
+		    timeval_tostr_us(&stats.max_rtt, str, sizeof(str)));
       string_concat(buf, sizeof(buf), &off, "/%s ms\n",
-      		    timeval_tostr(&stats.stddev_rtt, str, sizeof(str)));
+      		    timeval_tostr_us(&stats.stddev_rtt, str, sizeof(str)));
     }
 
   return strdup(buf);

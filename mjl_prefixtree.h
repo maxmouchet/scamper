@@ -24,7 +24,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_prefixtree.h,v 1.6 2016/10/28 06:45:53 mjl Exp $
+ * $Id: mjl_prefixtree.h,v 1.7 2018/09/18 00:25:57 mjl Exp $
  *
  */
 
@@ -88,6 +88,11 @@ prefix4_t *prefixtree_find_best4(const prefixtree_t *tree,
 				 const prefix4_t *item);
 prefix6_t *prefixtree_find_best6(const prefixtree_t *tree,
 				 const prefix6_t *item);
+
+prefix4_t *prefixtree_find_exact4(const prefixtree_t *tree,
+				  const struct in_addr *net, uint8_t len);
+prefix6_t *prefixtree_find_exact6(const prefixtree_t *tree,
+				  const struct in6_addr *net, uint8_t len);
 
 #ifndef DMALLOC
 prefix4_t *prefix4_alloc(struct in_addr *net, uint8_t len, void *ptr);

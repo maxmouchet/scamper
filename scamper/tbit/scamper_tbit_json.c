@@ -6,7 +6,7 @@
  *
  * Author: Matthew Luckie
  *
- * $Id: scamper_tbit_json.c,v 1.22.4.1 2016/12/04 05:46:57 mjl Exp $
+ * $Id: scamper_tbit_json.c,v 1.26 2020/03/17 07:32:16 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,11 +23,6 @@
  *
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_tbit_json.c,v 1.22.4.1 2016/12/04 05:46:57 mjl Exp $";
-#endif
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -37,6 +32,7 @@ static const char rcsid[] =
 #include "scamper_list.h"
 #include "scamper_tbit.h"
 #include "scamper_file.h"
+#include "scamper_file_json.h"
 #include "scamper_tbit_json.h"
 
 #include "utils.h"
@@ -174,7 +170,8 @@ static char *tbit_header_tostr(const scamper_tbit_t *tbit,
     }
   else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST ||
 	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN ||
-	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA ||
+	  tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN)
     {
       blind = tbit->data;
       string_concat(buf, sizeof(buf), &off,
@@ -450,16 +447,10 @@ int scamper_file_json_tbit_write(const scamper_file_t *sf,
   tbit_state_t state;
   char *str = NULL, *header = NULL, **pkts = NULL;
   size_t header_len = 0, len = 0, wc = 0, *pkt_lens = NULL;
-  off_t off = 0;
-  int fd, rc = -1;
+  int rc = -1;
   uint32_t i;
 
   memset(&state, 0, sizeof(state)); 
-
-  /* get current position incase trunction is required */
-  fd = scamper_file_getfd(sf);
-  if(fd != 1 && (off = lseek(fd, 0, SEEK_CUR)) == -1)
-    return -1;
 
   /* put together packet strings, done first to get state for header string */
   len += 11; /* , "pkts":[] */
@@ -500,20 +491,7 @@ int scamper_file_json_tbit_write(const scamper_file_t *sf,
 
   assert(wc == len);
 
-  /*
-   * try and write the string to disk.  if it fails, then truncate the
-   * write and fail
-   */
-  if(write_wrap(fd, str, &wc, len) != 0)
-    {
-      if(fd != 1)
-	{
-	  if(ftruncate(fd, off) != 0)
-	    goto cleanup;
-	}
-      goto cleanup;
-    }
-  rc = 0; /* we succeeded */
+  rc = json_write(sf, str, len);
 
  cleanup:
   if(str != NULL) free(str);

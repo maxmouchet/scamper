@@ -1,12 +1,12 @@
 /*
  * scamper_addr.c
  *
- * $Id: scamper_addr.c,v 1.67 2016/08/26 11:22:35 mjl Exp $
+ * $Id: scamper_addr.c,v 1.74 2020/08/01 21:22:11 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2013-2014 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,17 +24,12 @@
  *
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_addr.c,v 1.67 2016/08/26 11:22:35 mjl Exp $";
-#endif
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 #include "internal.h"
 
-#include "mjl_patricia.h"
+#include "mjl_splaytree.h"
 #include "scamper_addr.h"
 #include "utils.h"
 
@@ -200,21 +195,8 @@ static const struct handler handlers[] = {
 
 struct scamper_addrcache
 {
-  patricia_t *trie[sizeof(handlers)/sizeof(struct handler)];
+  splaytree_t *tree[sizeof(handlers)/sizeof(struct handler)];
 };
-
-#ifndef NDEBUG
-#if 0
-static void scamper_addr_debug(const scamper_addr_t *sa)
-{
-  char buf[128];
-  fprintf(stderr, "scamper_addr_t: %s %d\n",
-	  scamper_addr_tostr(sa,buf,sizeof(buf)), sa->refcnt);
-  return;
-}
-#endif
-#endif
-#define scamper_addr_debug(sa) ((void)0)
 
 static int ipv4_cmp(const scamper_addr_t *sa, const scamper_addr_t *sb)
 {
@@ -385,7 +367,7 @@ static int ipv4_bit(const scamper_addr_t *sa, int bit)
 {
   struct in_addr *a = (struct in_addr *)sa->addr;
   assert(bit > 0); assert(bit <= 32);
-  return (ntohl(a->s_addr) >> (32 - bit)) & 1;
+  return (ntohl(a->s_addr) >> (31 - (bit-1))) & 1;
 }
 
 /*
@@ -726,9 +708,9 @@ static int ipv6_bit(const scamper_addr_t *sa, int bit)
   struct in6_addr *a = (struct in6_addr *)sa->addr;
   assert(bit > 0); assert(bit <= 128);
 #ifndef _WIN32
-  return (ntohl(a->s6_addr32[(bit-1)/32]) >> (32 - (bit % 32))) & 1;
+  return (ntohl(a->s6_addr32[(bit-1)/32]) >> (31 - ((bit-1) % 32))) & 1;
 #else
-  return (ntohs(a->u.Word[(bit-1)/16]) >> (16 - (bit % 16))) & 1;
+  return (ntohs(a->u.Word[(bit-1)/16]) >> (15 - ((bit-1) % 16))) & 1;
 #endif
 }
 
@@ -743,6 +725,7 @@ static int ipv6_fbd(const scamper_addr_t *sa, const scamper_addr_t *sb)
   a = (const struct in6_addr *)sa->addr;
   b = (const struct in6_addr *)sb->addr;
 
+#ifndef _WIN32
   for(i=0; i<4; i++)
     {
       if((v = ntohl(a->s6_addr32[i] ^ b->s6_addr32[i])) == 0)
@@ -762,6 +745,26 @@ static int ipv6_fbd(const scamper_addr_t *sa, const scamper_addr_t *sb)
 
       return r;
     }
+#else
+  for(i=0; i<8; i++)
+    {
+      if((v = ntohs(a->u.Word[i] ^ b->u.Word[i])) == 0)
+	continue;
+
+#ifdef HAVE___BUILTIN_CLZ
+      r = __builtin_clz(v) + 1 + (i * 16);
+#else
+      r = 0;
+      if(v & 0xFF00)     { v >>= 8;  r += 8;  }
+      if(v & 0xF0)       { v >>= 4;  r += 4;  }
+      if(v & 0xC)        { v >>= 2;  r += 2;  }
+      if(v & 0x2)        {           r += 1;  }
+      r = (16 - r) + (i * 16);
+#endif
+
+      return r;
+    }
+#endif
 
   return 128;
 }
@@ -878,7 +881,12 @@ const char *scamper_addr_tostr(const scamper_addr_t *sa,
   return dst;
 }
 
+#ifndef DMALLOC
 scamper_addr_t *scamper_addr_alloc(const int type, const void *addr)
+#else
+scamper_addr_t *scamper_addr_alloc_dm(const int type, const void *addr,
+				      const char *file, const int line)
+#endif
 {
   scamper_addr_t *sa;
 
@@ -886,19 +894,24 @@ scamper_addr_t *scamper_addr_alloc(const int type, const void *addr)
   assert(type-1 >= 0);
   assert((size_t)(type-1) < sizeof(handlers)/sizeof(struct handler));
 
-  if((sa = malloc_zero(sizeof(scamper_addr_t))) != NULL)
-    {
-      if((sa->addr = memdup(addr, handlers[type-1].size)) == NULL)
-	{
-	  free(sa);
-	  return NULL;
-	}
+#ifndef DMALLOC
+  sa = malloc_zero(sizeof(scamper_addr_t));
+#else
+  sa = malloc_zero_dm(sizeof(scamper_addr_t), file, line);
+#endif
 
-      sa->type = type;
-      sa->refcnt = 1;
-      sa->internal = NULL;
+  if(sa == NULL)
+    return NULL;
+
+  if((sa->addr = memdup(addr, handlers[type-1].size)) == NULL)
+    {
+      free(sa);
+      return NULL;
     }
 
+  sa->type = type;
+  sa->refcnt = 1;
+  sa->internal = NULL;
   return sa;
 }
 
@@ -1061,22 +1074,19 @@ scamper_addr_t *scamper_addrcache_get(scamper_addrcache_t *ac,
   findme.type = type;
   findme.addr = (void *)addr;
 
-  if((sa = patricia_find(ac->trie[type-1], &findme)) != NULL)
+  if((sa = splaytree_find(ac->tree[type-1], &findme)) != NULL)
     {
       assert(sa->internal == ac);
       sa->refcnt++;
-      scamper_addr_debug(sa);
       return sa;
     }
 
   if((sa = scamper_addr_alloc(type, addr)) != NULL)
     {
-      if(patricia_insert(ac->trie[type-1], sa) == NULL)
+      if(splaytree_insert(ac->tree[type-1], sa) == NULL)
 	goto err;
       sa->internal = ac;
     }
-
-  scamper_addr_debug(sa);
 
   return sa;
 
@@ -1133,10 +1143,7 @@ scamper_addr_t *scamper_addrcache_resolve(scamper_addrcache_t *addrcache,
 scamper_addr_t *scamper_addr_use(scamper_addr_t *sa)
 {
   if(sa != NULL)
-    {
-      sa->refcnt++;
-      scamper_addr_debug(sa);
-    }
+    sa->refcnt++;
   return sa;
 }
 
@@ -1152,15 +1159,10 @@ void scamper_addr_free(scamper_addr_t *sa)
   assert(sa->refcnt > 0);
 
   if(--sa->refcnt > 0)
-    {
-      scamper_addr_debug(sa);
-      return;
-    }
+    return;
 
   if((ac = sa->internal) != NULL)
-    patricia_remove_item(ac->trie[sa->type-1], sa);
-
-  scamper_addr_debug(sa);
+    splaytree_remove_item(ac->tree[sa->type-1], sa);
 
   free(sa->addr);
   free(sa);
@@ -1169,8 +1171,10 @@ void scamper_addr_free(scamper_addr_t *sa)
 
 int scamper_addr_cmp(const scamper_addr_t *a, const scamper_addr_t *b)
 {
-  assert(a->type > 0 && a->type <= sizeof(handlers)/sizeof(struct handler));
-  assert(b->type > 0 && b->type <= sizeof(handlers)/sizeof(struct handler));
+  assert(a->type > 0);
+  assert((size_t)a->type <= sizeof(handlers)/sizeof(struct handler));
+  assert(b->type > 0);
+  assert((size_t)b->type <= sizeof(handlers)/sizeof(struct handler));
 
   /*
    * if the two address structures point to the same memory, then they are
@@ -1203,8 +1207,10 @@ int scamper_addr_cmp(const scamper_addr_t *a, const scamper_addr_t *b)
 
 int scamper_addr_human_cmp(const scamper_addr_t *a, const scamper_addr_t *b)
 {
-  assert(a->type > 0 && a->type <= sizeof(handlers)/sizeof(struct handler));
-  assert(b->type > 0 && b->type <= sizeof(handlers)/sizeof(struct handler));
+  assert(a->type > 0);
+  assert((size_t)a->type <= sizeof(handlers)/sizeof(struct handler));
+  assert(b->type > 0);
+  assert((size_t)b->type <= sizeof(handlers)/sizeof(struct handler));
 
   /*
    * if the two address structures point to the same memory, then they are
@@ -1251,8 +1257,8 @@ void scamper_addrcache_free(scamper_addrcache_t *ac)
   int i;
 
   for(i=(sizeof(handlers)/sizeof(struct handler))-1; i>=0; i--)
-    if(ac->trie[i] != NULL)
-      patricia_free_cb(ac->trie[i], free_cb);
+    if(ac->tree[i] != NULL)
+      splaytree_free(ac->tree[i], free_cb);
   free(ac);
 
   return;
@@ -1268,10 +1274,8 @@ scamper_addrcache_t *scamper_addrcache_alloc()
 
   for(i=(sizeof(handlers)/sizeof(struct handler))-1; i>=0; i--)
     {
-      ac->trie[i] = patricia_alloc((patricia_bit_t)handlers[i].bit,
-				   (patricia_cmp_t)handlers[i].cmp,
-				   (patricia_fbd_t)handlers[i].fbd);
-      if(ac->trie[i] == NULL)
+      ac->tree[i] = splaytree_alloc((splaytree_cmp_t)handlers[i].cmp);
+      if(ac->tree[i] == NULL)
 	goto err;
     }
 

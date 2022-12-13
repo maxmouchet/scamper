@@ -1,7 +1,7 @@
 /*
  * sc_tracediff
  *
- * $Id: sc_tracediff.c,v 1.12 2015/07/15 04:50:50 mjl Exp $
+ * $Id: sc_tracediff.c,v 1.13 2020/03/17 07:32:17 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -22,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_tracediff.c,v 1.12 2015/07/15 04:50:50 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

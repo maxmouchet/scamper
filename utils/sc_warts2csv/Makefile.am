@@ -10,4 +10,6 @@ sc_warts2csv_SOURCES = \
 
 sc_warts2csv_LDADD = ../../scamper/libscamperfile.la
 
+man_MANS = sc_warts2csv.1
+
 CLEANFILES = *~ *.core

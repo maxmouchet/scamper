@@ -1,7 +1,7 @@
 /*
  * warts2traceroute
  *
- * $Id: sc_warts2text.c,v 1.25 2015/04/29 04:43:50 mjl Exp $
+ * $Id: sc_warts2text.c,v 1.27 2020/03/17 07:32:17 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_warts2text.c,v 1.25 2015/04/29 04:43:50 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -85,6 +80,9 @@ static int ip2descr_line(char *line, void *param)
   scamper_addr_t *addr = NULL;
   ip2descr_t fm, *ip2descr = NULL;
   char *ip = line, *descr = line, *tmp;
+
+  if(line[0] == '\0')
+    return 0;
 
   while(*descr != '\0')
     {

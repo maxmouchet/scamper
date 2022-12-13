@@ -6,7 +6,7 @@
  * this code was written for 0657.317 1999 at the University of Waikato
  * by Matthew Luckie
  *
- * Copyright (C) 1999-2010 Matthew Luckie. All rights reserved.
+ * Copyright (C) 1999-2018 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_splaytree.h,v 1.15 2010/05/12 04:31:29 mjl Exp $
+ * $Id: mjl_splaytree.h,v 1.16 2018/05/12 21:49:04 mjl Exp $
  *
  */
 
@@ -76,6 +76,7 @@ int splaytree_remove_node(splaytree_t *tree, splaytree_node_t *node);
 
 /* find a node in the tree and return it */
 void *splaytree_find(splaytree_t *tree, const void *ptr);
+void *splaytree_find_ro(const splaytree_t *tree, const void *ptr);
 
 /* find a value in the tree closest to a particular value */
 void *splaytree_findclosest(splaytree_t *tree, const void *ptr,

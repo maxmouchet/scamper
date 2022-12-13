@@ -1,14 +1,14 @@
 /*
  * scamper_trace.h
  *
- * $Id: scamper_trace.h,v 1.141 2018/05/23 11:30:31 mjl Exp $
+ * $Id: scamper_trace.h,v 1.142 2021/10/23 04:46:52 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2008      Alistair King
  * Copyright (C) 2015      The Regents of the University of California
  * Copyright (C) 2015      The University of Waikato
- * Copyright (C) 2017-2018 Yves Vanaubel
+ * Copyright (C) 2019-2021 Matthew Luckie
  * Authors: Matthew Luckie
  *          Doubletree implementation by Alistair King
  *          TNT implementation by Yves Vanaubel
@@ -58,7 +58,9 @@ struct scamper_addr;
 #define SCAMPER_TRACE_FLAG_DOUBLETREE   0x10 /* doubletree */
 #define SCAMPER_TRACE_FLAG_ICMPCSUMDP   0x20 /* icmp csum found in dport */
 #define SCAMPER_TRACE_FLAG_CONSTPAYLOAD 0x40 /* do not hack payload for csum */
-#define SCAMPER_TRACE_FLAG_TNT          0x80 /* conduct MPLS tunnel discovery */
+#define SCAMPER_TRACE_FLAG_RXERR        0x80 /* used rxerr socket */
+#define SCAMPER_TRACE_FLAG_TNT          0x90 /* conduct MPLS tunnel discovery */
+#define SCAMPER_TRACE_FLAG_PTR          0x100 /* do ptr lookups */
 
 #define SCAMPER_TRACE_TYPE_ICMP_ECHO       0x01 /* ICMP echo requests */
 #define SCAMPER_TRACE_TYPE_UDP             0x02 /* UDP to unused ports */
@@ -388,8 +390,9 @@ struct scamper_addr;
  */
 typedef struct scamper_trace_hop
 {
-  /* the address of the hop that responded */
+  /* the address / name of the hop that responded */
   scamper_addr_t              *hop_addr;
+  char                        *hop_name;
 
   /* flags defined by SCAMPER_TRACE_HOP_FLAG_* */
   uint8_t                      hop_flags;
@@ -532,6 +535,7 @@ typedef struct scamper_trace
   /* source and destination addresses of the trace */
   struct scamper_addr   *src;
   struct scamper_addr   *dst;
+  struct scamper_addr   *rtr;
 
   /* when the trace commenced */
   struct timeval         start;
@@ -549,9 +553,9 @@ typedef struct scamper_trace
 
   /* trace parameters */
   uint8_t                type;
-  uint8_t                flags;
   uint8_t                attempts;
   uint8_t                hoplimit;
+  uint8_t                squeries;
   uint8_t                gaplimit;
   uint8_t                gapaction;
   uint8_t                firsthop;
@@ -565,6 +569,7 @@ typedef struct scamper_trace
   uint16_t               sport;
   uint16_t               dport;
   uint16_t               offset;
+  uint32_t               flags;
 
   /* payload */
   uint8_t               *payload;

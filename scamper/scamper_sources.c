@@ -1,12 +1,13 @@
 /*
  * scamper_source
  *
- * $Id: scamper_sources.c,v 1.55 2015/04/27 03:28:55 mjl Exp $
+ * $Id: scamper_sources.c,v 1.59 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2012      The Regents of the University of California
+ * Copyright (C) 2018      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,11 +24,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_sources.c,v 1.55 2015/04/27 03:28:55 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -51,6 +47,7 @@ static const char rcsid[] =
 #include "neighbourdisc/scamper_neighbourdisc_do.h"
 #include "tbit/scamper_tbit_do.h"
 #include "sniff/scamper_sniff_do.h"
+#include "host/scamper_host_do.h"
 
 #include "scamper_debug.h"
 
@@ -200,6 +197,12 @@ static const command_func_t command_funcs[] = {
     scamper_do_sniff_alloc,
     scamper_do_sniff_alloctask,
     scamper_do_sniff_free,
+  },
+  {
+    "host", 4,
+    scamper_do_host_alloc,
+    scamper_do_host_alloctask,
+    scamper_do_host_free,
   },
 };
 
@@ -449,7 +452,7 @@ static command_t *command_alloc(int type)
   command_t *cmd;
   if((cmd = malloc_zero(sizeof(command_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc command");
+      printerror(__func__, "could not malloc command");
       return NULL;
     }
   cmd->type = type;
@@ -895,7 +898,7 @@ static int source_cycle(scamper_source_t *source, uint32_t cycle_id)
   /* allocate the new cycle object */
   if((cycle = scamper_cycle_alloc(source->list)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc new cycle");
+      printerror(__func__, "could not alloc new cycle");
       goto err;
     }
 
@@ -906,14 +909,14 @@ static int source_cycle(scamper_source_t *source, uint32_t cycle_id)
   if((cyclemon = scamper_cyclemon_alloc(cycle, source_cycle_finish, source,
 					source->sof)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc new cyclemon");
+      printerror(__func__, "could not alloc new cyclemon");
       goto err;
     }
 
   /* append the cycle record to the source's commands list */
   if(command_cycle(source, cycle) != 0)
     {
-      printerror(errno, strerror, __func__, "could not insert cycle marker");
+      printerror(__func__, "could not insert cycle marker");
       goto err;
     }
 
@@ -1336,7 +1339,7 @@ static void *command_func_allocdata(const command_func_t *f, const char *cmd)
   void *data;
   if((opts = strdup(cmd + f->len)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup cmd opts");
+      printerror(__func__, "could not strdup cmd opts");
       return NULL;
     }
   data = f->allocdata(opts);
@@ -1395,7 +1398,7 @@ int scamper_source_command2(scamper_source_t *s, const char *command,
   if(s->idtree == NULL &&
      (s->idtree = splaytree_alloc((splaytree_cmp_t)idtree_cmp)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc idtree");
+      printerror(__func__, "could not alloc idtree");
       goto err;
     }
 
@@ -1425,7 +1428,7 @@ int scamper_source_command2(scamper_source_t *s, const char *command,
   if(++s->id == 0) s->id = 1;
   if((st->idnode = splaytree_insert(s->idtree, st)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not add to idtree");
+      printerror(__func__, "could not add to idtree");
       goto err;
     }
 
@@ -1435,7 +1438,7 @@ int scamper_source_command2(scamper_source_t *s, const char *command,
 
   if(dlist_tail_push(s->commands, cmd) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not add to commands list");
+      printerror(__func__, "could not add to commands list");
       goto err;
     }
 
@@ -1608,7 +1611,7 @@ scamper_source_t *scamper_source_alloc(const scamper_source_params_t *ssp)
 
   if((source = malloc_zero(sizeof(scamper_source_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc source");
+      printerror(__func__, "could not malloc source");
       goto err;
     }
   source->refcnt = 1;
@@ -1620,28 +1623,29 @@ scamper_source_t *scamper_source_alloc(const scamper_source_params_t *ssp)
   source->isfinished  = ssp->isfinished;
   source->tostr       = ssp->tostr;
 
-  if((source->list = scamper_list_alloc(ssp->list_id, ssp->name, ssp->descr,
-					scamper_monitorname_get())) == NULL)
+  source->list = scamper_list_alloc(ssp->list_id, ssp->name, ssp->descr,
+				    scamper_option_monitorname_get());
+  if(source->list == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc source->list");
+      printerror(__func__, "could not alloc source->list");
       goto err;
     }
 
   if((source->commands = dlist_alloc()) == NULL)
     {
-      printerror(errno,strerror,__func__, "could not alloc source->commands");
+      printerror(__func__, "could not alloc source->commands");
       goto err;
     }
 
   if((source->onhold = dlist_alloc()) == NULL)
     {
-      printerror(errno,strerror,__func__, "could not alloc source->onhold");
+      printerror(__func__, "could not alloc source->onhold");
       goto err;
     }
 
   if((source->tasks = dlist_alloc()) == NULL)
     {
-      printerror(errno,strerror,__func__, "could not alloc source->tasks");
+      printerror(__func__, "could not alloc source->tasks");
       goto err;
     }
 

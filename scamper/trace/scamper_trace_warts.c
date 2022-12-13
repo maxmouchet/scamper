@@ -5,12 +5,12 @@
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2014      The Regents of the University of California
  * Copyright (C) 2015      The University of Waikato
- * Copyright (C) 2015-2016 Matthew Luckie
+ * Copyright (C) 2015-2021 Matthew Luckie
  * Copyright (C) 2017-2018 Yves Vanaubel
  * Author: Matthew Luckie
  *         TNT implementation by Yves Vanaubel
  *
- * $Id: scamper_trace_warts.c,v 1.25 2018/05/23 10:45:21 mjl Exp $
+ * $Id: scamper_trace_warts.c,v 1.29 2021/10/23 04:46:52 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,11 +26,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_trace_warts.c,v 1.25 2018/05/23 10:45:21 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -70,7 +65,7 @@ static const char rcsid[] =
 #define WARTS_TRACE_START          5   /* start timestamp */
 #define WARTS_TRACE_STOP_R         6   /* stop reason */
 #define WARTS_TRACE_STOP_D         7   /* stop data */
-#define WARTS_TRACE_FLAGS          8   /* flags */
+#define WARTS_TRACE_FLAGS8         8   /* 8 bits of flags */
 #define WARTS_TRACE_ATTEMPTS       9   /* attempts */
 #define WARTS_TRACE_HOPLIMIT       10  /* hoplimit */
 #define WARTS_TRACE_TYPE           11  /* type */
@@ -92,6 +87,9 @@ static const char rcsid[] =
 #define WARTS_TRACE_ADDR_DST       27  /* destination address key */
 #define WARTS_TRACE_USERID         28  /* user id */
 #define WARTS_TRACE_OFFSET         29  /* IP offset to use in fragments */
+#define WARTS_TRACE_ADDR_RTR       30  /* destination address key */
+#define WARTS_TRACE_SQUERIES       31  /* squeries */
+#define WARTS_TRACE_FLAGS          32  /* 32 bits of flags */
 
 static const warts_var_t trace_vars[] =
 {
@@ -102,7 +100,7 @@ static const warts_var_t trace_vars[] =
   {WARTS_TRACE_START,        8, -1},
   {WARTS_TRACE_STOP_R,       1, -1},
   {WARTS_TRACE_STOP_D,       1, -1},
-  {WARTS_TRACE_FLAGS,        1, -1},
+  {WARTS_TRACE_FLAGS8,       1, -1},
   {WARTS_TRACE_ATTEMPTS,     1, -1},
   {WARTS_TRACE_HOPLIMIT,     1, -1},
   {WARTS_TRACE_TYPE,         1, -1},
@@ -124,6 +122,9 @@ static const warts_var_t trace_vars[] =
   {WARTS_TRACE_ADDR_DST,    -1, -1},
   {WARTS_TRACE_USERID,       4, -1},
   {WARTS_TRACE_OFFSET,       2, -1},
+  {WARTS_TRACE_ADDR_RTR,    -1, -1},
+  {WARTS_TRACE_SQUERIES,     1, -1},
+  {WARTS_TRACE_FLAGS,        4, -1},
 };
 #define trace_vars_mfb WARTS_VAR_MFB(trace_vars)
 
@@ -181,52 +182,55 @@ static const warts_var_t trace_dtree_vars[] =
 /*
  * the optional bits of a trace hop structure
  */
-#define WARTS_TRACE_HOP_ADDR_GID            1       /* address id, deprecated */
-#define WARTS_TRACE_HOP_PROBE_TTL           2       /* probe ttl */
-#define WARTS_TRACE_HOP_REPLY_TTL           3       /* reply ttl */
-#define WARTS_TRACE_HOP_FLAGS               4       /* flags */
-#define WARTS_TRACE_HOP_PROBE_ID            5       /* probe id */
-#define WARTS_TRACE_HOP_RTT                 6       /* round trip time */
-#define WARTS_TRACE_HOP_ICMP_TC             7       /* icmp type / code */
-#define WARTS_TRACE_HOP_PROBE_SIZE          8       /* probe size */
-#define WARTS_TRACE_HOP_REPLY_SIZE          9       /* reply size */
-#define WARTS_TRACE_HOP_REPLY_IPID          10      /* ipid of reply packet */
-#define WARTS_TRACE_HOP_REPLY_IPTOS         11      /* tos bits of reply pckt */
-#define WARTS_TRACE_HOP_NHMTU               12      /* nxt hop mtu in ptb msg */
-#define WARTS_TRACE_HOP_Q_IPLEN             13      /* ip->len from in icmp */
-#define WARTS_TRACE_HOP_Q_IPTTL             14      /* ip->ttl from in icmp */
-#define WARTS_TRACE_HOP_TCP_FLAGS           15      /* tcp->flags of rep pckt */
-#define WARTS_TRACE_HOP_Q_IPTOS             16      /* ip->tos byte in icmp */
-#define WARTS_TRACE_HOP_ICMPEXT             17      /* RFC 4884 icmp ext data */
-#define WARTS_TRACE_HOP_ADDR                18      /* address */
-#define WARTS_TRACE_HOP_TX                  19      /* transmit time */
-#define WARTS_TRACE_HOP_PING_RTTL           20      /* ping reply ttl */
-#define WARTS_TRACE_HOP_TYPES_MFLAGS        21      /* types MPLS flags */
-#define WARTS_TRACE_HOP_FAIL_MFLAGS         22      /* failure MPLS flags */
-#define WARTS_TRACE_HOP_DISC_MFLAGS         23      /* discovery MPLS flags */
-#define WARTS_TRACE_HOP_MPLS_ITERATION      24      /* MPLS iter in discov */
-#define WARTS_TRACE_HOP_TNT_PROBE_TTL       25      /* TNT probe ttl */
+#define WARTS_TRACE_HOP_ADDR_GID     1       /* address id, deprecated */
+#define WARTS_TRACE_HOP_PROBE_TTL    2       /* probe ttl */
+#define WARTS_TRACE_HOP_REPLY_TTL    3       /* reply ttl */
+#define WARTS_TRACE_HOP_FLAGS        4       /* flags */
+#define WARTS_TRACE_HOP_PROBE_ID     5       /* probe id */
+#define WARTS_TRACE_HOP_RTT          6       /* round trip time */
+#define WARTS_TRACE_HOP_ICMP_TC      7       /* icmp type / code */
+#define WARTS_TRACE_HOP_PROBE_SIZE   8       /* probe size */
+#define WARTS_TRACE_HOP_REPLY_SIZE   9       /* reply size */
+#define WARTS_TRACE_HOP_REPLY_IPID   10      /* ipid of reply packet */
+#define WARTS_TRACE_HOP_REPLY_IPTOS  11      /* tos bits of reply packet */
+#define WARTS_TRACE_HOP_NHMTU        12      /* next hop mtu in ptb message */
+#define WARTS_TRACE_HOP_Q_IPLEN      13      /* ip->len from inside icmp */
+#define WARTS_TRACE_HOP_Q_IPTTL      14      /* ip->ttl from inside icmp */
+#define WARTS_TRACE_HOP_TCP_FLAGS    15      /* tcp->flags of reply packet */
+#define WARTS_TRACE_HOP_Q_IPTOS      16      /* ip->tos byte inside icmp */
+#define WARTS_TRACE_HOP_ICMPEXT      17      /* RFC 4884 icmp extension data */
+#define WARTS_TRACE_HOP_ADDR         18      /* address */
+#define WARTS_TRACE_HOP_TX           19      /* transmit time */
+#define WARTS_TRACE_HOP_NAME         20      /* name for IP address */
+#define WARTS_TRACE_HOP_PING_RTTL           21      /* ping reply ttl */
+#define WARTS_TRACE_HOP_TYPES_MFLAGS        22      /* types MPLS flags */
+#define WARTS_TRACE_HOP_FAIL_MFLAGS         23      /* failure MPLS flags */
+#define WARTS_TRACE_HOP_DISC_MFLAGS         24      /* discovery MPLS flags */
+#define WARTS_TRACE_HOP_MPLS_ITERATION      25      /* MPLS iter in discov */
+#define WARTS_TRACE_HOP_TNT_PROBE_TTL       26      /* TNT probe ttl */
+
 static const warts_var_t hop_vars[] =
 {
-  {WARTS_TRACE_HOP_ADDR_GID,              4, -1},
-  {WARTS_TRACE_HOP_PROBE_TTL,             1, -1},
-  {WARTS_TRACE_HOP_REPLY_TTL,             1, -1},
-  {WARTS_TRACE_HOP_FLAGS,                 1, -1},
-  {WARTS_TRACE_HOP_PROBE_ID,              1, -1},
-  {WARTS_TRACE_HOP_RTT,                   4, -1},
-  {WARTS_TRACE_HOP_ICMP_TC,               2, -1},
-  {WARTS_TRACE_HOP_PROBE_SIZE,            2, -1},
-  {WARTS_TRACE_HOP_REPLY_SIZE,            2, -1},
-  {WARTS_TRACE_HOP_REPLY_IPID,            2, -1},
-  {WARTS_TRACE_HOP_REPLY_IPTOS,           1, -1},
-  {WARTS_TRACE_HOP_NHMTU,                 2, -1},
-  {WARTS_TRACE_HOP_Q_IPLEN,               2, -1},
-  {WARTS_TRACE_HOP_Q_IPTTL,               1, -1},
-  {WARTS_TRACE_HOP_TCP_FLAGS,             1, -1},
-  {WARTS_TRACE_HOP_Q_IPTOS,               1, -1},
-  {WARTS_TRACE_HOP_ICMPEXT,              -1, -1},
-  {WARTS_TRACE_HOP_ADDR,                 -1, -1},
-  {WARTS_TRACE_HOP_TX,                    8, -1},
+  {WARTS_TRACE_HOP_ADDR_GID,     4, -1},
+  {WARTS_TRACE_HOP_PROBE_TTL,    1, -1},
+  {WARTS_TRACE_HOP_REPLY_TTL,    1, -1},
+  {WARTS_TRACE_HOP_FLAGS,        1, -1},
+  {WARTS_TRACE_HOP_PROBE_ID,     1, -1},
+  {WARTS_TRACE_HOP_RTT,          4, -1},
+  {WARTS_TRACE_HOP_ICMP_TC,      2, -1},
+  {WARTS_TRACE_HOP_PROBE_SIZE,   2, -1},
+  {WARTS_TRACE_HOP_REPLY_SIZE,   2, -1},
+  {WARTS_TRACE_HOP_REPLY_IPID,   2, -1},
+  {WARTS_TRACE_HOP_REPLY_IPTOS,  1, -1},
+  {WARTS_TRACE_HOP_NHMTU,        2, -1},
+  {WARTS_TRACE_HOP_Q_IPLEN,      2, -1},
+  {WARTS_TRACE_HOP_Q_IPTTL,      1, -1},
+  {WARTS_TRACE_HOP_TCP_FLAGS,    1, -1},
+  {WARTS_TRACE_HOP_Q_IPTOS,      1, -1},
+  {WARTS_TRACE_HOP_ICMPEXT,     -1, -1},
+  {WARTS_TRACE_HOP_ADDR,        -1, -1},
+  {WARTS_TRACE_HOP_TX,           8, -1},
+  {WARTS_TRACE_HOP_NAME,        -1, -1},
   {WARTS_TRACE_HOP_PING_RTTL,             1, -1},
   {WARTS_TRACE_HOP_TYPES_MFLAGS,          1, -1},
   {WARTS_TRACE_HOP_FAIL_MFLAGS,           1, -1},
@@ -288,21 +292,15 @@ static void warts_trace_params(const scamper_trace_t *trace,
       var = &trace_vars[i];
 
       if(var->id == WARTS_TRACE_ADDR_SRC_GID ||
-	 var->id == WARTS_TRACE_ADDR_DST_GID)
+	 var->id == WARTS_TRACE_ADDR_DST_GID ||
+	 (var->id == WARTS_TRACE_USERID && trace->userid == 0) ||
+	 (var->id == WARTS_TRACE_OFFSET && trace->offset == 0) ||
+	 (var->id == WARTS_TRACE_FLAGS8 && (trace->flags & 0xFF) == 0) ||
+	 (var->id == WARTS_TRACE_FLAGS && (trace->flags & ~0xFF) == 0) ||
+	 (var->id == WARTS_TRACE_ADDR_RTR && trace->rtr == NULL) ||
+	 (var->id == WARTS_TRACE_SQUERIES && trace->squeries < 2))
 	{
 	  continue;
-	}
-
-      if(var->id == WARTS_TRACE_USERID)
-	{
-	  if(trace->userid == 0)
-	    continue;
-	}
-
-      if(var->id == WARTS_TRACE_OFFSET)
-	{
-	  if(trace->offset == 0)
-	    continue;
 	}
 
       flag_set(flags, var->id, &max_id);
@@ -315,6 +313,11 @@ static void warts_trace_params(const scamper_trace_t *trace,
       else if(var->id == WARTS_TRACE_ADDR_DST)
 	{
 	  *params_len += warts_addr_size(table, trace->dst);
+	  continue;
+	}
+      else if(var->id == WARTS_TRACE_ADDR_RTR)
+	{
+	  *params_len += warts_addr_size_static(trace->rtr);
 	  continue;
 	}
 
@@ -330,6 +333,7 @@ static int warts_trace_params_read(scamper_trace_t *trace,warts_state_t *state,
 				   warts_addrtable_t *table,
 				   uint8_t *buf, uint32_t *off, uint32_t len)
 {
+  uint8_t flags8 = 0;
   warts_param_reader_t handlers[] = {
     {&trace->list,        (wpr_t)extract_list,     state},
     {&trace->cycle,       (wpr_t)extract_cycle,    state},
@@ -338,7 +342,7 @@ static int warts_trace_params_read(scamper_trace_t *trace,warts_state_t *state,
     {&trace->start,       (wpr_t)extract_timeval,  NULL},
     {&trace->stop_reason, (wpr_t)extract_byte,     NULL},
     {&trace->stop_data,   (wpr_t)extract_byte,     NULL},
-    {&trace->flags,       (wpr_t)extract_byte,     NULL},
+    {&flags8,             (wpr_t)extract_byte,     NULL},
     {&trace->attempts,    (wpr_t)extract_byte,     NULL},
     {&trace->hoplimit,    (wpr_t)extract_byte,     NULL},
     {&trace->type,        (wpr_t)extract_byte,     NULL},
@@ -360,14 +364,26 @@ static int warts_trace_params_read(scamper_trace_t *trace,warts_state_t *state,
     {&trace->dst,         (wpr_t)extract_addr,     table},
     {&trace->userid,      (wpr_t)extract_uint32,   NULL},
     {&trace->offset,      (wpr_t)extract_uint16,   NULL},
+    {&trace->rtr,         (wpr_t)extract_addr_static, NULL},
+    {&trace->squeries,    (wpr_t)extract_byte,     NULL},
+    {&trace->flags,       (wpr_t)extract_uint32,   NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
+  uint32_t o = *off;
   int rc;
 
   if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
     return rc;
   if(trace->dst == NULL)
     return -1;
+  if(trace->firsthop == 0)
+    trace->firsthop = 1;
+  if(trace->squeries < 2)
+    trace->squeries = 1;
+
+  if(flag_isset(&buf[o], WARTS_TRACE_FLAGS) == 0 &&
+     flag_isset(&buf[o], WARTS_TRACE_FLAGS8) != 0)
+    trace->flags = flags8;
 
   return 0;
 }
@@ -382,6 +398,7 @@ static int warts_trace_params_write(const scamper_trace_t *trace,
 				    const uint16_t params_len)
 {
   uint32_t list_id, cycle_id;
+  uint8_t flags8 = trace->flags & 0xFF;
   warts_param_writer_t handlers[] = {
     {&list_id,            (wpw_t)insert_uint32,  NULL},
     {&cycle_id,           (wpw_t)insert_uint32,  NULL},
@@ -390,7 +407,7 @@ static int warts_trace_params_write(const scamper_trace_t *trace,
     {&trace->start,       (wpw_t)insert_timeval, NULL},
     {&trace->stop_reason, (wpw_t)insert_byte,    NULL},
     {&trace->stop_data,   (wpw_t)insert_byte,    NULL},
-    {&trace->flags,       (wpw_t)insert_byte,    NULL},
+    {&flags8,             (wpw_t)insert_byte,    NULL},
     {&trace->attempts,    (wpw_t)insert_byte,    NULL},
     {&trace->hoplimit,    (wpw_t)insert_byte,    NULL},
     {&trace->type,        (wpw_t)insert_byte,    NULL},
@@ -412,6 +429,9 @@ static int warts_trace_params_write(const scamper_trace_t *trace,
     {trace->dst,          (wpw_t)insert_addr,    table},
     {&trace->userid,      (wpw_t)insert_uint32,  NULL},
     {&trace->offset,      (wpw_t)insert_uint16,  NULL},
+    {trace->rtr,          (wpw_t)insert_addr_static, NULL},
+    {&trace->squeries,    (wpw_t)insert_byte,    NULL},
+    {&trace->flags,       (wpw_t)insert_uint32,  NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);
 
@@ -489,7 +509,8 @@ static void warts_trace_hop_params(const scamper_trace_t *trace,
 {
   scamper_icmpext_t *ie;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(flags, 0, hop_vars_mfb);
@@ -589,6 +610,11 @@ static void warts_trace_hop_params(const scamper_trace_t *trace,
     if(hop->hop_tnt_probe_ttl == 0)
       continue;
   }
+      else if(var->id == WARTS_TRACE_HOP_NAME)
+	{
+	  if(hop->hop_name == NULL)
+	    continue;
+	}
 
       flag_set(flags, var->id, &max_id);
 
@@ -601,6 +627,10 @@ static void warts_trace_hop_params(const scamper_trace_t *trace,
 	  *params_len += 2;
 	  for(ie = hop->hop_icmpext; ie != NULL; ie = ie->ie_next)
 	    *params_len += (2 + 1 + 1 + ie->ie_dl);
+	}
+      else if(var->id == WARTS_TRACE_HOP_NAME)
+	{
+	  *params_len += warts_str_size(hop->hop_name);
 	}
       else
 	{
@@ -638,25 +668,26 @@ static int warts_trace_hop_read(scamper_trace_hop_t *hop, warts_state_t *state,
 				const uint8_t *buf,uint32_t *off,uint32_t len)
 {
   warts_param_reader_t handlers[] = {
-    {&hop->hop_addr,               (wpr_t)extract_addr_gid,              state},
-    {&hop->hop_probe_ttl,          (wpr_t)extract_byte,                  NULL},
-    {&hop->hop_reply_ttl,          (wpr_t)extract_byte,                  NULL},
-    {&hop->hop_flags,              (wpr_t)extract_byte,                  NULL},
-    {&hop->hop_probe_id,           (wpr_t)warts_trace_hop_read_probe_id, NULL},
-    {&hop->hop_rtt,                (wpr_t)extract_rtt,                   NULL},
-    {hop,                          (wpr_t)warts_trace_hop_read_icmp_tc,  NULL},
-    {&hop->hop_probe_size,         (wpr_t)extract_uint16,                NULL},
-    {&hop->hop_reply_size,         (wpr_t)extract_uint16,                NULL},
-    {&hop->hop_reply_ipid,         (wpr_t)extract_uint16,                NULL},
-    {&hop->hop_reply_tos,          (wpr_t)extract_byte,                  NULL},
-    {&hop->hop_icmp_nhmtu,         (wpr_t)extract_uint16,                NULL},
-    {&hop->hop_icmp_q_ipl,         (wpr_t)extract_uint16,                NULL},
-    {&hop->hop_icmp_q_ttl,         (wpr_t)extract_byte,                  NULL},
-    {&hop->hop_tcp_flags,          (wpr_t)extract_byte,                  NULL},
-    {&hop->hop_icmp_q_tos,         (wpr_t)extract_byte,                  NULL},
-    {hop,                          (wpr_t)warts_trace_hop_read_icmpext,  NULL},
-    {&hop->hop_addr,               (wpr_t)extract_addr,                  table},
-    {&hop->hop_tx,                 (wpr_t)extract_timeval,               NULL},
+    {&hop->hop_addr,       (wpr_t)extract_addr_gid,              state},
+    {&hop->hop_probe_ttl,  (wpr_t)extract_byte,                  NULL},
+    {&hop->hop_reply_ttl,  (wpr_t)extract_byte,                  NULL},
+    {&hop->hop_flags,      (wpr_t)extract_byte,                  NULL},
+    {&hop->hop_probe_id,   (wpr_t)warts_trace_hop_read_probe_id, NULL},
+    {&hop->hop_rtt,        (wpr_t)extract_rtt,                   NULL},
+    {hop,                  (wpr_t)warts_trace_hop_read_icmp_tc,  NULL},
+    {&hop->hop_probe_size, (wpr_t)extract_uint16,                NULL},
+    {&hop->hop_reply_size, (wpr_t)extract_uint16,                NULL},
+    {&hop->hop_reply_ipid, (wpr_t)extract_uint16,                NULL},
+    {&hop->hop_reply_tos,  (wpr_t)extract_byte,                  NULL},
+    {&hop->hop_icmp_nhmtu, (wpr_t)extract_uint16,                NULL},
+    {&hop->hop_icmp_q_ipl, (wpr_t)extract_uint16,                NULL},
+    {&hop->hop_icmp_q_ttl, (wpr_t)extract_byte,                  NULL},
+    {&hop->hop_tcp_flags,  (wpr_t)extract_byte,                  NULL},
+    {&hop->hop_icmp_q_tos, (wpr_t)extract_byte,                  NULL},
+    {hop,                  (wpr_t)warts_trace_hop_read_icmpext,  NULL},
+    {&hop->hop_addr,       (wpr_t)extract_addr,                  table},
+    {&hop->hop_tx,         (wpr_t)extract_timeval,               NULL},
+    {&hop->hop_name,       (wpr_t)extract_string,                NULL},
     {&hop->hop_ping_rttl,          (wpr_t)extract_byte,                  NULL},
     {&hop->hop_types_mflags,       (wpr_t)extract_byte,                  NULL},
     {&hop->hop_fail_mflags,        (wpr_t)extract_byte,                  NULL},
@@ -693,25 +724,26 @@ static void warts_trace_hop_write(const warts_trace_hop_t *state,
 {
   scamper_trace_hop_t *hop = state->hop;
   warts_param_writer_t handlers[] = {
-    {NULL,                        NULL,                                  NULL},
-    {&hop->hop_probe_ttl,         (wpw_t)insert_byte,                    NULL},
-    {&hop->hop_reply_ttl,         (wpw_t)insert_byte,                    NULL},
-    {&hop->hop_flags,             (wpw_t)insert_byte,                    NULL},
-    {&hop->hop_probe_id,          (wpw_t)warts_trace_hop_write_probe_id, NULL},
-    {&hop->hop_rtt,               (wpw_t)insert_rtt,                     NULL},
-    {hop,                         (wpw_t)warts_trace_hop_write_icmp_tc,  NULL},
-    {&hop->hop_probe_size,        (wpw_t)insert_uint16,                  NULL},
-    {&hop->hop_reply_size,        (wpw_t)insert_uint16,                  NULL},
-    {&hop->hop_reply_ipid,        (wpw_t)insert_uint16,                  NULL},
-    {&hop->hop_reply_tos,         (wpw_t)insert_byte,                    NULL},
-    {&hop->hop_icmp_nhmtu,        (wpw_t)insert_uint16,                  NULL},
-    {&hop->hop_icmp_q_ipl,        (wpw_t)insert_uint16,                  NULL},
-    {&hop->hop_icmp_q_ttl,        (wpw_t)insert_byte,                    NULL},
-    {&hop->hop_tcp_flags,         (wpw_t)insert_byte,                    NULL},
-    {&hop->hop_icmp_q_tos,        (wpw_t)insert_byte,                    NULL},
-    {hop,                         (wpw_t)warts_trace_hop_write_icmpext,  NULL},
-    {hop->hop_addr,               (wpw_t)insert_addr,                    table},
-    {&hop->hop_tx,                (wpw_t)insert_timeval,                 NULL},
+    {NULL,                 NULL,                                  NULL},
+    {&hop->hop_probe_ttl,  (wpw_t)insert_byte,                    NULL},
+    {&hop->hop_reply_ttl,  (wpw_t)insert_byte,                    NULL},
+    {&hop->hop_flags,      (wpw_t)insert_byte,                    NULL},
+    {&hop->hop_probe_id,   (wpw_t)warts_trace_hop_write_probe_id, NULL},
+    {&hop->hop_rtt,        (wpw_t)insert_rtt,                     NULL},
+    {hop,                  (wpw_t)warts_trace_hop_write_icmp_tc,  NULL},
+    {&hop->hop_probe_size, (wpw_t)insert_uint16,                  NULL},
+    {&hop->hop_reply_size, (wpw_t)insert_uint16,                  NULL},
+    {&hop->hop_reply_ipid, (wpw_t)insert_uint16,                  NULL},
+    {&hop->hop_reply_tos,  (wpw_t)insert_byte,                    NULL},
+    {&hop->hop_icmp_nhmtu, (wpw_t)insert_uint16,                  NULL},
+    {&hop->hop_icmp_q_ipl, (wpw_t)insert_uint16,                  NULL},
+    {&hop->hop_icmp_q_ttl, (wpw_t)insert_byte,                    NULL},
+    {&hop->hop_tcp_flags,  (wpw_t)insert_byte,                    NULL},
+    {&hop->hop_icmp_q_tos, (wpw_t)insert_byte,                    NULL},
+    {hop,                  (wpw_t)warts_trace_hop_write_icmpext,  NULL},
+    {hop->hop_addr,        (wpw_t)insert_addr,                    table},
+    {&hop->hop_tx,         (wpw_t)insert_timeval,                 NULL},
+    {hop->hop_name,        (wpw_t)insert_string,                  NULL},
     {&hop->hop_ping_rttl,         (wpw_t)insert_byte,                    NULL},
     {&hop->hop_types_mflags,      (wpw_t)insert_byte,                    NULL},
     {&hop->hop_fail_mflags,       (wpw_t)insert_byte,                    NULL},
@@ -777,7 +809,8 @@ static void warts_trace_pmtud_n_params(const scamper_trace_pmtud_t *pmtud,
   const scamper_trace_hop_t *hop;
   const warts_var_t *var;
   uint16_t u16;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   memset(state->flags, 0, pmtud_n_vars_mfb);
   state->params_len = 0;
@@ -876,7 +909,8 @@ static void warts_trace_pmtud_params(const scamper_trace_t *trace,
 {
   const scamper_trace_pmtud_t *pmtud = trace->pmtud;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, pmtud_vars_mfb);
@@ -1108,7 +1142,8 @@ static int warts_trace_dtree_params(const scamper_file_t *sf,
 {
   scamper_trace_dtree_t *dtree = trace->dtree;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, trace_dtree_vars_mfb);

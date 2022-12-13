@@ -22,11 +22,6 @@
  *
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_filterpolicy.c,v 1.9 2015/12/07 07:06:28 mjl Exp $";
-#endif
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -215,7 +210,10 @@ static void usage(uint32_t opt_mask)
     "\n");
 
   if(opt_mask == 0)
-    fprintf(stderr, "       sc_filterpolicy -?\n\n");
+    {
+      fprintf(stderr, "       sc_filterpolicy -?\n\n");
+      return;
+    }
 
   if(opt_mask & OPT_HELP)
     fprintf(stderr, "   -? give an overview of the usage of sc_filterpolicy\n");
@@ -1326,7 +1324,15 @@ static int do_decoderead(void)
       return -1;
     }
   if(data == NULL)
-    return 0;
+    {
+      if(scamper_file_geteof(decode_in) != 0)
+	{
+	  scamper_file_close(decode_in);
+	  decode_in = NULL;
+	  decode_in_fd = -1;
+	}
+      return 0;
+    }
   probing--;
 
   if(scamper_file_write_obj(outfile, type, data) != 0)
@@ -1442,22 +1448,20 @@ static int do_scamperread(void)
  */
 static int do_scamperconnect(void)
 {
+  struct sockaddr *sa;
   struct sockaddr_un sun;
   struct sockaddr_in sin;
   struct in_addr in;
+  socklen_t sl;
 
   if(options & OPT_PORT)
     {
       inet_aton("127.0.0.1", &in);
       sockaddr_compose((struct sockaddr *)&sin, AF_INET, &in, port);
+      sa = (struct sockaddr *)&sin; sl = sizeof(sin);
       if((scamper_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
 	{
 	  fprintf(stderr, "could not allocate new socket\n");
-	  return -1;
-	}
-      if(connect(scamper_fd, (const struct sockaddr *)&sin, sizeof(sin)) != 0)
-	{
-	  fprintf(stderr, "could not connect to scamper process\n");
 	  return -1;
 	}
     }
@@ -1468,18 +1472,20 @@ static int do_scamperconnect(void)
 	  fprintf(stderr, "could not build sockaddr_un\n");
 	  return -1;
 	}
+      sa = (struct sockaddr *)&sun; sl = sizeof(sun);
       if((scamper_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
 	{
 	  fprintf(stderr, "could not allocate unix domain socket\n");
 	  return -1;
 	}
-      if(connect(scamper_fd, (const struct sockaddr *)&sun, sizeof(sun)) != 0)
-	{
-	  fprintf(stderr, "could not connect to scamper process\n");
-	  return -1;
-	}
     }
   else return -1;
+
+  if(connect(scamper_fd, sa, sl) != 0)
+    {
+      fprintf(stderr, "could not connect to scamper process\n");
+      return -1;
+    }
 
   if(fcntl_set(scamper_fd, O_NONBLOCK) == -1)
     {
@@ -1634,6 +1640,12 @@ static int fp_data(void)
 		       errno, strerror(errno));
 	      return -1;
 	    }
+
+	  if(scamper_fd < 0 && scamper_writebuf_len(decode_wb) == 0)
+	    {
+	      close(decode_out_fd);
+	      decode_out_fd = -1;
+	    }
 	}
     }
 
@@ -1658,7 +1670,7 @@ static int fp_read(void)
   void *data;
   int code;
 
-  if(strcmp(datafile, "-") == 0)
+  if(string_isdash(datafile) != 0)
     in = scamper_file_openfd(STDIN_FILENO, "-", 'r', "warts");
   else
     in = scamper_file_open(datafile, 'r', NULL);
@@ -1731,9 +1743,9 @@ static void cleanup(void)
   if(decode_in != NULL) scamper_file_close(decode_in);
   if(ffilter != NULL) scamper_file_filter_free(ffilter);
   if(logfile != NULL) fclose(logfile);
-  close(decode_in_fd);
-  close(decode_out_fd);
-  close(scamper_fd);
+  if(decode_in_fd != -1) close(decode_in_fd);
+  if(decode_out_fd != -1) close(decode_out_fd);
+  if(scamper_fd != -1) close(scamper_fd);
   return;
 }
 

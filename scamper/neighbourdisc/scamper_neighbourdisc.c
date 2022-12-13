@@ -1,9 +1,9 @@
 /*
  * scamper_neighbourdisc.c
  *
- * $Id: scamper_neighbourdisc.c,v 1.4 2010/09/11 22:10:42 mjl Exp $
+ * $Id: scamper_neighbourdisc.c,v 1.6 2021/08/24 09:03:07 mjl Exp $
  *
- * Copyright (C) 2009-2010 Matthew Luckie
+ * Copyright (C) 2009-2021 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,11 +19,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_neighbourdisc.c,v 1.4 2010/09/11 22:10:42 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -88,7 +83,8 @@ void scamper_neighbourdisc_probe_free(scamper_neighbourdisc_probe_t *probe)
   if(probe->rxs != NULL)
     {
       for(i=0; i<probe->rxc; i++)
-	scamper_neighbourdisc_reply_free(probe->rxs[i]);
+	if(probe->rxs[i] != NULL)
+	  scamper_neighbourdisc_reply_free(probe->rxs[i]);
       free(probe->rxs);
     }
   free(probe);

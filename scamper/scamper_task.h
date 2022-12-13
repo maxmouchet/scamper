@@ -1,11 +1,12 @@
 /*
  * scamper_task.h
  *
- * $Id: scamper_task.h,v 1.40 2013/04/01 23:16:38 mjl Exp $
+ * $Id: scamper_task.h,v 1.43.10.3 2022/08/10 22:39:48 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2013      The Regents of the University of California
+ * Copyright (C) 2018-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -38,6 +39,7 @@ struct scamper_sourcetask;
 #define SCAMPER_TASK_SIG_TYPE_TX_IP 1
 #define SCAMPER_TASK_SIG_TYPE_TX_ND 2
 #define SCAMPER_TASK_SIG_TYPE_SNIFF 3
+#define SCAMPER_TASK_SIG_TYPE_HOST  4
 
 typedef struct scamper_task scamper_task_t;
 typedef struct scamper_task_anc scamper_task_anc_t;
@@ -61,14 +63,21 @@ typedef struct scamper_task_sig
       struct scamper_addr *src;
       uint16_t             icmpid;
     } sniff;
+    struct host
+    {
+      char                *name;
+      uint16_t             type;
+    } host;
   } un;
 } scamper_task_sig_t;
 
-#define sig_tx_ip_dst     un.ip.dst
-#define sig_tx_ip_src     un.ip.src
-#define sig_tx_nd_ip      un.nd.ip
-#define sig_sniff_src     un.sniff.src
-#define sig_sniff_icmp_id un.sniff.icmpid
+#define sig_tx_ip_dst         un.ip.dst
+#define sig_tx_ip_src         un.ip.src
+#define sig_tx_nd_ip          un.nd.ip
+#define sig_sniff_src         un.sniff.src
+#define sig_sniff_icmp_id     un.sniff.icmpid
+#define sig_host_name         un.host.name
+#define sig_host_type         un.host.type
 
 typedef struct scamper_task_funcs
 {
@@ -113,12 +122,14 @@ void scamper_task_setcyclemon(scamper_task_t *t, struct scamper_cyclemon *cm);
 /* access the various functions registered with the task */
 void scamper_task_write(scamper_task_t *task, struct scamper_file *file);
 void scamper_task_probe(scamper_task_t *task);
-void scamper_task_handleicmp(scamper_task_t *task,struct scamper_icmp_resp *r);
 void scamper_task_handletimeout(scamper_task_t *task);
 void scamper_task_halt(scamper_task_t *task);
 
 /* pass the datalink record to all appropriate tasks */
 void scamper_task_handledl(struct scamper_dl_rec *dl);
+
+/* pass the ICMP respons eto all appropriate tasks */
+void scamper_task_handleicmp(scamper_task_t *task, struct scamper_icmp_resp *r);
 
 /* access the queue structre the task holds */
 int scamper_task_queue_probe(scamper_task_t *task);

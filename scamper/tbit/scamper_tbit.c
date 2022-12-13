@@ -5,9 +5,11 @@
  * Copyright (C) 2010-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2012,2015 The Regents of the University of California
+ * Copyright (C) 2021      Matthew Luckie
+ *
  * Authors: Ben Stasiewicz, Matthew Luckie
  *
- * $Id: scamper_tbit.c,v 1.46.4.1 2016/12/04 05:46:57 mjl Exp $
+ * $Id: scamper_tbit.c,v 1.51 2021/08/29 08:55:39 mjl Exp $
  *
  * This file implements algorithms described in the tbit-1.0 source code,
  * as well as the papers:
@@ -31,11 +33,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_tbit.c,v 1.46.4.1 2016/12/04 05:46:57 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -116,11 +113,16 @@ int scamper_tbit_fo_getcookie(scamper_tbit_t *tbit, uint8_t *c, uint8_t *l)
 		case IPPROTO_HOPOPTS:
 		case IPPROTO_DSTOPTS:
 		case IPPROTO_ROUTING:
+		  if(pkt->data[iphlen+1] == 0 ||
+		     255 - iphlen <= (pkt->data[iphlen+1] * 8) + 8)
+		    break;
 		  u8 = pkt->data[iphlen+0];
 		  iphlen += (pkt->data[iphlen+1] * 8) + 8;
 		  continue;
 
 		case IPPROTO_FRAGMENT:
+		  if(255 - iphlen <= 8)
+		    break;
 		  if((bytes_ntohs(pkt->data+iphlen+2) & 0xfff8) != 0)
 		    break;
 		  u8 = pkt->data[iphlen+0];
@@ -416,10 +418,15 @@ int scamper_tbit_pkt_iph(const scamper_tbit_pkt_t *pkt,
 	    case IPPROTO_HOPOPTS:
 	    case IPPROTO_DSTOPTS:
 	    case IPPROTO_ROUTING:
+	      if(pkt->data[(*iphlen)+1] == 0 ||
+		 255 - *iphlen <= (pkt->data[(*iphlen)+1] * 8) + 8)
+		return -1;
 	      *proto = pkt->data[*iphlen];
 	      *iphlen += (pkt->data[(*iphlen)+1] * 8) + 8;
 	      continue;
 	    case IPPROTO_FRAGMENT:
+	      if(255 - *iphlen <= 8)
+		return -1;
 	      *proto = pkt->data[*iphlen];
 	      if((bytes_ntohs(pkt->data+(*iphlen)+2) & 0xfff8) != 0) /* off */
 		return -1;
@@ -645,9 +652,10 @@ char *scamper_tbit_type2str(const scamper_tbit_t *tbit, char *buf, size_t len)
     "blind-data",
     "blind-rst",
     "blind-syn",
+    "blind-fin",
   };
 
-  if(tbit->type > sizeof(t) / sizeof(char *) || t[tbit->type] == NULL)
+  if(tbit->type >= sizeof(t) / sizeof(char *) || t[tbit->type] == NULL)
     {
       snprintf(buf, len, "%d", tbit->type);
       return buf;
@@ -746,7 +754,7 @@ char *scamper_tbit_res2str(const scamper_tbit_t *tbit, char *buf, size_t len)
     "blind-synnew",
   };
 
-  if(tbit->result > sizeof(t) / sizeof(char *) || t[tbit->result] == NULL)
+  if(tbit->result >= sizeof(t) / sizeof(char *) || t[tbit->result] == NULL)
     {
       snprintf(buf, len, "%d", tbit->result);
       return buf;
@@ -943,7 +951,8 @@ void scamper_tbit_free(scamper_tbit_t *tbit)
 	scamper_tbit_icw_free(tbit->data);
       else if(tbit->type == SCAMPER_TBIT_TYPE_BLIND_RST ||
 	      tbit->type == SCAMPER_TBIT_TYPE_BLIND_SYN ||
-	      tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA)
+	      tbit->type == SCAMPER_TBIT_TYPE_BLIND_DATA ||
+	      tbit->type == SCAMPER_TBIT_TYPE_BLIND_FIN)
 	scamper_tbit_blind_free(tbit->data);
     }
 

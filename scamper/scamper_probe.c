@@ -1,12 +1,13 @@
 /*
  * scamper_probe.c
  *
- * $Id: scamper_probe.c,v 1.73 2015/09/21 06:34:42 mjl Exp $
+ * $Id: scamper_probe.c,v 1.78.10.1 2022/06/12 06:04:54 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2013      The Regents of the University of California
+ * Copyright (C) 2020-2022 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,11 +24,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_probe.c,v 1.73 2015/09/21 06:34:42 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -69,8 +65,10 @@ typedef struct probe_state
   scamper_task_t     *task;
   scamper_task_anc_t *anc;
   scamper_fd_t       *rtsock;
-  scamper_route_t    *rt;
+  scamper_route_t    *tx_rt;
+  scamper_route_t    *rx_rt;
   scamper_dlhdr_t    *dlhdr;
+  scamper_addr_t     *dst;
   uint8_t            *buf;
   size_t              len;
   struct timeval      tv;
@@ -78,10 +76,11 @@ typedef struct probe_state
   int                 error;
 } probe_state_t;
 
-#define PROBE_MODE_RT  1
-#define PROBE_MODE_DL  2
-#define PROBE_MODE_TX  3
-#define PROBE_MODE_ERR 4
+#define PROBE_MODE_TX_RT 1
+#define PROBE_MODE_TX_DL 2
+#define PROBE_MODE_RX_RT 3
+#define PROBE_MODE_TX    4
+#define PROBE_MODE_ERR   5
 
 /*
  * this pad macro determines the number of extra bytes we have to allocate
@@ -208,8 +207,10 @@ static void probe_print(scamper_probe_t *probe)
 		  snprintf(icmp, sizeof(icmp), ", sum %04x",
 			   ntohs(probe->pr_icmp_sum));
 		}
-	      scamper_debug("tx", "icmp %s echo, ttl %d%s, seq %d, len %d",
-			    addr, probe->pr_ip_ttl, icmp, probe->pr_icmp_seq,
+	      scamper_debug("tx",
+			    "icmp %s echo, ttl %d%s, id %d seq %d, len %d",
+			    addr, probe->pr_ip_ttl, icmp,
+			    probe->pr_icmp_id, probe->pr_icmp_seq,
 			    iphl + 8 + probe->pr_len);
 	    }
 	  else if(probe->pr_icmp_type == ICMP_UNREACH)
@@ -223,9 +224,9 @@ static void probe_print(scamper_probe_t *probe)
 	    }
 	  else if(probe->pr_icmp_type == ICMP_TSTAMP)
 	    {
-	      scamper_debug("tx", "icmp %s ts, ttl %d, seq %d, len %d",
-			    addr, probe->pr_ip_ttl, probe->pr_icmp_seq,
-			    iphl + 20);
+	      scamper_debug("tx", "icmp %s ts, ttl %d, id %d seq %d, len %d",
+			    addr, probe->pr_ip_ttl, probe->pr_icmp_id,
+			    probe->pr_icmp_seq, iphl + 20);
 	    }
 	  else
 	    {
@@ -274,8 +275,10 @@ static void probe_print(scamper_probe_t *probe)
 		  snprintf(icmp, sizeof(icmp), ", sum %04x",
 			   ntohs(probe->pr_icmp_sum));
 		}
-	      scamper_debug("tx", "icmp %s echo, ttl %d%s, seq %d, len %d",
-			    addr, probe->pr_ip_ttl, icmp, probe->pr_icmp_seq,
+	      scamper_debug("tx",
+			    "icmp %s echo, ttl %d%s, id %d seq %d, len %d",
+			    addr, probe->pr_ip_ttl, icmp,
+			    probe->pr_icmp_id, probe->pr_icmp_seq,
 			    iphl + 8 + probe->pr_len);
 	    }
 	  else if(probe->pr_icmp_type == ICMP6_PACKET_TOO_BIG)
@@ -309,6 +312,7 @@ static void probe_free(scamper_probe_t *pr)
   if(pr == NULL) return;
   if(pr->pr_ip_dst != NULL) scamper_addr_free(pr->pr_ip_dst);
   if(pr->pr_ip_src != NULL) scamper_addr_free(pr->pr_ip_src);
+  if(pr->pr_rtr != NULL) scamper_addr_free(pr->pr_rtr);
   if(pr->pr_ipopts != NULL) free(pr->pr_ipopts);
   if(pr->pr_data != NULL) free(pr->pr_data);
   free(pr);
@@ -332,6 +336,8 @@ static scamper_probe_t *probe_dup(scamper_probe_t *pr)
     pd->pr_ip_src = scamper_addr_use(pr->pr_ip_src);
   if(pr->pr_ip_dst != NULL)
     pd->pr_ip_dst = scamper_addr_use(pr->pr_ip_dst);
+  if(pr->pr_rtr != NULL)
+    pd->pr_rtr = scamper_addr_use(pr->pr_rtr);
 
   if(pr->pr_ipoptc > 0)
     {
@@ -362,10 +368,14 @@ static void probe_state_free_cb(void *vpt)
     probe_free(pt->pr);
   if(pt->buf != NULL && pt->buf != pktbuf)
     free(pt->buf);
-  if(pt->rt != NULL)
-    scamper_route_free(pt->rt);
+  if(pt->tx_rt != NULL)
+    scamper_route_free(pt->tx_rt);
+  if(pt->rx_rt != NULL)
+    scamper_route_free(pt->rx_rt);
   if(pt->dlhdr != NULL)
     scamper_dlhdr_free(pt->dlhdr);
+  if(pt->dst != NULL)
+    scamper_addr_free(pt->dst);
   free(pt);
   return;
 }
@@ -398,15 +408,22 @@ static probe_state_t *probe_state_alloc(scamper_probe_t *pr)
       goto err;
     }
 
-  if(rawtcp != 0 && pr->pr_ip_proto == IPPROTO_TCP &&
-     SCAMPER_ADDR_TYPE_IS_IPV4(pr->pr_ip_dst))
+  /* if we are sending IPv4 TCP probes using a raw socket, we're done */
+  if(pr->pr_ip_proto == IPPROTO_TCP)
     {
-      if((pt->pr = probe_dup(pr)) == NULL)
+      if(rawtcp != 0 && SCAMPER_ADDR_TYPE_IS_IPV4(pr->pr_ip_dst))
 	{
-	  pr->pr_errno = errno;
-	  goto err;
+	  if((pt->pr = probe_dup(pr)) == NULL)
+	    {
+	      pr->pr_errno = errno;
+	      goto err;
+	    }
+	  return pt;
 	}
-      return pt;
+      if(pr->pr_rtr != NULL)
+	{
+	  pt->dst = scamper_addr_use(pr->pr_ip_dst);
+	}
     }
 
   if(SCAMPER_ADDR_TYPE_IS_IPV4(pr->pr_ip_dst))
@@ -469,108 +486,181 @@ static probe_state_t *probe_state_alloc(scamper_probe_t *pr)
   return NULL;
 }
 
-static void probe_dlhdr_cb(scamper_dlhdr_t *dlhdr)
+static int probe_dl_tx(probe_state_t *pt)
 {
-  probe_state_t *pr = dlhdr->param;
-  scamper_fd_t *fd = NULL;
-  scamper_dl_t *dl = NULL;
+  scamper_fd_t *fd;
+  scamper_dl_t *dl;
   uint8_t *pkt;
 
-  if(dlhdr->error != 0)
+  /* copy the datalink header into the packet */
+  assert(pt->dlhdr->len < 16);
+  pkt = pt->buf + 16 - pt->dlhdr->len;
+  if(pt->dlhdr->len > 0)
+    memcpy(pkt, pt->dlhdr->buf, pt->dlhdr->len);
+
+  /* get the file descriptor to transmit on */
+  if((fd = scamper_task_fd_dl(pt->task, pt->tx_rt->ifindex)) == NULL)
     {
-      pr->error = dlhdr->error;
-      goto err;
+      pt->error = EINVAL;
+      return -1;
     }
-
-  assert(dlhdr->len < 16);
-  pkt = pr->buf+16-dlhdr->len;
-  if(dlhdr->len > 0)
-    memcpy(pkt, dlhdr->buf, dlhdr->len);
-
-  if((fd = scamper_task_fd_dl(pr->task, pr->rt->ifindex)) == NULL)
-    {
-      pr->error = EINVAL;
-      goto err;
-    }
-
-  if(pr->buf == pktbuf)
-    gettimeofday_wrap(&pr->tv);
+  
+  if(pt->buf == pktbuf)
+    gettimeofday_wrap(&pt->tv);
   dl = scamper_fd_dl_get(fd);
-  if(scamper_dl_tx(dl, pkt, dlhdr->len + pr->len) == -1)
+  if(scamper_dl_tx(dl, pkt, pt->dlhdr->len + pt->len) == -1)
     {
-      pr->error = errno;
-      goto err;
+      pt->error = errno;
+      return -1;
     }
-  pr->mode = PROBE_MODE_TX;
-  goto done;
 
- err:
-  pr->mode = PROBE_MODE_ERR;
-
- done:
-  if(pr->anc != NULL)
-    probe_state_free(pr);
-  return;
+  pt->mode = PROBE_MODE_TX;
+  return 0;
 }
 
-static void probe_route_cb(scamper_route_t *rt)
+static void probe_rx_rt_cb(scamper_route_t *rt)
 {
-  scamper_fd_t *fd = NULL;
-  scamper_dl_t *dl = NULL;
-  probe_state_t *pr = rt->param;
+  probe_state_t *pt = rt->param;
 
   if(rt->error != 0 || rt->ifindex < 0)
     {
-      pr->error = rt->error;
-      goto err;
-    }
-  if((fd = scamper_task_fd_dl(pr->task, rt->ifindex)) == NULL)
-    {
-      pr->error = errno;
+      pt->error = rt->error;
       goto err;
     }
 
-  if(rawtcp != 0 && pr->pr != NULL &&
-     pr->pr->pr_ip_proto == IPPROTO_TCP &&
-     SCAMPER_ADDR_TYPE_IS_IPV4(pr->pr->pr_ip_dst))
+  if(scamper_task_fd_dl(pt->task, rt->ifindex) == NULL)
     {
-      if((fd = scamper_task_fd_ip4(pr->task)) != NULL)
+      pt->error = errno;
+      goto err;
+    }
+
+  if(probe_dl_tx(pt) != 0)
+    goto err;
+
+  if(pt->anc != NULL)
+    probe_state_free(pt);
+  return;
+
+ err:
+  pt->mode = PROBE_MODE_ERR;
+  if(pt->anc != NULL)
+    probe_state_free(pt);
+  return;
+}
+
+static void probe_dlhdr_cb(scamper_dlhdr_t *dlhdr)
+{
+  probe_state_t *pt = dlhdr->param;
+
+  if(dlhdr->error != 0)
+    {
+      pt->error = dlhdr->error;
+      goto err;
+    }
+
+  /*
+   * if we are probing via a specific router and expecting TCP
+   * responses, then they might arrive over a different interface.
+   * open an interface to receive those replies.  the main issue with
+   * this approach is that it assumes we're using the IP address the
+   * system would have otherwise chosen, i.e., no use of -S srcip.
+   */
+  if(pt->dst != NULL)
+    {
+      pt->mode = PROBE_MODE_RX_RT;
+      pt->rx_rt = scamper_route_alloc(pt->dst, pt, probe_rx_rt_cb);
+      if(pt->rx_rt == NULL)
 	{
-	  pr->pr->pr_fd = scamper_fd_fd_get(fd);
-	  if(scamper_tcp4_probe(pr->pr) != 0)
-	    pr->mode = PROBE_MODE_ERR;
+	  pt->error = errno;
+	  goto err;
 	}
-      if(pr->anc != NULL)
-	probe_state_free(pr);
+
+#ifndef _WIN32
+      if(scamper_rtsock_getroute(pt->rtsock, pt->rx_rt) != 0)
+	{
+	  pt->error = errno;
+	  goto err;
+	}
+#else
+      if(scamper_rtsock_getroute(pt->rx_rt) != 0)
+	{
+	  pt->error = errno;
+	  goto err;
+	}
+#endif
       return;
     }
 
-  if((pr->dlhdr = scamper_dlhdr_alloc()) == NULL)
+  if(probe_dl_tx(pt) == 0)
+    goto done;
+
+ err:
+  pt->mode = PROBE_MODE_ERR;
+
+ done:
+  if(pt->anc != NULL)
+    probe_state_free(pt);
+  return;
+}
+
+static void probe_tx_rt_cb(scamper_route_t *rt)
+{
+  scamper_fd_t *fd = NULL;
+  scamper_dl_t *dl = NULL;
+  probe_state_t *pt = rt->param;
+
+  if(rt->error != 0 || rt->ifindex < 0)
     {
-      pr->error = errno;
+      pt->error = rt->error;
+      goto err;
+    }
+  if((fd = scamper_task_fd_dl(pt->task, rt->ifindex)) == NULL)
+    {
+      pt->error = errno;
+      goto err;
+    }
+
+  if(rawtcp != 0 && pt->pr != NULL &&
+     pt->pr->pr_ip_proto == IPPROTO_TCP &&
+     SCAMPER_ADDR_TYPE_IS_IPV4(pt->pr->pr_ip_dst))
+    {
+      if((fd = scamper_task_fd_ip4(pt->task)) != NULL)
+	{
+	  pt->pr->pr_fd = scamper_fd_fd_get(fd);
+	  if(scamper_tcp4_probe(pt->pr) != 0)
+	    pt->mode = PROBE_MODE_ERR;
+	}
+      if(pt->anc != NULL)
+	probe_state_free(pt);
+      return;
+    }
+
+  if((pt->dlhdr = scamper_dlhdr_alloc()) == NULL)
+    {
+      pt->error = errno;
       goto err;
     }
   dl = scamper_fd_dl_get(fd);
 
-  pr->dlhdr->dst     = scamper_addr_use(rt->dst);
-  pr->dlhdr->gw      = rt->gw != NULL ? scamper_addr_use(rt->gw) : NULL;
-  pr->dlhdr->ifindex = rt->ifindex;
-  pr->dlhdr->txtype  = scamper_dl_tx_type(dl);
-  pr->dlhdr->param   = pr;
-  pr->dlhdr->cb      = probe_dlhdr_cb;
-  pr->mode           = PROBE_MODE_DL;
-  if(scamper_dlhdr_get(pr->dlhdr) != 0)
+  pt->dlhdr->dst     = scamper_addr_use(rt->dst);
+  pt->dlhdr->gw      = rt->gw != NULL ? scamper_addr_use(rt->gw) : NULL;
+  pt->dlhdr->ifindex = rt->ifindex;
+  pt->dlhdr->txtype  = scamper_dl_tx_type(dl);
+  pt->dlhdr->param   = pt;
+  pt->dlhdr->cb      = probe_dlhdr_cb;
+  pt->mode           = PROBE_MODE_TX_DL;
+  if(scamper_dlhdr_get(pt->dlhdr) != 0)
     {
-      pr->error = pr->dlhdr->error;
+      pt->error = pt->dlhdr->error;
       goto err;
     }
 
   return;
 
  err:
-  pr->mode = PROBE_MODE_ERR;
-  if(pr->anc != NULL)
-    probe_state_free(pr);
+  pt->mode = PROBE_MODE_ERR;
+  if(pt->anc != NULL)
+    probe_state_free(pt);
   return;
 }
 
@@ -583,13 +673,9 @@ static int probe_task_dl(scamper_probe_t *pr, scamper_task_t *task)
       pr->pr_errno = errno;
       goto err;
     }
+
   pt->task = task;
-  pt->mode = PROBE_MODE_RT;
-  if((pt->rt = scamper_route_alloc(pr->pr_ip_dst,pt,probe_route_cb)) == NULL)
-    {
-      pr->pr_errno = errno;
-      goto err;
-    }
+  pt->mode = PROBE_MODE_TX_RT;
 
 #ifndef _WIN32
   if((pt->rtsock = scamper_task_fd_rtsock(task)) == NULL)
@@ -597,13 +683,26 @@ static int probe_task_dl(scamper_probe_t *pr, scamper_task_t *task)
       pr->pr_errno = errno;
       goto err;
     }
-  if(scamper_rtsock_getroute(pt->rtsock, pt->rt) != 0)
+#endif
+
+  if(pr->pr_rtr != NULL)
+    pt->tx_rt = scamper_route_alloc(pr->pr_rtr, pt, probe_tx_rt_cb);
+  else
+    pt->tx_rt = scamper_route_alloc(pr->pr_ip_dst, pt, probe_tx_rt_cb);
+  if(pt->tx_rt == NULL)
+    {
+      pr->pr_errno = errno;
+      goto err;
+    }
+
+#ifndef _WIN32
+  if(scamper_rtsock_getroute(pt->rtsock, pt->tx_rt) != 0)
     {
       pr->pr_errno = errno;
       goto err;
     }
 #else
-  if(scamper_rtsock_getroute(pt->rt) != 0)
+  if(scamper_rtsock_getroute(pt->tx_rt) != 0)
     {
       pr->pr_errno = errno;
       goto err;
@@ -759,6 +858,7 @@ int scamper_probe_task(scamper_probe_t *pr, scamper_task_t *task)
    * than open both a socket to send and another to receive.
    */
   if(pr->pr_ip_proto == IPPROTO_TCP ||
+     pr->pr_rtr != NULL ||
      (ipid_dl != 0 && SCAMPER_PROBE_IS_IPID(pr)) ||
      (pr->pr_flags & SCAMPER_PROBE_FLAG_NOFRAG) != 0 ||
      (pr->pr_flags & SCAMPER_PROBE_FLAG_SPOOF) != 0 ||
@@ -789,7 +889,7 @@ int scamper_probe_task(scamper_probe_t *pr, scamper_task_t *task)
   return 0;
 
  err:
-  printerror(pr->pr_errno, strerror, __func__, "could not probe");
+  printerror_msg(__func__, "could not probe: %s", strerror(pr->pr_errno));
   return -1;
 }
 
@@ -898,7 +998,7 @@ int scamper_probe(scamper_probe_t *probe)
       if((buf = realloc(pktbuf, len)) == NULL)
 	{
 	  probe->pr_errno = errno;
-	  printerror(errno, strerror, __func__, "could not realloc");
+	  printerror(__func__, "could not realloc");
 	  return -1;
 	}
       pktbuf     = buf;

@@ -1,8 +1,12 @@
 /*
  * linked list routines
- * by Matthew Luckie
  *
- * Copyright (C) 2004-2016 Matthew Luckie. All rights reserved.
+ * $Id: mjl_list.c,v 1.78 2020/03/17 07:32:15 mjl Exp $
+ *
+ *        Matthew Luckie
+ *        mjl@luckie.org.nz
+ *
+ * Copyright (C) 2004-2020 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,11 +30,6 @@
  * SUCH DAMAGE.
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: mjl_list.c,v 1.74 2016/01/18 04:46:07 mjl Exp $";
-#endif
 
 #include <stdlib.h>
 #include <assert.h>
@@ -279,22 +278,16 @@ slist_t *slist_dup_dm(slist_t *oldlist,const slist_foreach_t func,void *param,
 {
   slist_t      *list;
   slist_node_t *oldnode, *node;
-  size_t        len = sizeof(slist_t);
 
   /* first, allocate a replacement slist_t structure */
 #ifndef DMALLOC
-  list = malloc(len);
+  list = slist_alloc();
 #else
-  list = dmalloc_malloc(file, line, len, DMALLOC_FUNC_MALLOC, 0, 0);
+  list = slist_alloc_dm(file, line);
 #endif
 
   if(list == NULL)
     return NULL;
-  list->head = NULL;
-  list->tail = NULL;
-  list->length = 0;
-  list->lock = 0;
-  list->onremove = NULL;
 
   if(oldlist->head != NULL)
     {
@@ -406,6 +399,13 @@ static void slist_flush(slist_t *list, slist_free_t free_func)
 void slist_empty(slist_t *list)
 {
   slist_flush(list, NULL);
+  slist_init(list);
+  return;
+}
+
+void slist_empty_cb(slist_t *list, slist_free_t func)
+{
+  slist_flush(list, func);
   slist_init(list);
   return;
 }
@@ -848,6 +848,79 @@ static dlist_node_t *dlist_node(void *i, dlist_node_t *p, dlist_node_t *n,
   return node;
 }
 
+/*
+ * dlist_dup
+ *
+ * make a copy of the list that points to the same items.
+ * if the foreach function is not null, call that on each item too.
+ */
+#ifndef DMALLOC
+dlist_t *dlist_dup(dlist_t *oldlist, const dlist_foreach_t func, void *param)
+#else
+dlist_t *dlist_dup_dm(dlist_t *oldlist,const dlist_foreach_t func,void *param,
+		      const char *file, const int line)
+#endif
+{
+  dlist_t      *list;
+  dlist_node_t *oldnode, *node;
+
+  /* first, allocate a replacement slist_t structure */
+#ifndef DMALLOC
+  list = dlist_alloc();
+#else
+  list = dlist_alloc_dm(file, line);
+#endif
+
+  if(list == NULL)
+    return NULL;
+
+  if(oldlist->head != NULL)
+    {
+#ifndef DMALLOC
+      if((node = dlist_node(oldlist->head->item, NULL, NULL)) == NULL)
+#else
+      if((node = dlist_node(oldlist->head->item, NULL, NULL, file, line)) == NULL)
+#endif
+	{
+	  goto err;
+	}
+
+      if(func != NULL) func(oldlist->head->item, param);
+
+      list->length = oldlist->length;
+      list->head = node;
+      oldnode = oldlist->head->next;
+    }
+  else return list;
+
+  while(oldnode != NULL)
+    {
+#ifndef DMALLOC
+      if((node->next = dlist_node(oldnode->item, node, NULL)) == NULL)
+#else
+      if((node->next = dlist_node(oldnode->item, node, NULL, file, line)) == NULL)
+#endif
+	{
+	  goto err;
+	}
+
+      if(func != NULL) func(oldnode->item, param);
+
+      oldnode = oldnode->next;
+      node->next->prev = node;
+      node = node->next;
+    }
+
+  list->tail = node;
+  dlist_assert(list);
+
+  return list;
+
+ err:
+  dlist_free(list);
+  return NULL;
+}
+
 #ifndef DMALLOC
 dlist_node_t *dlist_node_alloc(void *item)
 {
@@ -886,6 +959,13 @@ static void dlist_flush(dlist_t *list, dlist_free_t free_func)
 void dlist_empty(dlist_t *list)
 {
   dlist_flush(list, NULL);
+  dlist_init(list);
+  return;
+}
+
+void dlist_empty_cb(dlist_t *list, dlist_free_t func)
+{
+  dlist_flush(list, func);
   dlist_init(list);
   return;
 }
@@ -948,23 +1028,27 @@ void dlist_concat(dlist_t *first, dlist_t *second)
 
 void dlist_node_head_push(dlist_t *list, dlist_node_t *node)
 {
+  dlist_onremove_t onremove = NULL;
+
   assert(list != NULL);
   assert(list->lock == 0);
   assert(node != NULL);
   dlist_assert(list);
 
+  if(node->list != NULL)
+    onremove = node->list->onremove;
+
   /* eject the node from whatever list it is currently on */
   dlist_node_eject(node->list, node);
 
+  if(onremove != NULL)
+    onremove(node->item);
+
   /* if we don't have a head node, we don't have a tail node set either */
   if(list->head == NULL)
-    {
-      list->tail = node;
-    }
+    list->tail = node;
   else
-    {
-      list->head->prev = node;
-    }
+    list->head->prev = node;
 
   /* the current head node will be second on the list */
   node->next = list->head;
@@ -980,23 +1064,27 @@ void dlist_node_head_push(dlist_t *list, dlist_node_t *node)
 
 void dlist_node_tail_push(dlist_t *list, dlist_node_t *node)
 {
+  dlist_onremove_t onremove = NULL;
+
   assert(list != NULL);
   assert(list->lock == 0);
   assert(node != NULL);
   dlist_assert(list);
 
+  if(node->list != NULL)
+    onremove = node->list->onremove;
+
   /* eject the node from whatever list it is currently on */
   dlist_node_eject(node->list, node);
 
+  if(onremove != NULL)
+    onremove(node->item);
+
   /* if we don't have a tail node, we don't have a head node set either */
   if(list->tail == NULL)
-    {
-      list->head = node;
-    }
+    list->head = node;
   else
-    {
-      list->tail->next = node;
-    }
+    list->tail->next = node;
 
   /* the current tail node will be second to last on the list */
   node->prev = list->tail;
@@ -1021,15 +1109,31 @@ dlist_node_t *dlist_head_push_dm(dlist_t *list, void *item,
 
   assert(list != NULL);
   assert(list->lock == 0);
+  dlist_assert(list);
 
 #ifndef DMALLOC
-  if((node = dlist_node(item, NULL, NULL)) != NULL)
+  node = dlist_node(item, NULL, NULL);
 #else
-  if((node = dlist_node(item, NULL, NULL, file, line)) != NULL)
+  node = dlist_node(item, NULL, NULL, file, line);
 #endif
-    {
-      dlist_node_head_push(list, node);
-    }
+
+  if(node == NULL)
+    return NULL;
+
+  /* if we don't have a head node, we don't have a tail node set either */
+  if(list->head == NULL)
+    list->tail = node;
+  else
+    list->head->prev = node;
+
+  /* the current head node will be second on the list */
+  node->next = list->head;
+  node->list = list;
+
+  list->head = node;
+  list->length++;
+
+  dlist_assert(list);
 
   return node;
 }
@@ -1045,15 +1149,31 @@ dlist_node_t *dlist_tail_push_dm(dlist_t *list, void *item,
 
   assert(list != NULL);
   assert(list->lock == 0);
+  dlist_assert(list);
 
 #ifndef DMALLOC
-  if((node = dlist_node(item, NULL, NULL)) != NULL)
+  node = dlist_node(item, NULL, NULL);
 #else
-  if((node = dlist_node(item, NULL, NULL, file, line)) != NULL)
+  node = dlist_node(item, NULL, NULL, file, line);
 #endif
-    {
-      dlist_node_tail_push(list, node);
-    }
+
+  if(node == NULL)
+    return NULL;
+
+  /* if we don't have a tail node, we don't have a head node set either */
+  if(list->tail == NULL)
+    list->head = node;
+  else
+    list->tail->next = node;
+
+  /* the current tail node will be second to last on the list */
+  node->prev = list->tail;
+  node->list = list;
+
+  list->tail = node;
+  list->length++;
+
+  dlist_assert(list);
 
   return node;
 }
@@ -1248,6 +1368,12 @@ dlist_node_t *dlist_head_node(const dlist_t *list)
 {
   assert(list != NULL);
   return list->head;
+}
+
+dlist_node_t *dlist_tail_node(const dlist_t *list)
+{
+  assert(list != NULL);
+  return list->tail;
 }
 
 void *dlist_tail_item(const dlist_t *list)

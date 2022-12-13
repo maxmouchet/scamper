@@ -1,13 +1,14 @@
 /*
  * scamper_tracelb.h
  *
- * $Id: scamper_tracelb.h,v 1.57 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_tracelb.h,v 1.61 2020/04/02 06:45:02 mjl Exp $
  *
  * Copyright (C) 2008-2009 The University of Waikato
+ * Copyright (C) 2018-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * Load-balancer traceroute technique authored by
- * Ben Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
+ * Brice Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
  *  Paths in the Internet", in Proc. Internet Measurement Conference 2007.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -38,6 +39,7 @@ typedef struct scamper_tracelb_link scamper_tracelb_link_t;
 typedef struct scamper_tracelb_probe scamper_tracelb_probe_t;
 typedef struct scamper_tracelb_reply scamper_tracelb_reply_t;
 typedef struct scamper_tracelb_probeset scamper_tracelb_probeset_t;
+typedef struct scamper_tracelb_probeset_summary scamper_tracelb_probeset_summary_t;
 
 /*
  * these values give the 'type' member of a scamper_tracelb_t structure
@@ -48,6 +50,12 @@ typedef struct scamper_tracelb_probeset scamper_tracelb_probeset_t;
 #define SCAMPER_TRACELB_TYPE_UDP_SPORT      0x03 /* vary udp-sport */
 #define SCAMPER_TRACELB_TYPE_TCP_SPORT      0x04 /* vary tcp-sport */
 #define SCAMPER_TRACELB_TYPE_TCP_ACK_SPORT  0x05 /* tcp-ack, vary sport */
+
+/*
+ * these values give the 'flags' member of a scamper_tracelb_t structure
+ * some meaning.
+ */
+#define SCAMPER_TRACELB_FLAG_PTR            0x01 /* do ptr lookups */
 
 /*
  * these values give the 'flags' member of a scamper_tracelb_node_t
@@ -164,6 +172,13 @@ struct scamper_tracelb_probeset
   uint16_t                      probec; /* number of probes sent */
 };
 
+struct scamper_tracelb_probeset_summary
+{
+  scamper_addr_t              **addrs;
+  int                           addrc;
+  int                           nullc;
+};
+
 /*
  * scamper_tracelb_node_t
  *
@@ -172,6 +187,7 @@ struct scamper_tracelb_probeset
 struct scamper_tracelb_node
 {
   scamper_addr_t               *addr;  /* address of the node */
+  char                         *name;  /* PTR for the addr */
   uint8_t                       flags; /* associated flags */
   uint8_t                       q_ttl; /* quoted ttl */
   scamper_tracelb_link_t      **links; /* links */
@@ -207,6 +223,7 @@ typedef struct scamper_tracelb
   /* source and destination addresses of the load balancer trace */
   scamper_addr_t            *src;
   scamper_addr_t            *dst;
+  scamper_addr_t            *rtr;
 
   /* when the load balancer trace commenced */
   struct timeval             start;
@@ -223,6 +240,7 @@ typedef struct scamper_tracelb
   uint8_t                    confidence;   /* confidence level to attain */
   uint8_t                    tos;          /* type-of-service byte to use */
   uint8_t                    gaplimit;     /* max consecutive unresp. hops */
+  uint8_t                    flags;        /* flags */
   uint32_t                   probec_max;   /* max number of probes to send */
 
   /*
@@ -336,6 +354,15 @@ int scamper_tracelb_probeset_add(scamper_tracelb_probeset_t *,
 				 scamper_tracelb_probe_t *);
 int scamper_tracelb_probeset_probes_alloc(scamper_tracelb_probeset_t *,
 					  uint16_t);
+
+/*
+ * routines to summarise a set of probes beyond a specific node
+ *
+ */
+scamper_tracelb_probeset_summary_t *
+  scamper_tracelb_probeset_summary_alloc(scamper_tracelb_probeset_t *);
+void
+  scamper_tracelb_probeset_summary_free(scamper_tracelb_probeset_summary_t *);
 
 /*
  * these functions allocate arrays of appropriate size, all elements

@@ -1,7 +1,7 @@
 /*
  * scamper_file.c
  *
- * $Id: scamper_file.h,v 1.30 2012/03/21 21:23:28 mjl Exp $
+ * $Id: scamper_file.h,v 1.32 2019/07/28 09:24:53 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -52,10 +52,11 @@ typedef int (*scamper_file_readfunc_t)(void *param,
 #define SCAMPER_FILE_OBJ_TBIT          0x0b
 #define SCAMPER_FILE_OBJ_STING         0x0c
 #define SCAMPER_FILE_OBJ_SNIFF         0x0d
+#define SCAMPER_FILE_OBJ_HOST          0x0e
 
 scamper_file_t *scamper_file_open(char *fn, char mode, char *type);
 scamper_file_t *scamper_file_openfd(int fd, char *fn, char mode, char *type);
-scamper_file_t *scamper_file_opennull(char mode);
+scamper_file_t *scamper_file_opennull(char mode, char *format);
 void scamper_file_close(scamper_file_t *sf);
 void scamper_file_free(scamper_file_t *sf);
 
@@ -105,6 +106,10 @@ int scamper_file_write_tbit(scamper_file_t *sf,
 struct scamper_sniff;
 int scamper_file_write_sniff(scamper_file_t *sf,
 			     const struct scamper_sniff *sniff);
+
+struct scamper_host;
+int scamper_file_write_host(scamper_file_t *sf,
+			    const struct scamper_host *host);
 
 char *scamper_file_type_tostr(scamper_file_t *sf, char *buf, size_t len);
 char *scamper_file_getfilename(scamper_file_t *sf);

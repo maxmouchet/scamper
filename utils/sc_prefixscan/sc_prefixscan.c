@@ -2,9 +2,10 @@
  * sc_prefixscan : scamper driver to collect evidence of pt2pt links
  *                 using the prefixscan method
  *
- * $Id: sc_prefixscan.c,v 1.6 2016/08/08 08:34:46 mjl Exp $
+ * $Id: sc_prefixscan.c,v 1.10 2021/08/22 08:11:53 mjl Exp $
  *
  * Copyright (C) 2011, 2016 The University of Waikato
+ * Copyright (C) 2019       Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,10 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_prefixscan.c,v 1.6 2016/08/08 08:34:46 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -668,14 +665,20 @@ static void sc_prefixscan_free(sc_prefixscan_t *pfs)
 
 static int infile_line(char *str, void *param)
 {
+  static int line = 0;
   sc_scantest_t *ps = NULL;
   sc_test_t *test = NULL;
   char *ptr;
 
+  line++;
+
   if(str[0] == '#' || str[0] == '\0')
     return 0;
-  if((ptr = string_nextword(str)) == NULL)
-    return -1;
+  if((ptr = string_nextword(str)) == NULL || string_nextword(ptr) != NULL)
+    {
+      fprintf(stderr, "malformed line %d: expected two IP addresses\n", line);
+      return -1;
+    }
 
   if((ps = malloc_zero(sizeof(sc_scantest_t))) == NULL ||
      (ps->a = scamper_addr_resolve(AF_UNSPEC, str)) == NULL ||
@@ -688,6 +691,7 @@ static int infile_line(char *str, void *param)
   return 0;
 
  err:
+  fprintf(stderr, "malformed line %d: expected two IP addresses\n", line);
   if(ps != NULL) sc_scantest_free(ps);
   if(test != NULL) sc_test_free(test);
   return -1;
@@ -1232,6 +1236,12 @@ static int do_decoderead(void)
 
   if(data == NULL)
     {
+      if(scamper_file_geteof(decode_in) != 0)
+	{
+	  scamper_file_close(decode_in);
+	  decode_in = NULL;
+	  decode_in_fd = -1;
+	}
       return 0;
     }
 
@@ -1422,6 +1432,12 @@ static int pf_data(void)
 	  if(wfdsp != NULL && FD_ISSET(decode_out_fd, wfdsp) &&
 	     scamper_writebuf_write(decode_out_fd, decode_wb) != 0)
 	    return -1;
+
+	  if(scamper_fd < 0 && scamper_writebuf_len(decode_wb) == 0)
+	    {
+	      close(decode_out_fd);
+	      decode_out_fd = -1;
+	    }
 	}
     }
 
@@ -1440,7 +1456,7 @@ static int pf_read(void)
   uint16_t type;
   void *data;
 
-  if(strcmp(datafile, "-") == 0)
+  if(string_isdash(datafile) != 0)
     in = scamper_file_openfd(STDIN_FILENO, "-", 'r', "warts");
   else
     in = scamper_file_open(datafile, 'r', NULL);

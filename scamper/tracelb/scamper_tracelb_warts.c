@@ -2,10 +2,10 @@
  * scamper_tracelb_warts.c
  *
  * Copyright (C) 2008-2011 The University of Waikato
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2021 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_tracelb_warts.c,v 1.6.2.1 2017/06/22 08:40:56 mjl Exp $
+ * $Id: scamper_tracelb_warts.c,v 1.14.4.1 2022/06/14 07:16:34 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_tracelb_warts.c,v 1.6.2.1 2017/06/22 08:40:56 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -68,6 +63,8 @@ static const char rcsid[] =
 #define WARTS_TRACELB_ADDR_SRC     21       /* src address */
 #define WARTS_TRACELB_ADDR_DST     22       /* dst address */
 #define WARTS_TRACELB_USERID       23       /* user id */
+#define WARTS_TRACELB_FLAGS        24       /* flags */
+#define WARTS_TRACELB_ADDR_RTR     25       /* rtr address */
 
 static const warts_var_t tracelb_vars[] =
 {
@@ -94,6 +91,8 @@ static const warts_var_t tracelb_vars[] =
   {WARTS_TRACELB_ADDR_SRC,    -1, -1},
   {WARTS_TRACELB_ADDR_DST,    -1, -1},
   {WARTS_TRACELB_USERID,       4, -1},
+  {WARTS_TRACELB_FLAGS,        1, -1},
+  {WARTS_TRACELB_ADDR_RTR,    -1, -1},
 };
 #define tracelb_vars_mfb WARTS_VAR_MFB(tracelb_vars)
 
@@ -102,6 +101,7 @@ static const warts_var_t tracelb_vars[] =
 #define WARTS_TRACELB_NODE_LINKC     3
 #define WARTS_TRACELB_NODE_QTTL      4
 #define WARTS_TRACELB_NODE_ADDR      5
+#define WARTS_TRACELB_NODE_NAME      6
 
 static const warts_var_t tracelb_node_vars[] =
 {
@@ -110,6 +110,7 @@ static const warts_var_t tracelb_node_vars[] =
   {WARTS_TRACELB_NODE_LINKC,    2, -1},
   {WARTS_TRACELB_NODE_QTTL,     1, -1},
   {WARTS_TRACELB_NODE_ADDR,    -1, -1},
+  {WARTS_TRACELB_NODE_NAME,    -1, -1},
 };
 #define tracelb_node_vars_mfb WARTS_VAR_MFB(tracelb_node_vars)
 
@@ -225,8 +226,9 @@ static void warts_tracelb_params(const scamper_tracelb_t *trace,
 				 warts_addrtable_t *table, uint8_t *flags,
 				 uint16_t *flags_len, uint16_t *params_len)
 {
-  int i, max_id = 0;
   const warts_var_t *var;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(flags, 0, tracelb_vars_mfb);
@@ -238,15 +240,12 @@ static void warts_tracelb_params(const scamper_tracelb_t *trace,
       var = &tracelb_vars[i];
 
       if(var->id == WARTS_TRACELB_ADDR_SRC_GID ||
-	 var->id == WARTS_TRACELB_ADDR_DST_GID)
+	 var->id == WARTS_TRACELB_ADDR_DST_GID ||
+	 (var->id == WARTS_TRACELB_USERID && trace->userid == 0) ||
+	 (var->id == WARTS_TRACELB_FLAGS && trace->flags == 0) ||
+	 (var->id == WARTS_TRACELB_ADDR_RTR && trace->rtr == NULL))
 	{
 	  continue;
-	}
-
-      if(var->id == WARTS_TRACELB_USERID)
-	{
-	  if(trace->userid == 0)
-	    continue;
 	}
 
       flag_set(flags, var->id, &max_id);
@@ -259,6 +258,11 @@ static void warts_tracelb_params(const scamper_tracelb_t *trace,
       else if(var->id == WARTS_TRACELB_ADDR_DST)
 	{
 	  *params_len += warts_addr_size(table, trace->dst);
+	  continue;
+	}
+      else if(var->id == WARTS_TRACELB_ADDR_RTR)
+	{
+	  *params_len += warts_addr_size_static(trace->rtr);
 	  continue;
 	}
 
@@ -299,13 +303,15 @@ static int warts_tracelb_params_read(scamper_tracelb_t *trace,
     {&trace->src,          (wpr_t)extract_addr,      table},
     {&trace->dst,          (wpr_t)extract_addr,      table},
     {&trace->userid,       (wpr_t)extract_uint32,    NULL},
+    {&trace->flags,        (wpr_t)extract_byte,      NULL},
+    {&trace->rtr,          (wpr_t)extract_addr_static, NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
   int rc;
 
   if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
     return rc;
-  if(trace->src == NULL || trace->dst == NULL)
+  if(trace->dst == NULL)
     return -1;
   return 0;
 }
@@ -344,6 +350,8 @@ static int warts_tracelb_params_write(const scamper_tracelb_t *trace,
     {trace->src,           (wpw_t)insert_addr,    table},
     {trace->dst,           (wpw_t)insert_addr,    table},
     {&trace->userid,       (wpw_t)insert_uint32,  NULL},
+    {&trace->flags,        (wpw_t)insert_byte,    NULL},
+    {trace->rtr,           (wpw_t)insert_addr_static, NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);
 
@@ -361,7 +369,8 @@ static int warts_tracelb_node_state(const scamper_file_t *sf,
 				    warts_tracelb_node_t *state, uint32_t *len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tracelb_node_vars_mfb);
@@ -382,8 +391,7 @@ static int warts_tracelb_node_state(const scamper_file_t *sf,
 	  if(SCAMPER_TRACELB_NODE_QTTL(node) == 0)
 	    continue;
 	}
-
-      if(var->id == WARTS_TRACELB_NODE_ADDR)
+      else if(var->id == WARTS_TRACELB_NODE_ADDR)
 	{
 	  if(node->addr != NULL)
 	    {
@@ -392,10 +400,22 @@ static int warts_tracelb_node_state(const scamper_file_t *sf,
 	    }
 	  continue;
 	}
-
-      assert(var->size >= 0);
+      else if(var->id == WARTS_TRACELB_NODE_NAME)
+	{
+	  if(node->name == NULL)
+	    continue;
+	}
 
       flag_set(state->flags, var->id, &max_id);
+
+      if(var->size < 0)
+	{
+	  if(var->id == WARTS_TRACELB_NODE_NAME)
+	    state->params_len += warts_str_size(node->name);
+	  continue;
+	}
+
+      assert(var->size >= 0);
       state->params_len += var->size;
     }
 
@@ -418,14 +438,11 @@ static int warts_tracelb_node_read(scamper_tracelb_node_t *node,
     {&node->linkc, (wpr_t)extract_uint16,    NULL},
     {&node->q_ttl, (wpr_t)extract_byte,      NULL},
     {&node->addr,  (wpr_t)extract_addr,      table},
+    {&node->name,  (wpr_t)extract_string,    NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
-
   if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0)
     return -1;
-  if(node->addr == NULL)
-    return -1;
-
   return 0;
 }
 
@@ -440,6 +457,7 @@ static void warts_tracelb_node_write(const scamper_tracelb_node_t *node,
     {&node->linkc, (wpw_t)insert_uint16, NULL},
     {&node->q_ttl, (wpw_t)insert_byte,   NULL},
     {node->addr,   (wpw_t)insert_addr,   table},
+    {node->name,   (wpw_t)insert_string, NULL},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_writer_t);
   warts_params_write(buf, off, len, state->flags, state->flags_len,
@@ -494,7 +512,8 @@ static int warts_tracelb_reply_state(const scamper_file_t *sf,
 {
   const warts_var_t *var;
   scamper_icmpext_t *ie;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tracelb_reply_vars_mfb);
@@ -579,7 +598,13 @@ static int warts_tracelb_reply_read(scamper_tracelb_reply_t *reply,
     {&reply->reply_from,       (wpr_t)extract_addr,                   table},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
-  return warts_params_read(buf, off, len, handlers, handler_cnt);
+  int rc;
+
+  if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
+    return rc;
+  if(reply->reply_from == NULL)
+    return -1;
+  return 0;
 }
 
 static void warts_tracelb_reply_write(const scamper_tracelb_reply_t *reply,
@@ -623,8 +648,8 @@ static int warts_tracelb_probe_state(const scamper_file_t *sf,
 				     uint32_t *len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
-  size_t size;
+  int max_id = 0;
+  size_t size, i;
 
   memset(state->flags, 0, tracelb_probe_vars_mfb);
   state->params_len = 0;
@@ -748,8 +773,8 @@ static int warts_tracelb_probeset_state(const scamper_file_t *sf,
 					uint32_t *len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
-  size_t size;
+  int max_id = 0;
+  size_t i, size;
 
   state->probec = set->probec;
 
@@ -865,7 +890,7 @@ static int warts_tracelb_link_state(const scamper_file_t *sf,
 				    warts_addrtable_t *table, uint32_t *len)
 {
   const warts_var_t *var;
-  size_t size;
+  size_t size, k;
   int i, j, max_id = 0;
   uint8_t s;
 
@@ -897,9 +922,9 @@ static int warts_tracelb_link_state(const scamper_file_t *sf,
   memset(state->flags, 0, tracelb_link_vars_mfb);
   state->params_len = 0;
 
-  for(i=0; i<sizeof(tracelb_link_vars)/sizeof(warts_var_t); i++)
+  for(k=0; k<sizeof(tracelb_link_vars)/sizeof(warts_var_t); k++)
     {
-      var = &tracelb_link_vars[i];
+      var = &tracelb_link_vars[k];
 
       /* if the link does not include a `to' node, skip it */
       if(var->id == WARTS_TRACELB_LINK_TO && link->to == NULL)
@@ -961,9 +986,12 @@ static int warts_tracelb_link_read(scamper_tracelb_t *trace,
   link->from = trace->nodes[from];
 
   if(flag_isset(&buf[o], WARTS_TRACELB_LINK_TO) != 0)
-    link->to = trace->nodes[to];
-  else
-    link->to = NULL;
+    {
+      if(to >= trace->nodec)
+	return -1;
+      link->to = trace->nodes[to];
+    }
+  else link->to = NULL;
 
   if(link->hopc > 0)
     {

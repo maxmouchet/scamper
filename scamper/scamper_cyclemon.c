@@ -2,7 +2,7 @@
  * scamper_cyclemon: monitor active use of cycle structures so we know when
  *                   to write a cycle-stop record.
  *
- * $Id: scamper_cyclemon.c,v 1.19 2010/09/11 22:10:41 mjl Exp $
+ * $Id: scamper_cyclemon.c,v 1.20 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2006-2010 The University of Waikato
  * Author: Matthew Luckie
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_cyclemon.c,v 1.19 2010/09/11 22:10:41 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

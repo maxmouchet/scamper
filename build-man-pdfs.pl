@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# $Id: build-man-pdfs.pl,v 1.8.2.2 2018/05/23 08:25:27 mjl Exp $
+# $Id: build-man-pdfs.pl,v 1.20 2020/06/23 23:58:20 mjl Exp $
 
 use strict;
 use warnings;
@@ -17,19 +17,29 @@ my @mans = ("scamper/scamper.1",
 	    "utils/sc_analysis_dump/sc_analysis_dump.1",
 	    "utils/sc_attach/sc_attach.1",
 	    "utils/sc_bdrmap/sc_bdrmap.1",
+	    "utils/sc_erosprober/sc_erosprober.1",
 	    "utils/sc_filterpolicy/sc_filterpolicy.1",
+	    "utils/sc_hoiho/sc_hoiho.1",
+	    "utils/sc_ipiddump/sc_ipiddump.1",
+	    "utils/sc_pinger/sc_pinger.1",
 	    "utils/sc_prefixscan/sc_prefixscan.1",
 	    "utils/sc_remoted/sc_remoted.1",
 	    "utils/sc_radargun/sc_radargun.1",
 	    "utils/sc_speedtrap/sc_speedtrap.1",
+	    "utils/sc_ttlexp/sc_ttlexp.1",
 	    "utils/sc_tbitblind/sc_tbitblind.1",
+	    "utils/sc_tbitpmtud/sc_tbitpmtud.1",
 	    "utils/sc_tracediff/sc_tracediff.1",
-      "utils/sc_tnt/sc_tnt.1",
+        "utils/sc_tnt/sc_tnt.1",
+	    "utils/sc_uptime/sc_uptime.1",
+	    "utils/sc_warts2csv/sc_warts2csv.1",
 	    "utils/sc_warts2json/sc_warts2json.1",
 	    "utils/sc_warts2pcap/sc_warts2pcap.1",
 	    "utils/sc_warts2text/sc_warts2text.1",
 	    "utils/sc_wartscat/sc_wartscat.1",
 	    "utils/sc_wartsdump/sc_wartsdump.1",
+	    "utils/sc_wartsfilter/sc_wartsfilter.1",
+	    "utils/sc_wartsfix/sc_wartsfix.1",
 	    "scamper/libscamperfile.3",
 	    "scamper/warts.5",
     );

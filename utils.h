@@ -1,12 +1,12 @@
 /*
  * utils.h
  *
- * $Id: utils.h,v 1.114 2016/08/27 07:11:36 mjl Exp $
+ * $Id: utils.h,v 1.124 2021/11/05 05:49:26 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
- * Copyright (C) 2015      Matthew Luckie
+ * Copyright (C) 2015-2021 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -48,7 +48,7 @@ void timeval_add_s(struct timeval *out, const struct timeval *in, int s);
 void timeval_sub_us(struct timeval *out, const struct timeval *in, int us);
 void timeval_cpy(struct timeval *dst, const struct timeval *src);
 int timeval_inrange_us(const struct timeval *a,const struct timeval *b,int c);
-char *timeval_tostr(const struct timeval *rtt, char *str, size_t len);
+char *timeval_tostr_us(const struct timeval *rtt, char *str, size_t len);
 
 void gettimeofday_wrap(struct timeval *tv);
 
@@ -136,15 +136,29 @@ char *string_nextword(char *str);
 char *string_nullterm(char *str, const char *delim, char **next);
 char *string_nullterm_char(char *str, const char delim, char **next);
 int   string_isprint(const char *str, const size_t len);
+int   string_isalpha(const char *str);
 int   string_isnumber(const char *str);
+int   string_isdigit(const char *str);
+int   string_isalnum(const char *str);
 int   string_isfloat(const char *str);
+char *string_toupper(char *buf, size_t len, const char *in);
 int   string_tolong(const char *str, long *l);
+int   string_tollong(const char *str, long long *ll);
 char *string_lastof(char *str, const char *delim);
 char *string_lastof_char(char *str, const char delim);
 char *string_firstof_char(char *str, const char delim);
 char *string_concat(char *str, size_t len, size_t *off, const char *fs, ...);
 const char *string_findlc(const char *str, const char *find);
 int   string_addrport(const char *in, char **addr, int *port);
+
+#ifndef NDEBUG
+int   string_isdash(const char *str);
+#else
+#define string_isdash(str)((str)[0] == '-' && (str)[1] == '\0') 
+#endif
+
+/* escape a string for json output */
+char *json_esc(const char *in, char *out, size_t len);
 
 /* check the character to see if it is possibly hex */
 int ishex(char c);
@@ -174,7 +188,7 @@ int mkdir_wrap(const char *path);
  * Functions for dealing with sysctls
  */
 
-#if !defined(__sun__) && !defined (_WIN32)
+#if defined(HAVE_SYSCTL) && !defined(__linux__)
 int sysctl_wrap(int *mib, u_int len, void **buf, size_t *size);
 #endif
 
@@ -200,6 +214,9 @@ int shuffle32(uint32_t *array, int len);
 /* count the number of bits set */
 int countbits32(uint32_t v);
 
+/* return the minimum integer in the array */
+int min_array(int *array, int len);
+
 /*
  * Functions for uuencode and uudecode.
  */
@@ -216,5 +233,6 @@ uint32_t byteswap32(const uint32_t word);
 
 /* process a text file, line by line */
 int file_lines(const char *filename, int (*func)(char *, void *), void *param);
+int fd_lines(int fd, int (*func)(char *, void *), void *param);
 
 #endif /* __UTILS_H */

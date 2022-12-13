@@ -3,10 +3,10 @@
  *
  * Copyright (C) 2010-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2021 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_sting_warts.c,v 1.9 2016/12/02 09:13:42 mjl Exp $
+ * $Id: scamper_sting_warts.c,v 1.12 2021/08/27 10:06:55 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_sting_warts.c,v 1.9 2016/12/02 09:13:42 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -118,7 +113,7 @@ static void warts_sting_pkt_params(const scamper_sting_pkt_t *pkt,
 {
   const warts_var_t *var;
   int max_id = 0;
-  uint16_t i;
+  size_t i;
 
   memset(state->flags, 0, sting_pkt_vars_mfb);
   state->params_len = 0;
@@ -159,7 +154,7 @@ static scamper_sting_pkt_t *warts_sting_pkt_read(warts_state_t *state,
   scamper_sting_pkt_t *pkt = NULL;
   uint8_t flags, *data = NULL;
   struct timeval tv;
-  uint16_t plen;
+  uint16_t plen = 0;
   warts_param_reader_t handlers[] = {
     {&flags, (wpr_t)extract_byte,         NULL},
     {&tv,    (wpr_t)extract_timeval,      NULL},
@@ -169,6 +164,7 @@ static scamper_sting_pkt_t *warts_sting_pkt_read(warts_state_t *state,
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
 
   if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0 ||
+     data == NULL || plen == 0 ||
      (pkt = scamper_sting_pkt_alloc(flags, data, plen, &tv)) == NULL)
     goto err;
 
@@ -202,7 +198,8 @@ static void warts_sting_params(const scamper_sting_t *sting,
 			       uint16_t *flags_len, uint16_t *params_len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* Unset all flags */
   memset(flags, 0, sting_vars_mfb);

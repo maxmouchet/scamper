@@ -1,12 +1,12 @@
 /*
  * sc_remoted
  *
- * $Id: sc_remoted.c,v 1.50 2016/08/09 07:05:45 mjl Exp $
+ * $Id: sc_remoted.c,v 1.90.2.4 2022/08/25 19:33:38 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
  *
- * Copyright (C) 2014-2016 Matthew Luckie
+ * Copyright (C) 2014-2022 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,28 +34,37 @@
  *
  * Header:
  * ------
- * uint32_t channel
- * uint16_t msglen
+ * uint32_t  sequence
+ * uint32_t  channel
+ * uint16_t  msglen
  *
  * The control header is included in every message sent between the
  * scamper instance and the remote controller.
+ * The sequence number uniquely identifies the message among a stream
+ * of messages.
  * The channel number identifies the stream; channel #0 is reserved for
  * control messages.
- * The msglen value defines the size of the message following the header
+ * The msglen value defines the size of the message following the header.
  *
  * Control Messages:
  * ----------------
- * uint8_t type
+ * uint8_t   type
  *
  * A control message begins with a mandatory type number.  The following
  * control message types are defined, with arrows defining who may send
  * which message type.
  *
- * 0 - Master      (remoted <- scamper)
- * 1 - New Channel (remoted -> scamper)
- * 2 - Channel FIN (remoted <> scamper)
+ * 0 - Master        (remoted <-- scamper) -- CONTROL_MASTER_NEW
+ * 1 - Master ID     (remoted --> scamper) -- CONTROL_MASTER_ID
+ * 2 - New Channel   (remoted --> scamper) -- CONTROL_CHANNEL_NEW
+ * 3 - Channel FIN   (remoted <-> scamper) -- CONTROL_CHANNEL_FIN
+ * 4 - Keepalive     (remoted <-> scamper) -- CONTROL_KEEPALIVE
+ * 5 - Ack           (remoted <-> scamper) -- CONTROL_ACK
+ * 6 - Master Resume (remoted <-- scamper) -- CONTROL_MASTER_RES
+ * 7 - Master Reject (remoted --> scamper) -- CONTROL_MASTER_REJ
+ * 8 - Master OK     (remoted --> scamper) -- CONTROL_MASTER_OK
  *
- * Control Message - Master New:
+ * Control Message - Master New (CONTROL_MASTER_NEW)
  * ----------------------------
  *
  * Whenever a scamper instance establishes a TCP connection with a remote
@@ -76,7 +85,7 @@
  * option.
  * Both magic_len and monitorname_len include the terminating null byte.
  *
- * Control Message - Master ID:
+ * Control Message - Master ID (CONTROL_MASTER_ID)
  * ---------------------------
  *
  * After the "Master New" message has been received by the remote
@@ -84,10 +93,10 @@
  * instance that it can use as a list identifier in warts.  The message
  * is formatted as follows:
  *
- * uint8_t  id_len;
- * char    *id
+ * uint8_t   id_len;
+ * char     *id
  *
- * Control Message - New Channel:
+ * Control Message - New Channel (CONTROL_CHANNEL_NEW)
  * -----------------------------
  *
  * Whenever a remote controller has a new connection on a unix domain
@@ -95,24 +104,67 @@
  * number to use for the connection.  The message is formatted as
  * follows:
  *
- * uint32_t channel
+ * uint32_t  channel
  *
- * Control Message - Client FIN:
- * ----------------------------
+ * Control Message - Channel FIN (CONTROL_CHANNEL_FIN)
+ * -----------------------------
  *
  * Whenever a client connection has no more to send, it sends a FIN
- * type.  the FIN message must be sent by both the remote controller
- * and the scamper instance for a channel to be closed.  The message
- * is formatted as follows:
+ * type to close the channel. the FIN message must be sent by both the
+ * remote controller and the scamper instance for a channel to be
+ * closed.  The message is formatted as follows:
  *
- * uint32_t channel
+ * uint32_t  channel
+ *
+ * Control Message - Keepalive (CONTROL_KEEPALIVE)
+ * ---------------------------
+ *
+ * Both scamper and remoted periodically send keepalive messages to
+ * each other when their keepalive timers expire.  Keepalive messages
+ * have no payload.
+ *
+ * Control Message - Acknowledgement (CONTROL_ACK)
+ * ---------------------------------
+ *
+ * Both scamper and remoted acknowledge messages received by either
+ * end of the connnection, provided the sender expected the message
+ * to be acknowledged.
+ *
+ * uint32_t  sequence
+ *
+ * Control Message - Resume (CONTROL_MASTER_RES)
+ * ------------------------
+ *
+ * Whenever a connection between scamper and remoted is interrupted,
+ * scamper can resume by sending a resumption message with the same
+ * magic value scamper supplied initially.  the resume message also
+ * includes the next sequence number the scamper expects from remoted,
+ * the left edge of the 
+ *
+ * uint8_t   magic_len
+ * uint8_t  *magic
+ * uint32_t  rcv_nxt
+ * uint32_t  snd_una
+ * uint32_t  snd_nxt
+ *
+ * Control Message - Reject (CONTROL_MASTER_REJ)
+ * ------------------------
+ *
+ * If a scamper connection is rejected because the magic value
+ * supplied by scamper is invalid, remoted sends scamper a reject
+ * message.
+ *
+ * Control Message - OK (CONTROL_MASTER_OK)
+ * --------------------
+ *
+ * If a scamper resumption request is acceptable, then the remote
+ * controller replies back with the next expected sequence number from
+ * scamper.  this number will be in the range of snd_una and snd_nxt
+ * sent by the scamper instance in the resume message.
+ *
+ * uint32_t  rcv_nxt
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_remoted.c,v 1.50 2016/08/09 07:05:45 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -124,6 +176,8 @@ static const char rcsid[] =
 #include "mjl_splaytree.h"
 #include "mjl_list.h"
 #include "utils.h"
+
+#define SC_MESSAGE_HDRLEN 10
 
 /*
  * sc_unit
@@ -177,9 +231,11 @@ typedef struct sc_fd
 typedef struct sc_master
 {
   sc_unit_t          *unit;
+  char               *monitorname;
   char               *name;
   uint8_t            *magic;
   uint8_t             magic_len;
+  int                 mode;
 
   sc_fd_t            *unix_fd;
   sc_fd_t             inet_fd;
@@ -194,11 +250,17 @@ typedef struct sc_master
 
   struct timeval      tx_ka;
   struct timeval      rx_abort;
+  struct timeval      zombie;
+
+  slist_t            *messages;
+  uint32_t            snd_nxt;
+  uint32_t            rcv_nxt;
 
   dlist_t            *channels;
   uint32_t            next_channel;
   dlist_node_t       *node;
-  uint8_t             buf[65536+6];
+  splaytree_node_t   *tree_node;
+  uint8_t             buf[65536 + SC_MESSAGE_HDRLEN];
   size_t              buf_offset;
 } sc_master_t;
 
@@ -221,6 +283,21 @@ typedef struct sc_channel
   uint8_t             flags;
 } sc_channel_t;
 
+/*
+ * sc_message_t
+ *
+ * this structure contains messages that we send over the Internet
+ * socket until we receive an acknowledgement from scamper that it got
+ * the message.
+ */
+typedef struct sc_message
+{
+  uint32_t            sequence;
+  uint32_t            channel;
+  uint16_t            msglen;
+  void               *data;
+} sc_message_t;
+
 #define OPT_HELP    0x0001
 #define OPT_UNIX    0x0002
 #define OPT_PORT    0x0004
@@ -230,29 +307,47 @@ typedef struct sc_channel
 #define OPT_OPTION  0x0040
 #define OPT_TLSCERT 0x0080
 #define OPT_TLSPRIV 0x0100
+#define OPT_ZOMBIE  0x0200
+#define OPT_PIDFILE 0x0400
+#define OPT_TLSCA   0x0800
 #define OPT_ALL     0xffff
 
-#define FLAG_SELECT     0x0002
-#define FLAG_ALLOW_G    0x0004
-#define FLAG_ALLOW_O    0x0008
+#define FLAG_DEBUG      0x0001 /* verbose debugging */
+#define FLAG_SELECT     0x0002 /* use select instead of kqueue/epoll */
+#define FLAG_ALLOW_G    0x0004 /* allow group members to connect */
+#define FLAG_ALLOW_O    0x0008 /* allow everyone to connect */
+#define FLAG_SKIP_VERIF 0x0010 /* skip TLS name verification */
 
 #define CHANNEL_FLAG_EOF_TX 0x01
 #define CHANNEL_FLAG_EOF_RX 0x02
+
+#define MASTER_MODE_CONNECT 0
+#define MASTER_MODE_GO      1
+#define MASTER_MODE_FLUSH   2
 
 #define CONTROL_MASTER_NEW   0 /* scamper --> remoted */
 #define CONTROL_MASTER_ID    1 /* scamper <-- remoted */
 #define CONTROL_CHANNEL_NEW  2 /* scamper <-- remoted */
 #define CONTROL_CHANNEL_FIN  3 /* scamper <-> remoted */
 #define CONTROL_KEEPALIVE    4 /* scamper <-> remoted */
+#define CONTROL_ACK          5 /* scamper <-> remoted */
+#define CONTROL_MASTER_RES   6 /* scamper --> remoted */
+#define CONTROL_MASTER_REJ   7 /* scamper <-- remoted */
+#define CONTROL_MASTER_OK    8 /* scamper <-- remoted */
 
 static uint16_t     options        = 0;
 static char        *unix_name      = NULL;
-static int          port           = 0;
+static char        *ss_addr        = NULL;
+static int          ss_port        = 0;
+static splaytree_t *mstree         = NULL;
 static dlist_t     *mslist         = NULL;
 static dlist_t     *gclist         = NULL;
 static int          stop           = 0;
+static int          reload         = 0;
 static uint16_t     flags          = 0;
 static int          serversockets[2];
+static int          zombie         = 60 * 15;
+static char        *pidfile        = NULL;
 static struct timeval now;
 
 #if defined(HAVE_EPOLL)
@@ -265,9 +360,9 @@ static int          kqfd           = -1;
 static SSL_CTX     *tls_ctx = NULL;
 static char        *tls_certfile   = NULL;
 static char        *tls_privfile   = NULL;
+static char        *tls_cafile     = NULL;
 #define SSL_MODE_ACCEPT      0x00
 #define SSL_MODE_ESTABLISHED 0x01
-#define SSL_MODE_SHUTDOWN    0x02
 #endif
 
 /*
@@ -285,33 +380,34 @@ static const sc_unit_gc_t unit_gc[] = {
 
 #if defined(HAVE_EPOLL) || defined(HAVE_KQUEUE)
 typedef void (*sc_fd_cb_t)(void *);
-static void sc_channel_unix_read(sc_channel_t *);
-static void sc_channel_unix_write(sc_channel_t *);
-static void sc_master_inet_read(sc_master_t *);
-static void sc_master_inet_write(sc_master_t *);
-static void sc_master_unix_accept(sc_master_t *);
+static void sc_channel_unix_read_do(sc_channel_t *);
+static void sc_channel_unix_write_do(sc_channel_t *);
+static void sc_master_inet_read_do(sc_master_t *);
+static void sc_master_inet_write_do(sc_master_t *);
+static void sc_master_unix_accept_do(sc_master_t *);
 
 static const sc_fd_cb_t read_cb[] = {
-  NULL,                              /* FD_TYPE_SERVER */
-  (sc_fd_cb_t)sc_master_inet_read,   /* FD_TYPE_MASTER_INET */
-  (sc_fd_cb_t)sc_master_unix_accept, /* FD_TYPE_MASTER_UNIX */
-  (sc_fd_cb_t)sc_channel_unix_read,  /* FD_TYPE_CHANNEL_UNIX */
+  NULL,                                 /* FD_TYPE_SERVER */
+  (sc_fd_cb_t)sc_master_inet_read_do,   /* FD_TYPE_MASTER_INET */
+  (sc_fd_cb_t)sc_master_unix_accept_do, /* FD_TYPE_MASTER_UNIX */
+  (sc_fd_cb_t)sc_channel_unix_read_do,  /* FD_TYPE_CHANNEL_UNIX */
 };
 static const sc_fd_cb_t write_cb[] = {
-  NULL,                              /* FD_TYPE_SERVER */
-  (sc_fd_cb_t)sc_master_inet_write,  /* FD_TYPE_MASTER_INET */
-  NULL,                              /* FD_TYPE_MASTER_UNIX */
-  (sc_fd_cb_t)sc_channel_unix_write, /* FD_TYPE_CHANNEL_UNIX */
+  NULL,                                 /* FD_TYPE_SERVER */
+  (sc_fd_cb_t)sc_master_inet_write_do,  /* FD_TYPE_MASTER_INET */
+  NULL,                                 /* FD_TYPE_MASTER_UNIX */
+  (sc_fd_cb_t)sc_channel_unix_write_do, /* FD_TYPE_CHANNEL_UNIX */
 };
 #endif
 
 static void usage(uint32_t opt_mask)
 {
   fprintf(stderr,
-	  "usage: sc_remoted [-?46D] [-O option] [-P port] [-U unix]\n"
+	  "usage: sc_remoted [-?46D] [-O option] -P [ip:]port -U unix\n"
 #ifdef HAVE_OPENSSL
-	  "                  [-c certfile] [-p privfile]\n"
+	  "                  [-c certfile] [-p privfile] [-C CAfile]\n"
 #endif
+	  "                  [-e pidfile] [-Z zombie-time]\n"
 	  );
 
   if(opt_mask == 0)
@@ -320,19 +416,30 @@ static void usage(uint32_t opt_mask)
       return;
     }
 
+  if(opt_mask & OPT_IPV4)
+    fprintf(stderr, "     -4 only listen for connections over IPv4\n");
+
+  if(opt_mask & OPT_IPV6)
+    fprintf(stderr, "     -6 only listen for connections over IPv6\n");
+
   if(opt_mask & OPT_DAEMON)
     fprintf(stderr, "     -D operate as a daemon\n");
+
+  if(opt_mask & OPT_PIDFILE)
+    fprintf(stderr, "     -e write process ID to specified file\n");
 
   if(opt_mask & OPT_OPTION)
     {
       fprintf(stderr, "     -O options\n");
       fprintf(stderr, "        allowgroup: allow group access to sockets\n");
       fprintf(stderr, "        allowother: allow other access to sockets\n");
+      fprintf(stderr, "        debug: print debugging messages\n");
       fprintf(stderr, "        select: use select\n");
+      fprintf(stderr, "        skipnameverification: skip TLS name verif\n");
     }
 
   if(opt_mask & OPT_PORT)
-    fprintf(stderr, "     -P port to accept remote scamper connections\n");
+    fprintf(stderr, "     -P [ip:]port to accept remote scamper connections\n");
 
   if(opt_mask & OPT_UNIX)
     fprintf(stderr, "     -U directory for unix domain sockets\n");
@@ -342,14 +449,21 @@ static void usage(uint32_t opt_mask)
     fprintf(stderr, "     -c server certificate in PEM format\n");
   if(opt_mask & OPT_TLSPRIV)
     fprintf(stderr, "     -p private key in PEM format\n");
+  if(opt_mask & OPT_TLSCA)
+    fprintf(stderr, "     -C require client authentication using this CA\n");
 #endif
+
+  if(opt_mask & OPT_ZOMBIE)
+    fprintf(stderr, "     -Z time to retain state for disconnected scamper\n");
 
   return;
 }
 
 static int check_options(int argc, char *argv[])
 {
-  char *opts = "?46DO:P:c:p:U:", *opt_port = NULL;
+  struct sockaddr_storage sas;
+  char *opts = "?46DO:c:C:e:p:P:U:Z:", *opt_addrport = NULL, *opt_zombie = NULL;
+  char *opt_pidfile = NULL;
   long lo;
   int ch;
 
@@ -369,6 +483,11 @@ static int check_options(int argc, char *argv[])
 	  options |= OPT_DAEMON;
 	  break;
 
+	case 'e':
+	  options |= OPT_PIDFILE;
+	  opt_pidfile = optarg;
+	  break;
+
 	case 'O':
 	  if(strcasecmp(optarg, "select") == 0)
 	    flags |= FLAG_SELECT;
@@ -376,6 +495,10 @@ static int check_options(int argc, char *argv[])
 	    flags |= FLAG_ALLOW_G;
 	  else if(strcasecmp(optarg, "allowother") == 0)
 	    flags |= FLAG_ALLOW_O;
+	  else if(strcasecmp(optarg, "debug") == 0)
+	    flags |= FLAG_DEBUG;
+	  else if(strcasecmp(optarg, "skipnameverification") == 0)
+	    flags |= FLAG_SKIP_VERIF;
 	  else
 	    {
 	      usage(OPT_ALL);
@@ -384,7 +507,7 @@ static int check_options(int argc, char *argv[])
 	  break;
 	  
 	case 'P':
-	  opt_port = optarg;
+	  opt_addrport = optarg;
 	  break;
 
 #ifdef HAVE_OPENSSL
@@ -397,10 +520,19 @@ static int check_options(int argc, char *argv[])
 	  tls_privfile = optarg;
 	  options |= OPT_TLSPRIV;
 	  break;
+
+	case 'C':
+	  tls_cafile = optarg;
+	  options |= OPT_TLSCA;
+	  break;
 #endif
 
 	case 'U':
 	  unix_name = optarg;
+	  break;
+
+	case 'Z':
+	  opt_zombie = optarg;
 	  break;
 
 	case '?':
@@ -410,30 +542,70 @@ static int check_options(int argc, char *argv[])
 	}
     }
 
-  if((options & (OPT_IPV4|OPT_IPV6)) == 0)
-    options |= (OPT_IPV4 | OPT_IPV6);
-
-  if(unix_name == NULL || opt_port == NULL)
+  if(unix_name == NULL || opt_addrport == NULL)
     {
       usage(OPT_PORT|OPT_UNIX);
       return -1;
     }
 
 #ifdef HAVE_OPENSSL
+  /*
+   * the user must specify both a cert and private key if they specify
+   * either
+   */
   if((options & (OPT_TLSCERT|OPT_TLSPRIV)) != 0 &&
      (options & (OPT_TLSCERT|OPT_TLSPRIV)) != (OPT_TLSCERT|OPT_TLSPRIV))
     {
       usage(OPT_TLSCERT|OPT_TLSPRIV);
       return -1;
     }
+  /*
+   * if the user requires client cert verification, they must also
+   * present server certificates as part of the authentication
+   * process.
+   */
+  if((options & OPT_TLSCA) != 0 &&
+     (options & (OPT_TLSCERT|OPT_TLSPRIV)) != (OPT_TLSCERT|OPT_TLSPRIV))
+    {
+      usage(OPT_TLSCERT|OPT_TLSPRIV|OPT_TLSCA);
+      return -1;
+    }
 #endif
-  
-  if(string_tolong(opt_port, &lo) != 0 || lo < 1 || lo > 65535)
+
+  if(string_addrport(opt_addrport, &ss_addr, &ss_port) != 0)
     {
       usage(OPT_PORT);
       return -1;
     }
-  port = lo;
+
+  /*
+   * if there was an address specified, and either -4 or -6 was passed in,
+   * ensure the address at least matches the specified address family
+   */
+  if(ss_addr != NULL && (options & (OPT_IPV4|OPT_IPV6)) != 0 &&
+     (sockaddr_compose_str((struct sockaddr *)&sas, ss_addr, ss_port) != 0 ||
+      ((options & OPT_IPV4) != 0 && sas.ss_family == AF_INET6) ||
+      ((options & OPT_IPV6) != 0 && sas.ss_family == AF_INET)))
+    {
+      usage(OPT_PORT | (options & (OPT_IPV4|OPT_IPV6)));
+      return -1;
+    }
+
+  if(opt_pidfile != NULL && (pidfile = strdup(opt_pidfile)) == NULL)
+    {
+      usage(OPT_PIDFILE);
+      return -1;
+    }
+
+  if(opt_zombie != NULL)
+    {
+      if(string_tolong(opt_zombie, &lo) != 0 || lo < 0 || lo > (60 * 60))
+	{
+	  usage(OPT_ZOMBIE);
+	  return -1;
+	}
+      zombie = lo;
+    }
 
   return 0;
 }
@@ -447,6 +619,9 @@ static void remote_debug(const char *func, const char *format, ...)
   int ms;
 
   if(options & OPT_DAEMON)
+    return;
+
+  if((flags & FLAG_DEBUG) == 0)
     return;
 
   va_start(ap, format);
@@ -463,6 +638,25 @@ static void remote_debug(const char *func, const char *format, ...)
   fprintf(stderr, "%s %s: %s\n", ts, func, message);
   fflush(stderr);
   return;
+}
+
+static int sc_fd_peername(const sc_fd_t *fd, char *buf, size_t len)
+{
+  struct sockaddr_storage sas;
+  socklen_t sl;
+
+  sl = sizeof(sas);
+  if(getpeername(fd->fd, (struct sockaddr *)&sas, &sl) != 0)
+    {
+      remote_debug(__func__, "could not getpeername: %s", strerror(errno));
+      return -1;
+    }
+  if(sockaddr_tostr((struct sockaddr *)&sas, buf, len) == NULL)
+    {
+      remote_debug(__func__, "could not convert to string");
+      return -1;
+    }
+  return 0;
 }
 
 static int sc_fd_read_add(sc_fd_t *fd)
@@ -616,11 +810,14 @@ static int ssl_want_read(sc_master_t *ms)
   int pending, rc, size, off = 0;
 
   if((pending = BIO_pending(ms->inet_wbio)) < 0)
-    return -1;
+    {
+      remote_debug(__func__, "BIO_pending returned %d", pending);
+      return -1;
+    }
 
   while(off < pending)
     {
-      if(pending - off > sizeof(buf))
+      if((size_t)(pending - off) > sizeof(buf))
 	size = sizeof(buf);
       else
 	size = pending - off;
@@ -705,6 +902,20 @@ static sc_unit_t *sc_unit_alloc(uint8_t type, void *data)
   return scu;
 }
 
+static void sc_message_free(sc_message_t *msg)
+{
+  if(msg->data != NULL) free(msg->data);
+  free(msg);
+  return;
+}
+
+static int sc_master_cmp(const sc_master_t *a, const sc_master_t *b)
+{
+  if(a->magic_len < b->magic_len) return -1;
+  if(a->magic_len > b->magic_len) return  1;
+  return memcmp(a->magic, b->magic, a->magic_len);
+}
+
 static void sc_master_onremove(sc_master_t *ms)
 {
   ms->node = NULL;
@@ -730,78 +941,250 @@ static void sc_master_channels_onremove(sc_channel_t *cn)
   return;
 }
 
+static int sc_master_inet_write(sc_master_t *ms, void *ptr, uint16_t len,
+				uint32_t sequence, uint32_t channel)
+{
+  uint8_t hdr[SC_MESSAGE_HDRLEN];
+
+  /* form the header */
+  bytes_htonl(hdr+0, sequence);
+  bytes_htonl(hdr+4, channel);
+  bytes_htons(hdr+8, len);
+
+#ifdef HAVE_OPENSSL
+  if(ms->inet_ssl != NULL)
+    {
+      SSL_write(ms->inet_ssl, hdr, SC_MESSAGE_HDRLEN);
+      SSL_write(ms->inet_ssl, ptr, len);
+      if(ssl_want_read(ms) < 0)
+	{
+	  remote_debug(__func__, "ssl_want_read failed");
+	  return -1;
+	}
+      return 0;
+    }
+#endif
+
+  if(scamper_writebuf_send(ms->inet_wb, hdr, SC_MESSAGE_HDRLEN) != 0 ||
+     scamper_writebuf_send(ms->inet_wb, ptr, len) != 0)
+    {
+      remote_debug(__func__, "could not write message");
+      return -1;
+    }
+
+  sc_fd_write_add(&ms->inet_fd);
+  return 0;
+}
+
 /*
  * sc_master_inet_send
  *
  * transparently handle sending when an SSL socket could be used.
  */
-static int sc_master_inet_send(sc_master_t *ms, void *ptr, size_t len)
+static int sc_master_inet_send(sc_master_t *ms, void *ptr, uint16_t len,
+			       uint32_t channel, int ack)
 {
+  sc_message_t *msg = NULL;
+  uint32_t sequence;
+
+  if(len == 0)
+    {
+      remote_debug(__func__, "invalid length %d", len);
+      return -1;
+    }
+
+  if(ack == 0 && ms->mode == MASTER_MODE_CONNECT)
+    return 0;
+
+  /* get a copy of the sequence number before it might change */
+  sequence = ms->snd_nxt;
+
+  /* if we require the segment to be acknowledged, keep a copy of it */
+  if(ack != 0)
+    {
+      if((msg = malloc(sizeof(sc_message_t))) == NULL)
+	{
+	  remote_debug(__func__, "could not malloc message");
+	  goto err;
+	}
+      msg->data = NULL;
+      if((msg->data = memdup(ptr, len)) == NULL)
+	{
+	  remote_debug(__func__, "could not dup data");
+	  goto err;
+	}
+      msg->sequence = sequence;
+      msg->channel = channel;
+      msg->msglen = len;
+      if(slist_tail_push(ms->messages, msg) == NULL)
+	{
+	  remote_debug(__func__, "could not push message");
+	  goto err;
+	}
+      msg = NULL;
+      ms->snd_nxt++;
+    }
+
+  if(ms->mode == MASTER_MODE_CONNECT)
+    {
+      remote_debug(__func__, "not sending in connect mode");
+      return 0;
+    }
+
+  if(sc_master_inet_write(ms, ptr, len, sequence, channel) != 0)
+    goto err;
   timeval_add_s(&ms->tx_ka, &now, 30);
+
+  return 0;
+
+ err:
+  if(msg != NULL) sc_message_free(msg);
+  return -1;
+}
+
+static void sc_master_inet_free(sc_master_t *ms)
+{
+  remote_debug(__func__, "%s", ms->name);
+
+  if(ms->inet_fd.fd != -1)
+    {
+      sc_fd_read_del(&ms->inet_fd);
+      sc_fd_write_del(&ms->inet_fd);
+      close(ms->inet_fd.fd);
+      ms->inet_fd.fd = -1;
+    }
+  if(ms->inet_wb != NULL)
+    {
+      scamper_writebuf_free(ms->inet_wb);
+      ms->inet_wb = NULL;
+    }
 
 #ifdef HAVE_OPENSSL
   if(ms->inet_ssl != NULL)
     {
-      SSL_write(ms->inet_ssl, ptr, len);
-      if(ssl_want_read(ms) < 0)
-	return -1;
-      return 0;
+      SSL_free(ms->inet_ssl);
     }
+  else
+    {
+      if(ms->inet_wbio != NULL)
+	BIO_free(ms->inet_wbio);
+      if(ms->inet_rbio != NULL)
+	BIO_free(ms->inet_rbio);
+    }
+  ms->inet_ssl = NULL;
+  ms->inet_wbio = NULL;
+  ms->inet_rbio = NULL;
 #endif
 
-  scamper_writebuf_send(ms->inet_wb, ptr, len);
-  sc_fd_write_add(&ms->inet_fd);
-  return 0;
-}
-
-static void sc_master_inet_write(sc_master_t *ms)
-{
-  if(scamper_writebuf_write(ms->inet_fd.fd, ms->inet_wb) != 0)
-    {
-      sc_unit_gc(ms->unit);
-      return;
-    }
-
-  if(scamper_writebuf_len(ms->inet_wb) == 0 &&
-     sc_fd_write_del(&ms->inet_fd) != 0)
-    {
-      sc_unit_gc(ms->unit);
-      return;
-    }
   return;
 }
 
-static int sc_master_tx_keepalive(sc_master_t *ms)
+#ifdef HAVE_OPENSSL
+static int sc_master_is_valid_client_cert_0(sc_master_t *ms)
 {
-  uint8_t buf[4+2+1];
-  bytes_htonl(buf+0, 0);
-  bytes_htons(buf+4, 1);
-  buf[6] = CONTROL_KEEPALIVE;
-  remote_debug(__func__, "%s", ms->name);
-  return sc_master_inet_send(ms, buf, sizeof(buf));
+  X509 *cert;
+
+  /* if we aren't verifying client certificates, then move on... */
+  if(tls_cafile == NULL)
+    return 1;
+
+  if(SSL_get_verify_result(ms->inet_ssl) != X509_V_OK)
+    {
+      remote_debug(__func__, "invalid certificate");
+      return 0;
+    }
+
+  if((cert = SSL_get_peer_certificate(ms->inet_ssl)) == NULL)
+    {
+      remote_debug(__func__, "no peer certificate");
+      return 0;
+    }
+
+  X509_free(cert);
+  return 1;
 }
 
-/*
- * sc_master_control_master
- *
- * a remote scamper connection has said hello.
- * create a unix file descriptor to listen locally for drivers that want to
- * use it.
- *
- */
-static int sc_master_control_master(sc_master_t *ms, uint8_t *buf, size_t len)
+static int sc_master_is_valid_client_cert_1(sc_master_t *ms)
 {
-  char sab[128], filename[65535], tmp[512];
-  uint8_t resp[4+2+1+1+128];
-  struct sockaddr_storage sas;
+  X509 *cert;
+  X509_NAME *name;
+  STACK_OF(GENERAL_NAME) *names = NULL;
+  const GENERAL_NAME *gname;
+  const char *dname;
+  char buf[256];
+  int rc = 0;
+  int i, count;
+
+  /* do not do name verification */
+  if(tls_cafile == NULL || (flags & FLAG_SKIP_VERIF) != 0)
+    return 1;
+
+  /* if no monitorname, then cannot do name verification */
+  if(ms->monitorname == NULL)
+    {
+      remote_debug(__func__, "no monitor name supplied");
+      return 0;
+    }
+
+  cert = SSL_get_peer_certificate(ms->inet_ssl);
+  assert(cert != NULL);
+
+  if((names = X509_get_ext_d2i(cert,NID_subject_alt_name,NULL,NULL)) != NULL)
+    {
+      count = sk_GENERAL_NAME_num(names);
+      for(i=0; i<count; i++)
+	{
+	  gname = sk_GENERAL_NAME_value(names, i);
+	  if(gname->type != GEN_DNS)
+	    continue;
+#ifdef HAVE_ASN1_STRING_GET0_DATA
+	  dname = (const char *)ASN1_STRING_get0_data(gname->d.dNSName);
+#else
+	  dname = (const char *)ASN1_STRING_data(gname->d.dNSName);
+#endif
+	  if(ASN1_STRING_length(gname->d.dNSName) != (int)strlen(dname))
+	    continue;
+	  if(strcasecmp(dname, ms->monitorname) == 0)
+	    {
+	      rc = 1;
+	      goto done;
+	    }
+	}
+    }
+
+  if((name = X509_get_subject_name(cert)) != NULL &&
+     X509_NAME_get_text_by_NID(name, NID_commonName, buf, sizeof(buf)) > 0)
+    {
+      buf[sizeof(buf)-1] = 0;
+      if(strcasecmp(buf, ms->monitorname) == 0)
+	rc = 1;
+    }
+
+ done:
+  if(rc == 0)
+    remote_debug(__func__, "monitor name %s does not match certificate",
+		 ms->monitorname != NULL ? ms->monitorname : "<null>");
+  if(names != NULL) sk_GENERAL_NAME_pop_free(names, GENERAL_NAME_free);
+  if(cert != NULL) X509_free(cert);
+  return rc;
+}
+#endif
+
+/*
+ * sc_master_unix_create
+ *
+ * create a unix domain socket for the scamper instance, that local
+ * users can connect to in order to interact with the remote scamper
+ * instance.  The name of the socket is derived from getpeername on the
+ * Internet socket, and the monitorname if the remote scamper supplied
+ * that variable.
+ */
+static int sc_master_unix_create(sc_master_t *ms)
+{
   struct sockaddr_un sn;
-  socklen_t sl;
-  uint8_t *magic = NULL;
-  char    *monitorname = NULL;
-  uint8_t  magic_len = 0, monitorname_len = 0, u8;
-  size_t   off = 0;
-  mode_t   mode;
-  int      fd;
+  mode_t mode;
+  char sab[128], filename[65535], tmp[512];
+  int fd;
 
   /*
    * these are set so that we know whether or not to take
@@ -810,46 +1193,12 @@ static int sc_master_control_master(sc_master_t *ms, uint8_t *buf, size_t len)
   fd = -1;
   filename[0] = '\0';
 
-  /* ensure that there is a magic value present */
-  if(len == 0 || (magic_len = buf[off++]) == 0)
-    goto err;
-  magic = buf + off;
-
-  /* ensure the magic length value makes sense */
-  if(off + magic_len > len)
-    goto err;
-  off += magic_len;
-
-  /* check if there is a monitorname supplied */
-  if(off < len && (monitorname_len = buf[off++]) > 0)
-    {
-      if(off + monitorname_len > len)
-	goto err;
-      monitorname = (char *)(buf+off);
-      for(u8=0; u8<monitorname_len-1; u8++)
-	{
-	  if(isalnum(monitorname[u8]) == 0 &&
-	     monitorname[u8] != '.' && monitorname[u8] != '-')
-	    goto err;
-	}
-      if(monitorname[monitorname_len-1] != '\0')
-	goto err;
-      off += monitorname_len;
-    }
-
-  sl = sizeof(sas);
-  if(getpeername(ms->inet_fd.fd, (struct sockaddr *)&sas, &sl) != 0)
-    {
-      remote_debug(__func__, "could not getpeername: %s", strerror(errno));
-      goto err;
-    }
-
   /* figure out the name for the unix domain socket */
-  sockaddr_tostr((struct sockaddr *)&sas, sab, sizeof(sab));
-  if(monitorname != NULL)
+  if(sc_fd_peername(&ms->inet_fd, sab, sizeof(sab)) != 0)
+    goto err;
+  if(ms->monitorname != NULL)
     {
-      off = 0;
-      string_concat(tmp, sizeof(tmp), &off, "%s-%s", monitorname, sab);
+      snprintf(tmp, sizeof(tmp), "%s-%s", ms->monitorname, sab);
       ms->name = strdup(tmp);
     }
   else
@@ -861,13 +1210,6 @@ static int sc_master_control_master(sc_master_t *ms, uint8_t *buf, size_t len)
       remote_debug(__func__, "could not strdup ms->name: %s", strerror(errno));
       goto err;
     }
-
-  if((ms->magic = memdup(magic, magic_len)) == NULL)
-    {
-      remote_debug(__func__, "could not memdup magic: %s", strerror(errno));
-      goto err;
-    }
-  ms->magic_len = magic_len;
 
   /* create a unix domain socket for the remote scamper process */
   if((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
@@ -902,7 +1244,7 @@ static int sc_master_control_master(sc_master_t *ms, uint8_t *buf, size_t len)
 
   if(listen(fd, -1) != 0)
     {
-      remote_debug(__func__, "could not listen: %s",strerror(errno));
+      remote_debug(__func__, "could not listen: %s", strerror(errno));
       goto err;
     }
 
@@ -923,13 +1265,201 @@ static int sc_master_control_master(sc_master_t *ms, uint8_t *buf, size_t len)
       goto err;
     }
 
+  return 0;
+
+ err:
+  if(fd != -1) close(fd);
+  if(filename[0] != '\0') unlink(filename);
+  return -1;
+}
+
+static void sc_master_unix_free(sc_master_t *ms)
+{
+  char filename[65535];
+
+  if(ms->unix_fd != NULL)
+    {
+      sc_fd_free(ms->unix_fd);
+      ms->unix_fd = NULL;
+      snprintf(filename, sizeof(filename), "%s/%s", unix_name, ms->name);
+      unlink(filename);
+    }
+
+  return;
+}
+
+/*
+ * sc_master_zombie
+ *
+ * there was an error reading or writing to the scamper-facing file
+ * descriptor.  turn the master into a zombie for now, to allow scamper
+ * to call back and resume.
+ */
+static void sc_master_zombie(sc_master_t *ms)
+{
+  if(ms->mode == MASTER_MODE_FLUSH)
+    {
+      sc_unit_gc(ms->unit);
+      return;
+    }
+  ms->mode = MASTER_MODE_CONNECT;
+  sc_master_unix_free(ms);
+  sc_master_inet_free(ms);
+  timeval_add_s(&ms->zombie, &now, zombie);
+  remote_debug(__func__, "%s zombie until %d", ms->name, ms->zombie.tv_sec);
+  return;
+}
+
+static void sc_master_inet_write_do(sc_master_t *ms)
+{
+  if(scamper_writebuf_write(ms->inet_fd.fd, ms->inet_wb) != 0)
+    goto zombie;
+
+  if(scamper_writebuf_len(ms->inet_wb) == 0)
+    {
+      if(ms->mode == MASTER_MODE_FLUSH)
+	{
+	  sc_unit_gc(ms->unit);
+	  return;
+	}
+      if(sc_fd_write_del(&ms->inet_fd) != 0)
+	goto zombie;
+    }
+
+  return;
+
+ zombie:
+  if(zombie == 0 || ms->name == NULL)
+    {
+      sc_unit_gc(ms->unit);
+      return;
+    }
+  sc_master_zombie(ms);
+  return;
+}
+
+/*
+ * sc_master_tx_keepalive
+ *
+ * send a keepalive.  do not expect an acknowledgement.
+ */
+static int sc_master_tx_keepalive(sc_master_t *ms)
+{
+  uint8_t buf[1];
+  buf[0] = CONTROL_KEEPALIVE;
+  return sc_master_inet_send(ms, buf, 1, 0, 0);
+}
+
+static int sc_master_tx_ack(sc_master_t *ms, uint32_t sequence)
+{
+  uint8_t buf[1+4];
+  buf[0] = CONTROL_ACK;
+  bytes_htonl(buf+1, sequence);
+  return sc_master_inet_send(ms, buf, 5, 0, 0);
+}
+
+static int sc_master_tx_rej(sc_master_t *ms)
+{
+  uint8_t buf[1];
+  ms->mode = MASTER_MODE_FLUSH;
+  buf[0] = CONTROL_MASTER_REJ;
+  if(sc_master_inet_send(ms, buf, 1, 0, 0) != 0)
+    return -1;
+  return 0;
+}
+
+/*
+ * sc_master_control_master
+ *
+ * a remote scamper connection has said hello.
+ * create a unix file descriptor to listen locally for drivers that want to
+ * use it.
+ *
+ */
+static int sc_master_control_master(sc_master_t *ms, uint8_t *buf, size_t len)
+{
+  char     sab[128];
+  uint8_t  resp[1+1+128];
+  uint8_t *magic = NULL;
+  char    *monitorname = NULL;
+  uint8_t  magic_len, monitorname_len, u8;
+  size_t   off = 0;
+
+  /* ensure that there is a magic value present */
+  if(len == 0 || (magic_len = buf[off++]) == 0)
+    {
+      remote_debug(__func__, "magic value not found");
+      goto err;
+    }
+  magic = buf + off;
+
+  /* ensure the magic length value makes sense */
+  if(len - off < magic_len)
+    {
+      remote_debug(__func__, "len %u - off %u < magic_len %u",
+		   len, off, magic_len);
+      goto err;
+    }
+  off += magic_len;
+
+  /* check if there is a monitorname supplied */
+  if(off < len && (monitorname_len = buf[off++]) > 0)
+    {
+      if(off + monitorname_len > len)
+	{
+	  remote_debug(__func__,
+		       "malformed monitorname length variable: %u + %u > %u",
+		       off, monitorname_len, len);
+	  goto err;
+	}
+      monitorname = (char *)(buf+off);
+      for(u8=0; u8<monitorname_len-1; u8++)
+	{
+	  if(isalnum(monitorname[u8]) == 0 &&
+	     monitorname[u8] != '.' && monitorname[u8] != '-')
+	    goto err;
+	}
+      if(monitorname[monitorname_len-1] != '\0')
+	goto err;
+      if((ms->monitorname = memdup(monitorname, monitorname_len)) == NULL)
+	goto err;
+      off += monitorname_len;
+      assert(off <= len);
+    }
+
+#ifdef HAVE_OPENSSL
+  /* verify the monitorname if we are verifying TLS client certificates */
+  if(sc_master_is_valid_client_cert_1(ms) == 0)
+    goto err;
+#endif
+
+  /* copy the magic value out.  check that the magic value is unique */
+  if((ms->magic = memdup(magic, magic_len)) == NULL)
+    {
+      remote_debug(__func__, "could not memdup magic: %s", strerror(errno));
+      goto err;
+    }
+  ms->magic_len = magic_len;
+  if((ms->tree_node = splaytree_insert(mstree, ms)) == NULL)
+    {
+      remote_debug(__func__, "could not insert magic node into tree");
+      goto err;
+    }
+
+  /* create the unix domain socket for the scamper instance */
+  if(sc_master_unix_create(ms) != 0)
+    goto err;
+
+  /* send the list name to the client. do not expect an ack */
+  if(sc_fd_peername(&ms->inet_fd, sab, sizeof(sab)) != 0)
+    goto err;
+  remote_debug(__func__, "%s", sab);
+  ms->mode = MASTER_MODE_GO;
   off = strlen(sab);
-  bytes_htonl(resp+0, 0);
-  bytes_htons(resp+4, 1 + 1 + off + 1);
-  resp[6] = CONTROL_MASTER_ID;
-  resp[7] = off + 1;
-  memcpy(resp+8, sab, off + 1);
-  if(sc_master_inet_send(ms, resp, 4 + 2 + 1 + 1 + off + 1) != 0)
+  resp[0] = CONTROL_MASTER_ID;
+  resp[1] = off + 1;
+  memcpy(resp+2, sab, off + 1);
+  if(sc_master_inet_send(ms, resp, 1 + 1 + off + 1, 0, 0) != 0)
     {
       remote_debug(__func__, "could not write ID: %s\n", strerror(errno));
       goto err;
@@ -938,8 +1468,6 @@ static int sc_master_control_master(sc_master_t *ms, uint8_t *buf, size_t len)
   return 0;
 
  err:
-  if(fd != -1) close(fd);
-  if(filename[0] != '\0') unlink(filename);
   return -1;
 }
 
@@ -983,30 +1511,258 @@ static int sc_master_control_keepalive(sc_master_t *ms,uint8_t *buf,size_t len)
       remote_debug(__func__, "malformed keepalive: %u", (uint32_t)len);
       return -1;
     }
-  remote_debug(__func__, "%s", ms->name);
   return 0;
 }
 
-static int sc_master_control(sc_master_t *ms, uint8_t *buf, size_t len)
+static int sc_master_control_ack(sc_master_t *ms, uint8_t *buf, size_t len)
 {
-  uint8_t type;
+  uint32_t sequence;
+  sc_message_t *msg;
 
-  if(len < 1)
+  if(len != 4)
     {
-      remote_debug(__func__, "malformed control msg: %u", (uint32_t)len);
+      remote_debug(__func__, "malformed acknowledgement: %u", (uint32_t)len);
       return -1;
     }
-  type = buf[0];
-  buf++; len--;
 
-  switch(type)
+  sequence = bytes_ntohl(buf);
+  if((msg = slist_head_item(ms->messages)) == NULL)
     {
-    case CONTROL_MASTER_NEW:
-      return sc_master_control_master(ms, buf, len);
-    case CONTROL_CHANNEL_FIN:
-      return sc_master_control_channel_fin(ms, buf, len);
-    case CONTROL_KEEPALIVE:
-      return sc_master_control_keepalive(ms, buf, len);
+      remote_debug(__func__, "nothing to ack: %u", sequence);
+      return -1;
+    }
+  if(msg->sequence != sequence)
+    {
+      remote_debug(__func__, "unexpected sequence: %u", sequence);
+      return -1;
+    }
+
+  slist_head_pop(ms->messages);
+  sc_message_free(msg);
+  return 0;
+}
+
+static int sc_master_control_resume(sc_master_t *ms, uint8_t *buf, size_t len)
+{
+  sc_master_t fm, *ms2;
+  sc_message_t *msg;
+  slist_node_t *sn;
+  uint8_t *magic = NULL, magic_len;
+  size_t   off = 0;
+  uint32_t rcv_nxt, snd_una, snd_nxt;
+  uint8_t  ok[5];
+
+  /* ensure that there is a magic value present */
+  if(len == 0 || (magic_len = buf[off++]) == 0)
+    {
+      remote_debug(__func__, "magic value not found");
+      goto err;
+    }
+  magic = buf + off;
+
+  /* ensure the magic length value makes sense */
+  if(off + magic_len > len)
+    {
+      remote_debug(__func__, "len %u - off %u < magic_len %u",
+		   len, off, magic_len);
+      goto err;
+    }
+  off += magic_len;
+
+  /* ensure there is enough left for the three expected sequence numbers */
+  if(len - off < 12)
+    {
+      remote_debug(__func__, "len %u - off %u < 12 for sequence", len, off);
+      goto err;
+    }
+  rcv_nxt = bytes_ntohl(buf+off); off += 4;
+  snd_una = bytes_ntohl(buf+off); off += 4;
+  snd_nxt = bytes_ntohl(buf+off); off += 4;
+  assert(off <= len);
+
+  /* see if we can find the control socket based on the magic value */
+  fm.magic = magic;
+  fm.magic_len = magic_len;
+  if((ms2 = splaytree_find(mstree, &fm)) == NULL)
+    {
+      remote_debug(__func__, "could not find master given magic");
+      if(sc_master_tx_rej(ms) != 0)
+	goto err;
+      goto done;
+    }
+
+  /*
+   * check that the next segment of data that scamper expects from
+   * remoted is reasonable
+   */
+  if(ms2->snd_nxt != rcv_nxt)
+    {
+      for(sn=slist_head_node(ms2->messages); sn != NULL; sn=slist_node_next(sn))
+	{
+	  msg = slist_node_item(sn);
+	  if(msg->sequence == rcv_nxt)
+	    break;
+	}
+      if(sn == NULL)
+	{
+	  remote_debug(__func__, "rcv_nxt value %u expected %u",
+		       rcv_nxt, ms2->snd_nxt);
+	  if(sc_master_tx_rej(ms) != 0)
+	    goto err;
+	  goto done;
+	}
+    }
+
+  /*
+   * check that the next segment of data that remoted expects from
+   * scamper is reasonable
+   */
+  if(SEQ_GT(snd_una, ms2->rcv_nxt) || SEQ_GT(ms2->rcv_nxt, snd_nxt))
+    {
+      remote_debug(__func__,
+		   "scamper's send window %u:%u not expected %u",
+		   snd_una, snd_nxt, ms2->rcv_nxt);
+      if(sc_master_tx_rej(ms) != 0)
+	goto err;
+      goto done;
+    }
+
+  /*
+   * go through frames that have not been acknowledged, and remove the frames
+   * that the remote controller already has
+   */
+  while((msg = slist_head_item(ms2->messages)) != NULL)
+    {
+      if(SEQ_LT(msg->sequence, rcv_nxt) == 0)
+	break;
+      msg = slist_head_pop(ms2->messages);
+      sc_message_free(msg);
+    }
+
+  /* adjust state */
+  ms2->tx_ka = ms->tx_ka;
+  ms2->rx_abort = ms->rx_abort;
+  ms2->zombie = ms->zombie;
+  ms2->buf_offset = 0;
+
+  /* switch over the file descriptors */
+  sc_master_inet_free(ms2);
+  sc_master_unix_free(ms2);
+  ms2->inet_fd = ms->inet_fd;
+  ms2->inet_fd.unit = ms2->unit;
+  ms->inet_fd.fd = -1;
+  ms2->inet_wb = ms->inet_wb; ms->inet_wb = NULL;
+#ifdef HAVE_OPENSSL
+  ms2->inet_mode = ms->inet_mode;
+  ms2->inet_ssl  = ms->inet_ssl;  ms->inet_ssl = NULL;
+  ms2->inet_rbio = ms->inet_rbio; ms->inet_rbio = NULL;
+  ms2->inet_wbio = ms->inet_wbio; ms->inet_wbio = NULL;
+#endif
+
+  if(ms2->inet_fd.flags & FD_FLAG_READ)
+    {
+      sc_fd_read_del(&ms2->inet_fd);
+      sc_fd_read_add(&ms2->inet_fd);
+    }
+  if(ms2->inet_fd.flags & FD_FLAG_WRITE)
+    {
+      sc_fd_write_del(&ms2->inet_fd);
+      sc_fd_write_add(&ms2->inet_fd);
+    }
+
+  /* create a new unix domain socket */
+  if(sc_master_unix_create(ms2) != 0)
+    goto err;
+
+  /*
+   * don't need the incoming sc_master_t, as we've switched the file
+   * descriptors over.
+   */
+  sc_unit_gc(ms->unit);
+
+  /* send an OK message to the scamper instance */
+  ms2->mode = MASTER_MODE_GO;
+  ok[0] = CONTROL_MASTER_OK;
+  bytes_htonl(ok+1, ms2->rcv_nxt);
+  if(sc_master_inet_write(ms2, ok, 5, 0, 0) != 0)
+    goto err;
+  remote_debug(__func__, "ok");
+
+  for(sn=slist_head_node(ms2->messages); sn != NULL; sn=slist_node_next(sn))
+    {
+      msg = slist_node_item(sn);
+      if(sc_master_inet_write(ms2, msg->data, msg->msglen, msg->sequence,
+			      msg->channel) != 0)
+	goto err;
+    }
+
+ done:
+  return 0;
+
+ err:
+  return -1;
+}
+
+static int sc_master_control(sc_master_t *ms)
+{
+  uint32_t seq;
+  uint16_t msglen;
+  uint8_t type, *buf;
+
+  seq = bytes_ntohl(ms->buf);
+  msglen = bytes_ntohs(ms->buf+8);
+  buf = ms->buf + SC_MESSAGE_HDRLEN;
+
+  if(msglen < 1)
+    {
+      remote_debug(__func__, "malformed control msg: %u", msglen);
+      return -1;
+    }
+
+  type = buf[0];
+  buf++; msglen--;
+
+  if(ms->mode == MASTER_MODE_CONNECT)
+    {
+      /* we expect sequence zero.  no acks for any of these messages. */
+      if(seq != 0)
+	{
+	  remote_debug(__func__, "expected sequence zero in mode connect");
+	  return -1;
+	}
+      switch(type)
+	{
+	case CONTROL_MASTER_NEW:
+	  return sc_master_control_master(ms, buf, msglen);
+	case CONTROL_MASTER_RES:
+	  return sc_master_control_resume(ms, buf, msglen);
+	}
+    }
+  else if(ms->mode == MASTER_MODE_GO)
+    {
+      /* check the sequence number is what we expect */
+      if(seq != ms->rcv_nxt)
+	{
+	  remote_debug(__func__, "got seq %u expected %u", seq, ms->rcv_nxt);
+	  return -1;
+	}
+
+      if(type == CONTROL_CHANNEL_FIN)
+	{
+	  if(sc_master_tx_ack(ms, seq) != 0)
+	    return -1;
+	  ms->rcv_nxt++;
+	}
+
+      switch(type)
+	{
+	case CONTROL_CHANNEL_FIN:
+	  return sc_master_control_channel_fin(ms, buf, msglen);
+	case CONTROL_KEEPALIVE:
+	  return sc_master_control_keepalive(ms, buf, msglen);
+	case CONTROL_ACK:
+	  return sc_master_control_ack(ms, buf, msglen);
+	}
     }
 
   remote_debug(__func__, "unhandled type %d", type);
@@ -1024,24 +1780,41 @@ static int sc_master_control(sc_master_t *ms, uint8_t *buf, size_t len)
 static void sc_master_inet_read_cb(sc_master_t *ms, uint8_t *buf, size_t len)
 {
   sc_channel_t *channel;
-  uint32_t id;
+  uint32_t seq, id;
   uint16_t msglen, x, y;
   size_t off = 0;
+  uint8_t *ptr;
 
   while(off < len)
     {
       /* to start with, ensure that we have a complete header */
-      while(ms->buf_offset < 6 && off < len)
+      while(ms->buf_offset < SC_MESSAGE_HDRLEN && off < len)
 	ms->buf[ms->buf_offset++] = buf[off++];
       if(off == len)
 	return;
 
       /* figure out how large the message is supposed to be */
-      id = bytes_ntohl(ms->buf);
-      msglen = bytes_ntohs(ms->buf+4);
+      seq = bytes_ntohl(ms->buf);
+      id = bytes_ntohl(ms->buf+4);
+      msglen = bytes_ntohs(ms->buf+8);
+
+      /* ensure the sequence number is what we expect */
+      if(seq != ms->rcv_nxt)
+	{
+	  remote_debug(__func__, "got seq %u expected %u", seq, ms->rcv_nxt);
+	  goto err;
+	}
+
+      /* check the channel id is valid */
+      channel = NULL;
+      if(id != 0 && (channel = sc_master_channel_find(ms, id)) == NULL)
+	{
+	  remote_debug(__func__, "could not find channel %u", id);
+	  goto err;
+	}
 
       /* figure out how to build the message */
-      x = msglen - (ms->buf_offset - 6);
+      x = msglen - (ms->buf_offset - SC_MESSAGE_HDRLEN);
       y = len - off;
 
       if(y < x)
@@ -1059,24 +1832,25 @@ static void sc_master_inet_read_cb(sc_master_t *ms, uint8_t *buf, size_t len)
       /* reset the buf_offset for the next message */
       ms->buf_offset = 0;
 
+      /* get a pointer to the data */
+      ptr = ms->buf + SC_MESSAGE_HDRLEN;
+
       /* if the message is a control message */
       if(id == 0)
 	{
-	  if(sc_master_control(ms, ms->buf + 6, msglen) != 0)
+	  if(sc_master_control(ms) != 0)
 	    goto err;
 	  continue;
 	}
 
-      if((channel = sc_master_channel_find(ms, id)) == NULL)
-	{
-	  remote_debug(__func__, "could not find channel %u", id);
-	  goto err;
-	}
+      if(sc_master_tx_ack(ms, seq) != 0)
+	goto err;
+      ms->rcv_nxt++;
 
-      /* the unix domain socket might have gone away but we need to flush */
+      /* the unix domain socket may have gone away but we need to flush */
       if(channel->unix_wb != NULL)
 	{
-	  if(scamper_writebuf_send(channel->unix_wb, ms->buf + 6, msglen) != 0)
+	  if(scamper_writebuf_send(channel->unix_wb, ptr, msglen) != 0)
 	    sc_unit_gc(channel->unit);	
 	  sc_fd_write_add(channel->unix_fd);
 	}
@@ -1090,10 +1864,10 @@ static void sc_master_inet_read_cb(sc_master_t *ms, uint8_t *buf, size_t len)
 }
 
 /*
- * sc_master_inet_read
+ * sc_master_inet_read_do
  *
  */
-static void sc_master_inet_read(sc_master_t *ms)
+static void sc_master_inet_read_do(sc_master_t *ms)
 {
   ssize_t rrc;
   uint8_t buf[4096];
@@ -1107,13 +1881,13 @@ static void sc_master_inet_read(sc_master_t *ms)
       if(errno == EAGAIN || errno == EINTR)
 	return;
       remote_debug(__func__, "read failed: %s", strerror(errno));
-      goto err;
+      goto zombie;
     }
 
   if(rrc == 0)
     {
       remote_debug(__func__, "%s disconnected", ms->name);
-      goto err;
+      goto zombie;
     }
 
   timeval_add_s(&ms->rx_abort, &now, 60);
@@ -1122,55 +1896,59 @@ static void sc_master_inet_read(sc_master_t *ms)
   if(ms->inet_ssl != NULL)
     {
       BIO_write(ms->inet_rbio, buf, rrc);
+      ERR_clear_error();
+
       if(ms->inet_mode == SSL_MODE_ACCEPT)
 	{
-	  if((rc = SSL_accept(ms->inet_ssl)) == 0)
-	    {
-	      remote_debug(__func__, "SSL_accept returned zero: %d",
-			   SSL_get_error(ms->inet_ssl, rc));
-	      ERR_print_errors_fp(stderr);
-	      goto err;
-	    }
-	  else if(rc == 1)
+	  if((rc = SSL_accept(ms->inet_ssl)) > 0)
 	    {
 	      ms->inet_mode = SSL_MODE_ESTABLISHED;
 	      if(ssl_want_read(ms) < 0)
+		{
+		  remote_debug(__func__, "ssl_want_read failed");
+		  goto err;
+		}
+	      if(sc_master_is_valid_client_cert_0(ms) == 0)
 		goto err;
 	    }
-	  else if(rc < 0)
-	    {
-	      rc = SSL_get_error(ms->inet_ssl, rc);
-	      remote_debug(__func__, "SSL_accept %d", rc);
-	      if(rc == SSL_ERROR_WANT_READ)
-		{
-		  if(ssl_want_read(ms) < 0)
-		    goto err;
-		}
-	      else if(rc != SSL_ERROR_WANT_WRITE)
-		{
-		  remote_debug(__func__, "mode accept rc %d", rc);
-		  goto err;
-		}
-	    }
 	}
-      else if(ms->inet_mode == SSL_MODE_ESTABLISHED)
+
+      /*
+       * equivalent to checking if ms->inet_mode == SSL_MODE_ESTABLISHED,
+       * but silenced warning about rc possibly being used without
+       * first being initialised
+       */
+      if(ms->inet_mode != SSL_MODE_ACCEPT)
 	{
+	  assert(ms->inet_mode == SSL_MODE_ESTABLISHED);
 	  while((rc = SSL_read(ms->inet_ssl, buf, sizeof(buf))) > 0)
-	    sc_master_inet_read_cb(ms, buf, (size_t)rc);
-	  if(rc < 0)
 	    {
-	      if((rc = SSL_get_error(ms->inet_ssl, rc)) == SSL_ERROR_WANT_READ)
-		{
-		  if(ssl_want_read(ms) < 0)
-		    goto err;
-		}
-	      else if(rc != SSL_ERROR_WANT_WRITE)
-		{
-		  remote_debug(__func__, "mode estab rc %d", rc);
-		  goto err;
-		}
+	      sc_master_inet_read_cb(ms, buf, (size_t)rc);
+	      /*
+	       * the callback function might end up disconnecting the
+	       * SSL connection
+	       */
+	      if(ms->inet_ssl == NULL)
+		return;
 	    }
 	}
+
+      if((rc = SSL_get_error(ms->inet_ssl, rc)) == SSL_ERROR_WANT_READ)
+	{
+	  if(ssl_want_read(ms) < 0)
+	    {
+	      remote_debug(__func__, "ssl_want_read failed");
+	      goto err;
+	    }
+	}
+      else if(rc != SSL_ERROR_WANT_WRITE)
+	{
+	  remote_debug(__func__, "mode %s rc %d",
+		       ms->inet_mode == SSL_MODE_ACCEPT ? "accept" : "estab",
+		       rc);
+	  goto err;
+	}
+
       return;
     }
 #endif
@@ -1178,24 +1956,34 @@ static void sc_master_inet_read(sc_master_t *ms)
   sc_master_inet_read_cb(ms, buf, (size_t)rrc);
   return;
 
+  /* if we are keeping state for disconnected scamper instances */
+ zombie:
+  if(zombie == 0 || ms->name == NULL)
+    sc_unit_gc(ms->unit);
+  else
+    sc_master_zombie(ms);
+  return;
+
+#ifdef HAVE_OPENSSL
  err:
   sc_unit_gc(ms->unit);
   return;
+#endif
 }
 
 /*
- * sc_master_unix_accept
+ * sc_master_unix_accept_do
  *
  * a local process has connected to the unix domain socket that
  * corresponds to a remote scamper process.  accept the socket and
  * cause the remote scamper process to create a new channel.
  */
-static void sc_master_unix_accept(sc_master_t *ms)
+static void sc_master_unix_accept_do(sc_master_t *ms)
 {
   struct sockaddr_storage ss;
   socklen_t socklen = sizeof(ss);
   sc_channel_t *cn = NULL;
-  uint8_t msg[4+2+1+4];
+  uint8_t msg[1+4];
   int s = -1;
 
   if((s = accept(ms->unix_fd->fd, (struct sockaddr *)&ss, &socklen)) == -1)
@@ -1231,14 +2019,11 @@ static void sc_master_unix_accept(sc_master_t *ms)
     goto err;
   cn->master = ms;
 
-  bytes_htonl(msg+0, 0);
-  bytes_htons(msg+4, 1 + 4);
-  msg[6] = CONTROL_CHANNEL_NEW;
-  bytes_htonl(msg+7, cn->id);
-  if(sc_master_inet_send(ms, msg, 11) != 0)
-    {
-      goto err;
-    }
+  /* send a new channel message to scamper. expect an acknowledgement */
+  msg[0] = CONTROL_CHANNEL_NEW;
+  bytes_htonl(msg+1, cn->id);
+  if(sc_master_inet_send(ms, msg, 1 + 4, 0, 1) != 0)
+    goto err;
 
   return;
 
@@ -1255,45 +2040,23 @@ static void sc_master_unix_accept(sc_master_t *ms)
  */
 static void sc_master_free(sc_master_t *ms)
 {
-  char filename[65535];
-
   if(ms == NULL)
     return;
 
-  /*
-   * if unix_fd is not null, it is our responsibility to both close
-   * the fd, and to unlink the socket from the file system
-   */
-  if(ms->unix_fd != NULL)
-    {
-      sc_fd_free(ms->unix_fd);
-      snprintf(filename, sizeof(filename), "%s/%s", unix_name, ms->name);
-      unlink(filename);
-    }
+  sc_master_unix_free(ms);
 
   if(ms->channels != NULL)
     dlist_free_cb(ms->channels, (dlist_free_t)sc_channel_free);
+  if(ms->messages != NULL)
+    slist_free_cb(ms->messages, (slist_free_t)sc_message_free);
 
   if(ms->unit != NULL) sc_unit_free(ms->unit);
 
-  if(ms->inet_fd.fd != -1) close(ms->inet_fd.fd);
-  if(ms->inet_wb != NULL) scamper_writebuf_free(ms->inet_wb);
+  sc_master_inet_free(ms);
 
-#ifdef HAVE_OPENSSL
-  if(ms->inet_ssl != NULL)
-    {
-      SSL_free(ms->inet_ssl);
-    }
-  else
-    {
-      if(ms->inet_wbio != NULL)
-	BIO_free(ms->inet_wbio);
-      if(ms->inet_rbio != NULL)
-	BIO_free(ms->inet_rbio);
-    }
-#endif
-
+  if(ms->tree_node != NULL) splaytree_remove_node(mstree, ms->tree_node);
   if(ms->name != NULL) free(ms->name);
+  if(ms->monitorname != NULL) free(ms->monitorname);
   if(ms->magic != NULL) free(ms->magic);
   if(ms->node != NULL) dlist_node_pop(mslist, ms->node);
   free(ms);
@@ -1335,6 +2098,12 @@ static sc_master_t *sc_master_alloc(int fd)
       goto err;
     }
 
+  if((ms->messages = slist_alloc()) == NULL)
+    {
+      remote_debug(__func__, "could not alloc messages: %s", strerror(errno));
+      goto err;
+    }
+
 #ifdef HAVE_OPENSSL
   if(tls_certfile != NULL)
     {
@@ -1368,11 +2137,11 @@ static sc_master_t *sc_master_alloc(int fd)
 }
 
 /*
- * sc_channel_unix_write
+ * sc_channel_unix_write_do
  *
  * we can write to the unix fd without blocking, so do so.
  */
-static void sc_channel_unix_write(sc_channel_t *cn)
+static void sc_channel_unix_write_do(sc_channel_t *cn)
 {
   int gtzero;
 
@@ -1428,30 +2197,27 @@ static void sc_channel_unix_write(sc_channel_t *cn)
 }
 
 /*
- * sc_channel_unix_read
+ * sc_channel_unix_read_do
  *
  * a local client process has written to a unix domain socket, which
  * we will process line by line.
  */
-static void sc_channel_unix_read(sc_channel_t *cn)
+static void sc_channel_unix_read_do(sc_channel_t *cn)
 {
   ssize_t rc;
   uint8_t buf[4096];
-  uint8_t hdr[4+2];
 
   if((rc = read(cn->unix_fd->fd, buf, sizeof(buf))) <= 0)
     {
       if(rc == -1 && (errno == EAGAIN || errno == EINTR))
 	return;
 
-      /* send an EOF if we haven't tx'd or rx'd an EOF */
+      /* send an EOF if we haven't tx'd or rx'd an EOF. expect an ack */
       if((cn->flags & (CHANNEL_FLAG_EOF_RX|CHANNEL_FLAG_EOF_TX)) == 0)
 	{
-	  bytes_htonl(buf+0, 0);
-	  bytes_htons(buf+4, 5);
-	  buf[6] = CONTROL_CHANNEL_FIN;
-	  bytes_htonl(buf+7, cn->id);
-	  sc_master_inet_send(cn->master, buf, 11);
+	  buf[0] = CONTROL_CHANNEL_FIN;
+	  bytes_htonl(buf+1, cn->id);
+	  sc_master_inet_send(cn->master, buf, 5, 0, 1);
 	  cn->flags |= CHANNEL_FLAG_EOF_TX;
 	}
 
@@ -1479,11 +2245,8 @@ static void sc_channel_unix_read(sc_channel_t *cn)
       return;
     }
 
-  bytes_htonl(hdr+0, cn->id);
-  bytes_htons(hdr+4, rc);
-
-  sc_master_inet_send(cn->master, hdr, 6);
-  sc_master_inet_send(cn->master, buf, rc);
+  /* send the message to scamper, expecting an acknowledgement */
+  sc_master_inet_send(cn->master, buf, rc, cn->id, 1);
 
   return;
 }
@@ -1514,6 +2277,7 @@ static int serversocket_accept(int ss)
   sc_master_t *ms = NULL;
   socklen_t slen;
   int inet_fd = -1;
+  char buf[256];
 
   slen = sizeof(ss);
   if((inet_fd = accept(ss, (struct sockaddr *)&sas, &slen)) == -1)
@@ -1531,6 +2295,9 @@ static int serversocket_accept(int ss)
   inet_fd = -1;
   if(ms == NULL)
     goto err;
+
+  if(sc_fd_peername(&ms->inet_fd, buf, sizeof(buf)) == 0)
+    remote_debug(__func__, "%s", buf);
 
   if(sc_fd_read_add(&ms->inet_fd) != 0)
     {
@@ -1555,6 +2322,62 @@ static int serversocket_accept(int ss)
   return -1;
 }
 
+static int serversocket_init_sa(const struct sockaddr *sa)
+{
+  char buf[256];
+  int opt, fd = -1;
+
+  if((fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP)) < 0)
+    {
+      remote_debug(__func__, "could not open %s socket: %s",
+		   sa->sa_family == AF_INET ? "ipv4" : "ipv6", strerror(errno));
+      goto err;
+    }
+
+  opt = 1;
+  if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt)) != 0)
+    {
+      remote_debug(__func__, "could not set SO_REUSEADDR on %s socket: %s",
+		   sa->sa_family == AF_INET ? "ipv4" : "ipv6", strerror(errno));
+      goto err;
+    }
+
+#ifdef IPV6_V6ONLY
+  if(sa->sa_family == PF_INET6)
+    {
+      opt = 1;
+      if(setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY,
+		    (char *)&opt, sizeof(opt)) != 0)
+	{
+	  remote_debug(__func__, "could not set IPV6_V6ONLY: %s",
+		       strerror(errno));
+	  goto err;
+	}
+    }
+#endif
+
+  if(bind(fd, sa, sockaddr_len(sa)) != 0)
+    {
+      remote_debug(__func__, "could not bind %s socket to %s: %s",
+		   sa->sa_family == AF_INET ? "ipv4" : "ipv6",
+		   sockaddr_tostr(sa, buf, sizeof(buf)), strerror(errno));
+      goto err;
+    }
+
+  if(listen(fd, -1) != 0)
+    {
+      remote_debug(__func__, "could not listen %s socket: %s",
+		   sa->sa_family == AF_INET ? "ipv4" : "ipv6", strerror(errno));
+      goto err;
+    }
+
+  return fd;
+
+ err:
+  if(fd != -1) close(fd);
+  return -1;
+}
+
 /*
  * serversocket_init
  *
@@ -1564,59 +2387,35 @@ static int serversocket_accept(int ss)
 static int serversocket_init(void)
 {
   struct sockaddr_storage sas;
-  int i, pf, opt;
+  int i, pf, fd, x;
+
+  if(ss_addr != NULL)
+    {
+      if(sockaddr_compose_str((struct sockaddr *)&sas, ss_addr, ss_port) != 0)
+	{
+	  remote_debug(__func__, "could not compose sockaddr");
+	  return -1;
+	}
+      if((fd = serversocket_init_sa((struct sockaddr *)&sas)) == -1)
+	return -1;
+      serversockets[0] = fd;
+      return 0;
+    }
+
+  x = 0;
   for(i=0; i<2; i++)
     {
       pf = i == 0 ? PF_INET : PF_INET6;
-      if((pf == PF_INET  && (options & OPT_IPV4) == 0) ||
-	 (pf == PF_INET6 && (options & OPT_IPV6) == 0))
+      if((pf == PF_INET  && (options & OPT_IPV6) != 0) ||
+	 (pf == PF_INET6 && (options & OPT_IPV4) != 0))
 	continue;
 
-      if((serversockets[i] = socket(pf, SOCK_STREAM, IPPROTO_TCP)) < 0)
-	{
-	  remote_debug(__func__, "could not open %s socket: %s",
-		       i == 0 ? "ipv4" : "ipv6", strerror(errno));
-	  return -1;
-	}
-
-      opt = 1;
-      if(setsockopt(serversockets[i], SOL_SOCKET, SO_REUSEADDR,
-		    (char *)&opt, sizeof(opt)) != 0)
-	{
-	  remote_debug(__func__, "could not set SO_REUSEADDR on %s socket: %s",
-		       i == 0 ? "ipv4" : "ipv6", strerror(errno));
-	  return -1;
-	}
-
-#ifdef IPV6_V6ONLY
-      if(pf == PF_INET6)
-	{
-	  opt = 1;
-	  if(setsockopt(serversockets[i], IPPROTO_IPV6, IPV6_V6ONLY,
-			(char *)&opt, sizeof(opt)) != 0)
-	    {
-	      remote_debug(__func__, "could not set IPV6_V6ONLY: %s",
-			   strerror(errno));
-	      return -1;
-	    }
-	}
-#endif
-
-      sockaddr_compose((struct sockaddr *)&sas, pf, NULL, port);
-      if(bind(serversockets[i], (struct sockaddr *)&sas,
-	      sockaddr_len((struct sockaddr *)&sas)) != 0)
-	{
-	  remote_debug(__func__, "could not bind %s socket to port %d: %s",
-		       i == 0 ? "ipv4" : "ipv6", port, strerror(errno));
-	  return -1;
-	}
-      if(listen(serversockets[i], -1) != 0)
-	{
-	  remote_debug(__func__, "could not listen %s socket: %s",
-		       i == 0 ? "ipv4" : "ipv6", strerror(errno));
-	  return -1;
-	}
+      sockaddr_compose((struct sockaddr *)&sas, pf, NULL, ss_port);
+      if((fd = serversocket_init_sa((struct sockaddr *)&sas)) == -1)
+	return -1;
+      serversockets[x++] = fd;
     }
+
   return 0;
 }
 
@@ -1648,14 +2447,24 @@ static void cleanup(void)
   for(i=0; i<2; i++)
     close(serversockets[i]);
 
+  if(ss_addr != NULL)
+    free(ss_addr);
   if(mslist != NULL)
     dlist_free_cb(mslist, (dlist_free_t)sc_master_free);
+  if(mstree != NULL)
+    splaytree_free(mstree, NULL);
 
 #ifdef HAVE_OPENSSL
   if(tls_ctx != NULL) SSL_CTX_free(tls_ctx);
 #endif
 
   if(gclist != NULL) dlist_free(gclist);
+
+  if(pidfile != NULL)
+    {
+      unlink(pidfile);
+      free(pidfile);
+    }
 
 #ifdef HAVE_EPOLL
   if(epfd != -1) close(epfd);
@@ -1668,9 +2477,112 @@ static void cleanup(void)
   return;
 }
 
-static void remoted_sig(int sig)
+#ifdef HAVE_OPENSSL
+static int remoted_tlsctx(void)
 {
-  if(sig == SIGHUP || sig == SIGINT)
+  STACK_OF(X509_NAME) *cert_names;
+
+  if((tls_ctx = SSL_CTX_new(SSLv23_method())) == NULL)
+    return -1;
+
+  /* load the server key materials */
+  if(SSL_CTX_use_certificate_chain_file(tls_ctx,tls_certfile)!=1)
+    {
+      remote_debug(__func__, "could not SSL_CTX_use_certificate_file");
+      ERR_print_errors_fp(stderr);
+      return -1;
+    }
+  if(SSL_CTX_use_PrivateKey_file(tls_ctx,tls_privfile,SSL_FILETYPE_PEM)!=1)
+    {
+      remote_debug(__func__, "could not SSL_CTX_use_PrivateKey_file");
+      ERR_print_errors_fp(stderr);
+      return -1;
+    }
+
+  if(tls_cafile != NULL)
+    {
+      /* load the materials to verify client certificates */
+      if(SSL_CTX_load_verify_locations(tls_ctx, tls_cafile, NULL) != 1)
+	{
+	  remote_debug(__func__, "could not SSL_CTX_load_verify_locations");
+	  ERR_print_errors_fp(stderr);
+	  return -1;
+	}
+      if((cert_names = SSL_load_client_CA_file(tls_cafile)) == NULL)
+	{
+	  remote_debug(__func__, "could not SSL_load_client_CA_file");
+	  ERR_print_errors_fp(stderr);
+	  return -1;
+	}
+      SSL_CTX_set_client_CA_list(tls_ctx, cert_names);
+      SSL_CTX_set_verify(tls_ctx, SSL_VERIFY_PEER, NULL);
+    }
+  else
+    {
+      SSL_CTX_set_verify(tls_ctx, SSL_VERIFY_NONE, NULL);
+    }
+  SSL_CTX_set_options(tls_ctx,
+		      SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 |
+		      SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+  return 0;
+}
+
+static int remoted_tlsctx_reload(void)
+{
+  if(tls_ctx == NULL)
+    return 0;
+  SSL_CTX_free(tls_ctx); tls_ctx = NULL;
+  return remoted_tlsctx();
+}
+#endif
+
+static int remoted_pidfile(void)
+{
+  char buf[32];
+  mode_t mode;
+  size_t len;
+  int fd, fd_flags = O_WRONLY | O_TRUNC | O_CREAT;
+
+#ifndef _WIN32
+  pid_t pid = getpid();
+  mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
+#else
+  DWORD pid = GetCurrentProcessId();
+  mode = _S_IREAD | _S_IWRITE;
+#endif
+
+  if((fd = open(pidfile, fd_flags, mode)) == -1)
+    {
+      remote_debug(__func__, "could not open %s: %s", pidfile, strerror(errno));
+      return -1;
+    }
+
+  snprintf(buf, sizeof(buf), "%ld\n", (long)pid);
+  len = strlen(buf);
+  if(write_wrap(fd, buf, NULL, len) != 0)
+    {
+      remote_debug(__func__, "could not write pid: %s", strerror(errno));
+      goto err;
+    }
+  close(fd);
+
+  return 0;
+
+ err:
+  if(fd != -1) close(fd);
+  return -1;
+}
+
+static void remoted_sighup(int sig)
+{
+  if(sig == SIGHUP)
+    reload = 1;
+  return;
+}
+
+static void remoted_sigint(int sig)
+{
+  if(sig == SIGINT)
     stop = 1;
   return;
 }
@@ -1691,7 +2603,7 @@ static int kqueue_loop(void)
   int events_c = sizeof(events) / sizeof(struct kevent);
   struct timespec ts, *timeout;
 #endif
-  struct timeval tv, to;
+  struct timeval tv, to, *tvp;
   sc_master_t *ms;
   dlist_node_t *dn;
   sc_fd_t *scfd, scfd_ss[2];
@@ -1727,6 +2639,15 @@ static int kqueue_loop(void)
   /* main event loop */
   while(stop == 0)
     {
+      if(reload != 0)
+	{
+	  reload = 0;
+#ifdef HAVE_OPENSSL
+	  if(remoted_tlsctx_reload() != 0)
+	    return -1;
+#endif
+	}
+
 #if defined(HAVE_EPOLL)
       timeout = -1;
 #else
@@ -1743,9 +2664,28 @@ static int kqueue_loop(void)
 	      ms = dlist_node_item(dn);
 	      dn = dlist_node_next(dn);
 
+	      /* check if it is time to take care of a zombie */
+	      if(ms->inet_fd.fd == -1)
+		{
+		  if(timeval_cmp(&now, &ms->zombie) < 0)
+		    {
+		      timeval_diff_tv(&tv, &now, &ms->zombie);
+		      goto set_timeout;
+		    }
+		  remote_debug(__func__, "removing %s zombie", ms->name);
+		  sc_master_free(ms);
+		  continue;
+		}
+
 	      /* if the connection has gone silent, abort */
 	      if(timeval_cmp(&now, &ms->rx_abort) >= 0)
 		{
+		  if(zombie > 0 && ms->name != NULL)
+		    {
+		      sc_master_zombie(ms);
+		      timeval_diff_tv(&tv, &now, &ms->zombie);
+		      goto set_timeout;
+		    }
 		  sc_master_free(ms);
 		  continue;
 		}
@@ -1767,9 +2707,15 @@ static int kqueue_loop(void)
 
 	      /* now figure out timeout to set */
 	      if(timeval_cmp(&ms->rx_abort, &ms->tx_ka) <= 0)
-		timeval_diff_tv(&tv, &now, &ms->rx_abort);
+		tvp = &ms->rx_abort;
 	      else
-		timeval_diff_tv(&tv, &now, &ms->tx_ka);
+		tvp = &ms->tx_ka;
+	      if(timeval_cmp(&now, tvp) <= 0)
+		timeval_diff_tv(&tv, &now, tvp);
+	      else
+		memset(&tv, 0, sizeof(tv));
+
+	    set_timeout:
 	      if(rc == 0)
 		{
 		  timeval_cpy(&to, &tv);
@@ -1808,7 +2754,7 @@ static int kqueue_loop(void)
 	{
 	  if(errno == EINTR)
 	    continue;
-	  remote_debug(__func__, "kqueue_event failed: %s", strerror(errno));
+	  remote_debug(__func__, "kevent failed: %s", strerror(errno));
 	  return -1;
 	}
 #endif
@@ -1836,7 +2782,10 @@ static int kqueue_loop(void)
 	    write_cb[scfd->type](scu->data);
 #else
 	  if(scu->gc != 0)
-	    continue;
+	    {
+	      assert(scu->list == gclist);
+	      continue;
+	    }
 	  if(events[i].filter == EVFILT_READ)
 	    read_cb[scfd->type](scu->data);
 	  else if(events[i].filter == EVFILT_WRITE)
@@ -1854,7 +2803,7 @@ static int kqueue_loop(void)
 
 static int select_loop(void)
 {
-  struct timeval tv, to, *timeout;
+  struct timeval tv, to, *timeout, *tvp;
   fd_set rfds;
   fd_set wfds, *wfdsp;
   int i, count, nfds;
@@ -1865,6 +2814,15 @@ static int select_loop(void)
 
   while(stop == 0)
     {
+      if(reload != 0)
+	{
+	  reload = 0;
+#ifdef HAVE_OPENSSL
+	  if(remoted_tlsctx_reload() != 0)
+	    return -1;
+#endif
+	}
+
       FD_ZERO(&rfds); FD_ZERO(&wfds);
       wfdsp = NULL; nfds = -1; timeout = NULL;
 
@@ -1887,9 +2845,28 @@ static int select_loop(void)
 	      ms = dlist_node_item(dn);
 	      dn = dlist_node_next(dn);
 
+	      /* check if it is time to take care of a zombie */
+	      if(ms->inet_fd.fd == -1)
+		{
+		  if(timeval_cmp(&now, &ms->zombie) < 0)
+		    {
+		      timeval_diff_tv(&tv, &now, &ms->zombie);
+		      goto set_timeout;
+		    }
+		  remote_debug(__func__, "removing %s zombie", ms->name);
+		  sc_master_free(ms);
+		  continue;
+		}
+
 	      /* if the connection has gone silent, abort */
 	      if(timeval_cmp(&now, &ms->rx_abort) >= 0)
 		{
+		  if(zombie > 0 && ms->name != NULL)
+		    {
+		      sc_master_zombie(ms);
+		      timeval_diff_tv(&tv, &now, &ms->zombie);
+		      goto set_timeout;
+		    }
 		  sc_master_free(ms);
 		  continue;
 		}
@@ -1911,28 +2888,25 @@ static int select_loop(void)
 
 	      /* now figure out timeout to set */
 	      if(timeval_cmp(&ms->rx_abort, &ms->tx_ka) <= 0)
-		timeval_diff_tv(&tv, &now, &ms->rx_abort);
+		tvp = &ms->rx_abort;
 	      else
-		timeval_diff_tv(&tv, &now, &ms->tx_ka);
-	      if(timeout == NULL)
-		{
-		  timeval_cpy(&to, &tv);
-		  timeout = &to;
-		}
+		tvp = &ms->tx_ka;
+	      if(timeval_cmp(&now, tvp) <= 0)
+		timeval_diff_tv(&tv, &now, tvp);
 	      else
-		{
-		  if(timeval_cmp(&tv, &to) < 0)
-		    timeval_cpy(&to, &tv);
-		}
+		memset(&tv, 0, sizeof(tv));
 
-	      /* put the master inet socket into the select set */
-	      FD_SET(ms->inet_fd.fd, &rfds);
-	      if(ms->inet_fd.fd > nfds)
-		nfds = ms->inet_fd.fd;
-	      if(scamper_writebuf_len(ms->inet_wb) > 0)
+	      if(ms->inet_fd.fd != -1)
 		{
-		  FD_SET(ms->inet_fd.fd, &wfds);
-		  wfdsp = &wfds;
+		  /* put the master inet socket into the select set */
+		  FD_SET(ms->inet_fd.fd, &rfds);
+		  if(ms->inet_fd.fd > nfds)
+		    nfds = ms->inet_fd.fd;
+		  if(scamper_writebuf_len(ms->inet_wb) > 0)
+		    {
+		      FD_SET(ms->inet_fd.fd, &wfds);
+		      wfdsp = &wfds;
+		    }
 		}
 
 	      /* listen on the master unix domain socket for new connections */
@@ -1962,6 +2936,18 @@ static int select_loop(void)
 		      wfdsp = &wfds;
 		    }
 		}
+
+	    set_timeout:
+	      if(timeout == NULL)
+		{
+		  timeval_cpy(&to, &tv);
+		  timeout = &to;
+		}
+	      else
+		{
+		  if(timeval_cmp(&tv, &to) < 0)
+		    timeval_cpy(&to, &tv);
+		}
 	    }
 	}
 
@@ -1972,6 +2958,8 @@ static int select_loop(void)
 	  remote_debug(__func__, "select failed: %s", strerror(errno));
 	  return -1;
 	}
+
+      gettimeofday_wrap(&now);
 
       if(count > 0)
 	{
@@ -1986,14 +2974,14 @@ static int select_loop(void)
 	  for(dn=dlist_head_node(mslist); dn != NULL; dn=dlist_node_next(dn))
 	    {
 	      ms = dlist_node_item(dn);
-	      if(FD_ISSET(ms->inet_fd.fd, &rfds))
-		sc_master_inet_read(ms);
+	      if(ms->inet_fd.fd != -1 && FD_ISSET(ms->inet_fd.fd, &rfds))
+		sc_master_inet_read_do(ms);
 	      if(ms->unit->gc == 0 && ms->unix_fd != NULL &&
 		 FD_ISSET(ms->unix_fd->fd, &rfds))
-		sc_master_unix_accept(ms);
+		sc_master_unix_accept_do(ms);
 	      if(ms->unit->gc == 0 && wfdsp != NULL &&
-		 FD_ISSET(ms->inet_fd.fd, wfdsp))
-		sc_master_inet_write(ms);
+		 ms->inet_fd.fd != -1 && FD_ISSET(ms->inet_fd.fd, wfdsp))
+		sc_master_inet_write_do(ms);
 
 	      for(dn2 = dlist_head_node(ms->channels);
 		  dn2 != NULL && ms->unit->gc == 0;
@@ -2001,10 +2989,10 @@ static int select_loop(void)
 		{
 		  cn = dlist_node_item(dn2);
 		  if(cn->unix_fd != NULL && FD_ISSET(cn->unix_fd->fd, &rfds))
-		    sc_channel_unix_read(cn);
+		    sc_channel_unix_read_do(cn);
 		  if(wfdsp != NULL && cn->unix_fd != NULL &&
 		     FD_ISSET(cn->unix_fd->fd, wfdsp))
-		    sc_channel_unix_write(cn);
+		    sc_channel_unix_write_do(cn);
 		}
 	    }
 	}
@@ -2038,28 +3026,16 @@ int main(int argc, char *argv[])
   if(check_options(argc, argv) != 0)
     return -1;
 
+  if(pidfile != NULL && remoted_pidfile() != 0)
+    return -1;
+
 #ifdef HAVE_OPENSSL
   if(tls_certfile != NULL)
     {
       SSL_library_init();
       SSL_load_error_strings();
-      if((tls_ctx = SSL_CTX_new(SSLv23_method())) == NULL)
+      if(remoted_tlsctx() != 0)
 	return -1;
-      if(SSL_CTX_use_certificate_chain_file(tls_ctx,tls_certfile)!=1)
-	{
-	  remote_debug(__func__, "could not SSL_CTX_use_certificate_file");
-	  ERR_print_errors_fp(stderr);
-	  return -1;
-	}
-      if(SSL_CTX_use_PrivateKey_file(tls_ctx,tls_privfile,SSL_FILETYPE_PEM)!=1)
-	{
-	  remote_debug(__func__, "could not SSL_CTX_use_PrivateKey_file");
-	  ERR_print_errors_fp(stderr);
-	  return -1;
-	}
-      SSL_CTX_set_verify(tls_ctx, SSL_VERIFY_NONE, NULL);
-      SSL_CTX_set_options(tls_ctx,
-			  SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1);
     }
 #endif
 
@@ -2077,12 +3053,16 @@ int main(int argc, char *argv[])
 
   sigemptyset(&si_sa.sa_mask);
   si_sa.sa_flags   = 0;
-  si_sa.sa_handler = remoted_sig;
+  si_sa.sa_handler = remoted_sighup;
   if(sigaction(SIGHUP, &si_sa, 0) == -1)
     {
       remote_debug(__func__, "could not set sigaction for SIGHUP");
       return -1;
     }
+
+  sigemptyset(&si_sa.sa_mask);
+  si_sa.sa_flags   = 0;
+  si_sa.sa_handler = remoted_sigint;
   if(sigaction(SIGINT, &si_sa, 0) == -1)
     {
       remote_debug(__func__, "could not set sigaction for SIGINT");
@@ -2094,6 +3074,7 @@ int main(int argc, char *argv[])
     return -1;
 
   if((mslist = dlist_alloc()) == NULL ||
+     (mstree = splaytree_alloc((splaytree_cmp_t)sc_master_cmp)) == NULL ||
      (gclist = dlist_alloc()) == NULL)
     return -1;
   dlist_onremove(mslist, (dlist_onremove_t)sc_master_onremove);

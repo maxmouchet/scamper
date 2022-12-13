@@ -1,12 +1,12 @@
 /*
  * scamper_task.c
  *
- * $Id: scamper_task.c,v 1.63 2016/10/28 05:10:30 mjl Exp $
+ * $Id: scamper_task.c,v 1.71.10.2 2022/08/10 22:39:48 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_task.c,v 1.63 2016/10/28 05:10:30 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -49,6 +44,7 @@ static const char rcsid[] =
 #include "scamper_rtsock.h"
 #include "scamper_dl.h"
 #include "mjl_list.h"
+#include "mjl_splaytree.h"
 #include "mjl_patricia.h"
 #include "utils.h"
 
@@ -106,11 +102,12 @@ typedef struct task_onhold
   void           *param;
 } task_onhold_t;
 
-static patricia_t *tx_ip4 = NULL;
-static patricia_t *tx_ip6 = NULL;
-static patricia_t *tx_nd4 = NULL;
-static patricia_t *tx_nd6 = NULL;
-static dlist_t    *sniff = NULL;
+static patricia_t  *tx_ip4 = NULL;
+static patricia_t  *tx_ip6 = NULL;
+static patricia_t  *tx_nd4 = NULL;
+static patricia_t  *tx_nd6 = NULL;
+static dlist_t     *sniff = NULL;
+static splaytree_t *host = NULL;
 
 static int tx_ip_cmp(const s2t_t *a, const s2t_t *b)
 {
@@ -150,6 +147,20 @@ static int tx_nd_fbd(const s2t_t *a, const s2t_t *b)
   assert(a->sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_ND);
   assert(b->sig->sig_type == SCAMPER_TASK_SIG_TYPE_TX_ND);
   return scamper_addr_fbd(a->sig->sig_tx_nd_ip, b->sig->sig_tx_nd_ip);
+}
+
+static int host_cmp(const s2t_t *a, const s2t_t *b)
+{
+  int i;
+  assert(a->sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST);
+  assert(b->sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST);
+  if((i = strcasecmp(a->sig->sig_host_name, b->sig->sig_host_name)) != 0)
+    return i;
+  if(a->sig->sig_host_type < b->sig->sig_host_type)
+    return -1;
+  if(a->sig->sig_host_type > b->sig->sig_host_type)
+    return 1;
+  return 0;
 }
 
 static void tx_ip_check(scamper_dl_rec_t *dl)
@@ -337,6 +348,8 @@ static void s2t_free(s2t_t *s2t)
 	}
       else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_SNIFF)
 	dlist_node_pop(sniff, s2t->node);
+      else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST)
+	splaytree_remove_node(host, s2t->node);
     }
 
   free(s2t);
@@ -358,6 +371,9 @@ char *scamper_task_sig_tostr(scamper_task_sig_t *sig, char *buf, size_t len)
     string_concat(buf, len, &off, "sniff %s icmp-id %04x",
 		  scamper_addr_tostr(sig->sig_sniff_src, tmp, sizeof(tmp)),
 		  sig->sig_sniff_icmp_id);
+  else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST)
+    string_concat(buf, len, &off, "host %s %u",
+		  sig->sig_host_name, sig->sig_host_type);
   else
     return NULL;
 
@@ -390,6 +406,10 @@ void scamper_task_sig_free(scamper_task_sig_t *sig)
 
     case SCAMPER_TASK_SIG_TYPE_SNIFF:
       if(sig->sig_sniff_src != NULL) scamper_addr_free(sig->sig_sniff_src);
+      break;
+
+    case SCAMPER_TASK_SIG_TYPE_HOST:
+      if(sig->sig_host_name != NULL) free(sig->sig_host_name);
       break;
     }
 
@@ -432,7 +452,10 @@ int scamper_task_sig_add(scamper_task_t *task, scamper_task_sig_t *sig)
   s2t->sig = sig;
   s2t->task = task;
   if(slist_tail_push(task->siglist, s2t) == NULL)
-    return -1;
+    {
+      free(s2t);
+      return -1;
+    }
   return 0;
 }
 
@@ -487,7 +510,10 @@ int scamper_task_sig_install(scamper_task_t *task)
   slist_node_t *n;
 
   if(slist_count(task->siglist) < 1)
-    return -1;
+    {
+      printerror(__func__, "no signatures for task");
+      return -1;
+    }
 
   for(n=slist_head_node(task->siglist); n != NULL; n = slist_node_next(n))
     {
@@ -517,6 +543,8 @@ int scamper_task_sig_install(scamper_task_t *task)
 	}
       else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_SNIFF)
 	s2t->node = dlist_tail_push(sniff, s2t);
+      else if(sig->sig_type == SCAMPER_TASK_SIG_TYPE_HOST)
+	s2t->node = splaytree_insert(host, s2t);
 
       if(s2t->node == NULL)
 	{
@@ -603,7 +631,7 @@ scamper_task_t *scamper_task_alloc(void *data, scamper_task_funcs_t *funcs)
 
   if((task = malloc_zero(sizeof(scamper_task_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc task");
+      printerror(__func__, "could not malloc task");
       goto err;
     }
 
@@ -920,6 +948,8 @@ int scamper_task_init(void)
 			      (patricia_cmp_t)tx_nd_cmp,
 			      (patricia_fbd_t)tx_nd_fbd)) == NULL)
     return -1;
+  if((host = splaytree_alloc((splaytree_cmp_t)host_cmp)) == NULL)
+    return -1;
   if((sniff = dlist_alloc()) == NULL)
     return -1;
   return 0;
@@ -931,6 +961,7 @@ void scamper_task_cleanup(void)
   if(tx_ip6 != NULL) { patricia_free(tx_ip6); tx_ip6 = NULL; }
   if(tx_nd4 != NULL) { patricia_free(tx_nd4); tx_nd4 = NULL; }
   if(tx_nd6 != NULL) { patricia_free(tx_nd6); tx_nd6 = NULL; }
-  if(sniff != NULL)  { dlist_free(sniff);     sniff = NULL;  }
+  if(host != NULL)   { splaytree_free(host, NULL);   host   = NULL; }
+  if(sniff != NULL)  { dlist_free(sniff); sniff = NULL; }
   return;
 }

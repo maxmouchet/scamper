@@ -1,15 +1,15 @@
 /*
  * scamper_do_tracelb.c
  *
- * $Id: scamper_tracelb_do.c,v 1.274 2016/08/08 08:37:59 mjl Exp $
+ * $Id: scamper_tracelb_do.c,v 1.283.10.2 2022/08/10 22:39:49 mjl Exp $
  *
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012      The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2020 Matthew Luckie
  * Author: Matthew Luckie
  *
  * MDA traceroute technique authored by
- * Ben Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
+ * Brice Augustin, Timur Friedman, Renata Teixeira; "Measuring Load-balanced
  *  Paths in the Internet", in Proc. Internet Measurement Conference 2007.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,11 +26,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_tracelb_do.c,v 1.274 2016/08/08 08:37:59 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -58,6 +53,7 @@ static const char rcsid[] =
 #include "scamper_file.h"
 #include "scamper_options.h"
 #include "scamper_debug.h"
+#include "host/scamper_host_do.h"
 #include "scamper_tracelb_do.h"
 #include "utils.h"
 #include "mjl_list.h"
@@ -230,6 +226,14 @@ struct tracelb_probe
   uint8_t                  mode;     /* mode the probe was sent in */
 };
 
+typedef struct tracelb_host
+{
+  scamper_task_t          *task;
+  scamper_host_do_t       *hostdo;
+  scamper_tracelb_node_t  *node;
+  dlist_node_t            *dn;
+} tracelb_host_t;
+
 /*
  * tracelb_state
  *
@@ -260,6 +264,7 @@ typedef struct tracelb_state
   int                      linkc;        /* count of links */
   tracelb_path_t         **paths;        /* paths established */
   int                      pathc;        /* count of paths */
+  dlist_t                 *ths;          /* tracelb_host_t */
 } tracelb_state_t;
 
 /* temporary buffer shared amongst traceroutes */
@@ -273,23 +278,27 @@ static scamper_task_funcs_t funcs;
 #define TRACE_OPT_DPORT        2
 #define TRACE_OPT_FIRSTHOP     3
 #define TRACE_OPT_GAPLIMIT     4
-#define TRACE_OPT_PROTOCOL     5
-#define TRACE_OPT_ATTEMPTS     6
-#define TRACE_OPT_PROBECMAX    7
-#define TRACE_OPT_SPORT        8
-#define TRACE_OPT_TOS          9
-#define TRACE_OPT_USERID       10
-#define TRACE_OPT_WAITTIMEOUT  11
-#define TRACE_OPT_WAITPROBE    12
+#define TRACE_OPT_OPTION       5
+#define TRACE_OPT_PROTOCOL     6
+#define TRACE_OPT_ATTEMPTS     7
+#define TRACE_OPT_PROBECMAX    8
+#define TRACE_OPT_SPORT        9
+#define TRACE_OPT_TOS          10
+#define TRACE_OPT_USERID       11
+#define TRACE_OPT_WAITTIMEOUT  12
+#define TRACE_OPT_WAITPROBE    13
+#define TRACE_OPT_RTRADDR      14
 
 static const scamper_option_in_t opts[] = {
   {'c', NULL, TRACE_OPT_CONFIDENCE,  SCAMPER_OPTION_TYPE_NUM},
   {'d', NULL, TRACE_OPT_DPORT,       SCAMPER_OPTION_TYPE_NUM},
   {'f', NULL, TRACE_OPT_FIRSTHOP,    SCAMPER_OPTION_TYPE_NUM},
   {'g', NULL, TRACE_OPT_GAPLIMIT,    SCAMPER_OPTION_TYPE_NUM},
+  {'O', NULL, TRACE_OPT_OPTION,      SCAMPER_OPTION_TYPE_STR},
   {'P', NULL, TRACE_OPT_PROTOCOL,    SCAMPER_OPTION_TYPE_STR},
   {'q', NULL, TRACE_OPT_ATTEMPTS,    SCAMPER_OPTION_TYPE_NUM},
   {'Q', NULL, TRACE_OPT_PROBECMAX,   SCAMPER_OPTION_TYPE_NUM},
+  {'r', NULL, TRACE_OPT_RTRADDR,     SCAMPER_OPTION_TYPE_STR},
   {'s', NULL, TRACE_OPT_SPORT,       SCAMPER_OPTION_TYPE_NUM},
   {'t', NULL, TRACE_OPT_TOS,         SCAMPER_OPTION_TYPE_NUM},
   {'U', NULL, TRACE_OPT_USERID,      SCAMPER_OPTION_TYPE_NUM},
@@ -301,8 +310,9 @@ static const int opts_cnt = SCAMPER_OPTION_COUNT(opts);
 const char *scamper_do_tracelb_usage(void)
 {
   return "tracelb [-c confidence] [-d dport] [-f firsthop] [-g gaplimit]\n"
-         "        [-P method] [-q attempts] [-Q maxprobec] [-s sport]\n"
-         "        [-t tos] [-U userid] [-w wait-timeout] [-W wait-probe]";
+         "        [-O option] [-P method] [-q attempts] [-Q maxprobec]\n"
+         "        [-r rtraddr] [-s sport] [-t tos] [-U userid]\n"
+         "        [-w wait-timeout] [-W wait-probe]";
 }
 
 static tracelb_state_t *tracelb_getstate(const scamper_task_t *task)
@@ -607,43 +617,52 @@ static tracelb_link_t *tracelb_isloop_addr(const tracelb_path_t *path,
   int i, j;
   uint16_t k, l;
 
-  for(i=path->linkc-1; i>=0; i--)
+  if(path->linkc > 0)
     {
-      /* a tracelb_link_t state is required at each spot in the array */
-      tlbl = path->links[i]; assert(tlbl != NULL);
-
-      /* but there does not have to be an actual link with the state */
-      if((link = tlbl->link) == NULL)
-	continue;
-
-      if(link->from->addr == NULL)
-	continue;
-
-      /* if the from address is the same, then we have a loop */
-      if(scamper_addr_cmp(link->from->addr, addr) == 0)
-	return tlbl;
-
-      /* if the link includes a clump, then check the replies in the clump */
-      for(j=0; j<link->hopc-1; j++)
+      i = path->linkc-1;
+      for(;;)
 	{
-	  set = link->sets[j];
-	  for(k=0; k<set->probec; k++)
+	  /* a tracelb_link_t state is required at each spot in the array */
+	  tlbl = path->links[i]; assert(tlbl != NULL);
+
+	  /* but there does not have to be an actual link with the state */
+	  if((link = tlbl->link) == NULL || link->from->addr == NULL)
+	    goto next;
+
+	  /* if the from address is the same, then we have a loop */
+	  if(scamper_addr_cmp(link->from->addr, addr) == 0)
+	    return tlbl;
+
+	  /*
+	   * if the link includes a clump, then check the replies in
+	   * the clump 
+	   */
+	  if(link->hopc > 0)
 	    {
-	      probe = set->probes[k];
-	      for(l=0; l<probe->rxc; l++)
-		if(scamper_addr_cmp(probe->rxs[l]->reply_from, addr) == 0)
-		  return tlbl;
+	      for(j=0; j<link->hopc-1; j++)
+		{
+		  set = link->sets[j];
+		  for(k=0; k<set->probec; k++)
+		    {
+		      probe = set->probes[k];
+		      for(l=0; l<probe->rxc; l++)
+			if(scamper_addr_cmp(probe->rxs[l]->reply_from,
+					    addr) == 0)
+			  return tlbl;
+		    }
+		}
 	    }
+
+	next:
+	  if(i == 0)
+	    break;
+	  i--;
 	}
     }
 
   for(i=0; i<path->backc; i++)
-    {
-      if((tlbl = tracelb_isloop_addr(path->back[i], addr)) != NULL)
-	{
-	  return tlbl;
-	}
-    }
+    if((tlbl = tracelb_isloop_addr(path->back[i], addr)) != NULL)
+      return tlbl;
 
   return NULL;
 }
@@ -741,13 +760,13 @@ static scamper_addr_t *tracelb_addr(tracelb_state_t *state,int type,void *addr)
 
   if((a = scamper_addr_alloc(type, addr)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc addr");
+      printerror(__func__, "could not alloc addr");
       return NULL;
     }
 
   if(splaytree_insert(state->addrs, a) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not insert addr");
+      printerror(__func__, "could not insert addr");
       scamper_addr_free(a);
       return NULL;
     }
@@ -788,7 +807,7 @@ static int tracelb_bringfwd_add(tracelb_branch_t *br, tracelb_path_t *path)
   tracelb_bringfwd_t *bf;
   if((bf = malloc_zero(sizeof(tracelb_bringfwd_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc");
+      printerror(__func__, "could not malloc");
       return -1;
     }
   bf->path = path;
@@ -888,7 +907,7 @@ static int tracelb_flowids_list_add(slist_t *list, tracelb_probe_t *pr)
 
   if((tf = malloc_zero(sizeof(tracelb_flowid_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc flowid");
+      printerror(__func__, "could not malloc flowid");
       return -1;
     }
   tf->id  = pr->probe->flowid;
@@ -897,7 +916,7 @@ static int tracelb_flowids_list_add(slist_t *list, tracelb_probe_t *pr)
   if(slist_tail_push(list, tf) == NULL)
     {
       free(tf);
-      printerror(errno, strerror, __func__, "could not slist_tail_push");
+      printerror(__func__, "could not slist_tail_push");
       return -1;
     }
 
@@ -999,7 +1018,7 @@ static int tracelb_newnode_add(tracelb_branch_t *br,
 
   if((newnode = malloc_zero(sizeof(tracelb_newnode_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc newnode");
+      printerror(__func__, "could not alloc newnode");
       goto err;
     }
   newnode->probe = probe;
@@ -1007,7 +1026,7 @@ static int tracelb_newnode_add(tracelb_branch_t *br,
   reply = probe->rxs[0];
   if((newnode->node = scamper_tracelb_node_alloc(reply->reply_from)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc node");
+      printerror(__func__, "could not alloc node");
       goto err;
     }
   if(SCAMPER_TRACELB_REPLY_IS_ICMP_TTL_EXP(reply) ||
@@ -1020,7 +1039,7 @@ static int tracelb_newnode_add(tracelb_branch_t *br,
   if(array_insert((void ***)&br->newnodes, &br->newnodec, newnode,
 		  (array_cmp_t)tracelb_newnode_cmp) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add node to branch");
+      printerror(__func__, "could not add node to branch");
       goto err;
     }
 
@@ -1049,7 +1068,7 @@ static tracelb_link_t *tracelb_link_alloc(tracelb_state_t *state,
 
   if((tlbl = malloc_zero(sizeof(tracelb_link_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc tlbl");
+      printerror(__func__, "could not alloc tlbl");
       return NULL;
     }
   tlbl->link = link;
@@ -1058,7 +1077,7 @@ static tracelb_link_t *tracelb_link_alloc(tracelb_state_t *state,
   if(array_insert((void ***)&state->links, &state->linkc, tlbl,
 		  (array_cmp_t)tracelb_link_cmp) != 0)
     {
-      printerror(errno, strerror, __func__, "could not insert tlbl");
+      printerror(__func__, "could not insert tlbl");
       free(tlbl);
       return NULL;;
     }
@@ -1104,13 +1123,13 @@ static int tracelb_link_flowid_add_tail(tracelb_link_t *link,
   /* allocate a list structure, if necessary, to store the flowids */
   if(link->flowids == NULL && (link->flowids = slist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc flowids list");
+      printerror(__func__, "could not alloc flowids list");
       return -1;
     }
 
   if((tf = malloc_zero(sizeof(tracelb_flowid_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc flowid");
+      printerror(__func__, "could not malloc flowid");
       return -1;
     }
   tf->id  = probe->flowid;
@@ -1119,7 +1138,7 @@ static int tracelb_link_flowid_add_tail(tracelb_link_t *link,
   if(slist_tail_push(link->flowids, tf) == NULL)
     {
       free(tf);
-      printerror(errno, strerror, __func__, "could not slist_tail_push");
+      printerror(__func__, "could not slist_tail_push");
       return -1;
     }
 
@@ -1176,7 +1195,7 @@ static int tracelb_probe_add(tracelb_state_t *state, tracelb_branch_t *br,
   size_t len = sizeof(tracelb_probe_t *) * (state->id_next + 1);
   if(realloc_wrap((void **)&state->probes, len) != 0)
     {
-      printerror(errno, strerror, __func__, "could not realloc %d bytes", len);
+      printerror(__func__, "could not realloc %d bytes", len);
       return -1;
     }
   pr->id = state->id_next;
@@ -1186,7 +1205,7 @@ static int tracelb_probe_add(tracelb_state_t *state, tracelb_branch_t *br,
 
   if(array_insert((void ***)&br->probes, &br->probec, pr, NULL) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add probe to branch");
+      printerror(__func__, "could not add probe to branch");
       return -1;
     }
   pr->branch = br;
@@ -1229,7 +1248,7 @@ static int tracelb_path_add_link(tracelb_path_t *path, tracelb_link_t *link)
 {
   if(array_insert((void ***)&path->links, &path->linkc, link, NULL) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add link");
+      printerror(__func__, "could not add link");
       return -1;
     }
   return 0;
@@ -1244,7 +1263,7 @@ static int tracelb_path_add_fwd(tracelb_path_t *path, tracelb_path_t *fwd)
 {
   if(array_insert((void ***)&path->fwd, &path->fwdc, fwd, NULL) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add fwd");
+      printerror(__func__, "could not add fwd");
       return -1;
     }
   return 0;
@@ -1259,7 +1278,7 @@ static int tracelb_path_add_back(tracelb_path_t *path, tracelb_path_t *back)
 {
   if(array_insert((void ***)&path->back, &path->backc, back, NULL) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add back");
+      printerror(__func__, "could not add back");
       return -1;
     }
 
@@ -1294,20 +1313,20 @@ static tracelb_path_t *tracelb_path_alloc(tracelb_state_t *state, int linkc)
 
   if((path = malloc_zero(sizeof(tracelb_path_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc path");
+      printerror(__func__, "could not malloc path");
       goto err;
     }
 
   len = sizeof(scamper_tracelb_link_t *) * linkc;
   if(linkc != 0 && (path->links = malloc_zero(len)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc path->links");
+      printerror(__func__, "could not malloc path->links");
       goto err;
     }
 
   if(array_insert((void ***)&state->paths, &state->pathc, path, NULL) != 0)
     {
-      printerror(errno, strerror, __func__, "could not insert path");
+      printerror(__func__, "could not insert path");
       goto err;
     }
 
@@ -1354,7 +1373,7 @@ static int tracelb_branch_active(tracelb_state_t *state, tracelb_branch_t *br)
     {
       return 0;
     }
-  printerror(errno, strerror, __func__, "could not insert branch on active");
+  printerror(__func__, "could not insert branch on active");
   return -1;
 }
 
@@ -1377,7 +1396,7 @@ static int tracelb_branch_waiting(tracelb_state_t *state, tracelb_branch_t *br)
     {
       return 0;
     }
-  printerror(errno, strerror, __func__, "could not insert branch on waiting");
+  printerror(__func__, "could not insert branch on waiting");
   return -1;
 }
 
@@ -1446,7 +1465,7 @@ static int tracelb_path_add(tracelb_state_t *state, tracelb_path_t *path)
 
   if((branch = malloc_zero(sizeof(tracelb_branch_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc branch");
+      printerror(__func__, "could not alloc branch");
       goto err;
     }
   branch->mode = MODE_HOPPROBE;
@@ -1715,6 +1734,70 @@ static void tracelb_queue(scamper_task_t *task)
   return;
 }
 
+static void tracelb_host_free(tracelb_state_t *state, tracelb_host_t *th)
+{
+  if(th->dn != NULL) dlist_node_pop(state->ths, th->dn);
+  if(th->hostdo != NULL) scamper_host_do_free(th->hostdo);
+  free(th);
+  return;
+}
+
+static void tracelb_node_ptr_cb(void *param, const char *name)
+{
+  tracelb_host_t *th = param;
+  scamper_task_t *task = th->task;
+  tracelb_state_t *state = tracelb_getstate(task);
+
+  th->hostdo = NULL;
+
+  if(name != NULL)
+    th->node->name = strdup(name);
+
+  tracelb_host_free(state, th);
+
+  return;
+}
+
+static int tracelb_node_ptr(scamper_task_t *task, scamper_tracelb_node_t *node)
+{
+  scamper_tracelb_t *trace = tracelb_getdata(task);
+  tracelb_state_t *state = tracelb_getstate(task);
+  tracelb_host_t *th = NULL;
+
+  if((trace->flags & SCAMPER_TRACELB_FLAG_PTR) == 0 ||
+     node->addr == NULL)
+    return 0;
+
+  if((state->ths == NULL && (state->ths = dlist_alloc()) == NULL))
+    {
+      printerror(__func__, "could not alloc ths");
+      goto err;
+    }
+  if((th = malloc_zero(sizeof(tracelb_host_t))) == NULL)
+    {
+      printerror(__func__, "could not alloc th");
+      goto err;
+    }
+  th->node = node;
+  th->task = task;
+  th->hostdo = scamper_do_host_do_ptr(node->addr, th, tracelb_node_ptr_cb);
+  if(th->hostdo == NULL)
+    {
+      printerror(__func__, "could not scamper_do_host_do_ptr");
+      goto err;
+    }
+  if((th->dn = dlist_tail_push(state->ths, th)) == NULL)
+    {
+      printerror(__func__, "could not push th");
+      goto err;
+    }
+  return 0;
+
+ err:
+  if(th != NULL) tracelb_host_free(state, th);
+  return -1;
+}
+
 static int tracelb_process_hops(scamper_task_t *task, tracelb_branch_t *br)
 {
   scamper_tracelb_t *trace = tracelb_getdata(task);
@@ -1753,7 +1836,8 @@ static int tracelb_process_hops(scamper_task_t *task, tracelb_branch_t *br)
       if(to == NULL)
 	{
 	  to = br->newnodes[i]->node;
-	  if(scamper_tracelb_node_add(trace, to) != 0)
+	  if(tracelb_node_ptr(task, to) != 0 ||
+	     scamper_tracelb_node_add(trace, to) != 0)
 	    goto err;
 	  splice = 0;
 	}
@@ -1889,14 +1973,14 @@ static int tracelb_process_hops(scamper_task_t *task, tracelb_branch_t *br)
       /* record the probeset with the link */
       if(scamper_tracelb_link_probeset(link, set) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not add probeset");
+	  printerror(__func__, "could not add probeset");
 	  goto err;
 	}
 
       /* record the link in the trace */
       if(link->hopc == 1 && scamper_tracelb_link_add(trace, link) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not add new link");
+	  printerror(__func__, "could not add new link");
 	  goto err;
 	}
 
@@ -2066,14 +2150,14 @@ static int tracelb_process_clump(scamper_task_t *task, tracelb_branch_t *br)
   /* allocate a list to store flowids in */
   if((flowids = slist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc list");
+      printerror(__func__, "could not alloc list");
       goto err;
     }
 
   /* allocate a probeset and add all probes sent in the round */
   if((set = scamper_tracelb_probeset_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc probeset");
+      printerror(__func__, "could not alloc probeset");
       goto err;
     }
 
@@ -2111,7 +2195,7 @@ static int tracelb_process_clump(scamper_task_t *task, tracelb_branch_t *br)
       probe = pr->probe;
       if(scamper_tracelb_probeset_add(set, probe) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not add probe %d", i);
+	  printerror(__func__, "could not add probe %d", i);
 	  goto err;
 	}
 
@@ -2136,7 +2220,7 @@ static int tracelb_process_clump(scamper_task_t *task, tracelb_branch_t *br)
     {
       if((link = scamper_tracelb_link_alloc()) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not alloc link");
+	  printerror(__func__, "could not alloc link");
 	  goto err;
 	}
 
@@ -2157,7 +2241,7 @@ static int tracelb_process_clump(scamper_task_t *task, tracelb_branch_t *br)
   /* add the probeset to the link */
   if(scamper_tracelb_link_probeset(link, set) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add probeset");
+      printerror(__func__, "could not add probeset");
       goto err;
     }
 
@@ -2166,7 +2250,7 @@ static int tracelb_process_clump(scamper_task_t *task, tracelb_branch_t *br)
     {
       if(scamper_tracelb_link_add(trace, link) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not add new link");
+	  printerror(__func__, "could not add new link");
 	  goto err;
 	}
 
@@ -2370,19 +2454,25 @@ static int tracelb_path_flowid(tracelb_path_t *path,
   int i;
 
   /* check the path for a flow-id */
-  for(i=path->linkc-1; i>=0; i--)
+  if(path->linkc > 0)
     {
-      if((flowid = tracelb_link_flowid_get(path->links[i])) == NULL)
-	continue;
+      i = path->linkc - 1;
+      for(;;)
+	{
+	  if((flowid = tracelb_link_flowid_get(path->links[i])) != NULL)
+	    {
+	      probe->flowid = flowid->id;
+	      probe->ttl    = flowid->ttl + 1;
+	      free(flowid);
+	      for(i=i+1; i<path->linkc; i++)
+		probe->ttl += path->links[i]->link->hopc;
+	      return 1;
+	    }
 
-      probe->flowid = flowid->id;
-      probe->ttl    = flowid->ttl + 1;
-      free(flowid);
-
-      for(i=i+1; i<path->linkc; i++)
-	probe->ttl += path->links[i]->link->hopc;
-
-      return 1;
+	  if(i == 0)
+	    break;
+	  i--;
+	}
     }
 
   /*
@@ -2486,7 +2576,7 @@ static int tracelb_probe_vals(scamper_task_t *task, tracelb_branch_t *branch,
       len = sizeof(tracelb_bringfwd_t *) * state->pathc;
       if((branch->bringfwd = malloc_zero(len)) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not malloc set");
+	  printerror(__func__, "could not malloc set");
 	  return -1;
 	}
 
@@ -2504,24 +2594,30 @@ static int tracelb_probe_vals(scamper_task_t *task, tracelb_branch_t *branch,
 		  (array_cmp_t)tracelb_bringfwd_cmp);
 
 #ifndef NDEBUG
-      for(i=branch->bringfwdc-1; i>=0; i--)
+      if(branch->bringfwdc > 0)
 	{
-	  path = branch->bringfwd[i]->path;
+	  i = branch->bringfwdc - 1;
+	  for(;;)
+	    {
+	      path = branch->bringfwd[i]->path;
+	      if(path->linkc > 0)
+		{
+		  node = path->links[0]->link->from;
+		  if(node->addr != NULL)
+		    scamper_addr_tostr(node->addr, from, sizeof(from));
+		  else
+		    snprintf(from, sizeof(from), "*");
+		  if((node = path->links[path->linkc-1]->link->to) != NULL)
+		    scamper_addr_tostr(node->addr, to, sizeof(to));
+		  else
+		    snprintf(to, sizeof(to), "*");
+		  scamper_debug(__func__, "%d %s %s",path->distance,from,to);
+		}
 
-	  if(path->linkc == 0)
-	    continue;
-
-	  node = path->links[0]->link->from;
-	  if(node->addr != NULL)
-	    scamper_addr_tostr(node->addr, from, sizeof(from));
-	  else
-	    snprintf(from, sizeof(from), "*");
-	  if((node = path->links[path->linkc-1]->link->to) != NULL)
-	    scamper_addr_tostr(node->addr, to, sizeof(to));
-	  else
-	    snprintf(to, sizeof(to), "*");
-
-	  scamper_debug(__func__, "%d %s %s", path->distance, from, to);
+	      if(i == 0)
+		break;
+	      i--;
+	    }
 	}
 #endif
     }
@@ -2531,6 +2627,7 @@ static int tracelb_probe_vals(scamper_task_t *task, tracelb_branch_t *branch,
    * and extends back to the first path segment
    */
   assert(branch->bringfwd[0]->path == path0);
+  assert(branch->bringfwdc > 0);
   assert(branch->bringfwd[branch->bringfwdc-1]->path->backc == 0);
 
   /* reset the visited members to zero */
@@ -2608,7 +2705,7 @@ static scamper_tracelb_reply_t *handleicmp_reply(const scamper_icmp_resp_t *ir,
 
   if((reply = scamper_tracelb_reply_alloc(from)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not allocate reply");
+      printerror(__func__, "could not allocate reply");
       return NULL;
     }
 
@@ -2644,7 +2741,7 @@ static scamper_tracelb_reply_t *handletcp_reply(const scamper_dl_rec_t *dl,
 
   if((reply = scamper_tracelb_reply_alloc(from)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not allocate reply");
+      printerror(__func__, "could not allocate reply");
       return NULL;
     }
 
@@ -2677,21 +2774,17 @@ static void handleicmp_firstaddr(scamper_task_t *task, scamper_icmp_resp_t *ir,
   heap_delete(state->active, branch->heapnode);
 
   /* record the details of the first hop */
-  if((node = scamper_tracelb_node_alloc(from)) == NULL)
+  if((node = scamper_tracelb_node_alloc(from)) == NULL ||
+     tracelb_node_ptr(task, node) != 0 ||
+     scamper_tracelb_node_add(trace, node) != 0)
     {
-      printerror(errno, strerror, __func__, "could not alloc node");
+      printerror(__func__, "could not alloc node");
       goto err;
     }
   if(SCAMPER_ICMP_RESP_IS_TTL_EXP(ir) || SCAMPER_ICMP_RESP_IS_UNREACH(ir))
     {
       node->flags |= SCAMPER_TRACELB_NODE_FLAG_QTTL;
       node->q_ttl  = ir->ir_inner_ip_ttl;
-    }
-
-  if(scamper_tracelb_node_add(trace, node) != 0)
-    {
-      printerror(errno, strerror, __func__, "could not add node");
-      goto err;
     }
   node = NULL;
 
@@ -2730,7 +2823,7 @@ static int hopprobe_handlereply(scamper_task_t *task, tracelb_probe_t *pr,
 
   if(scamper_tracelb_probe_reply(pr->probe, reply) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add reply to probe");
+      printerror(__func__, "could not add reply to probe");
       scamper_tracelb_reply_free(reply);
       return -1;
     }
@@ -3220,15 +3313,11 @@ static void handletimeout_firstaddr(scamper_task_t *task, tracelb_branch_t *br)
 
   heap_delete(state->active, br->heapnode);
 
-  if((node = scamper_tracelb_node_alloc(NULL)) == NULL)
+  if((node = scamper_tracelb_node_alloc(NULL)) == NULL ||
+     tracelb_node_ptr(task, node) != 0 ||
+     scamper_tracelb_node_add(trace, node) != 0)
     {
-      printerror(errno, strerror, __func__, "could not alloc node");
-      goto err;
-    }
-
-  if(scamper_tracelb_node_add(trace, node) != 0)
-    {
-      printerror(errno, strerror, __func__, "could not add node");
+      printerror(__func__, "could not alloc node");
       goto err;
     }
   node = NULL;
@@ -3421,11 +3510,13 @@ static void handletcp_firstaddr(scamper_task_t *task, scamper_dl_rec_t *dl,
 
   /* record the details of the first hop */
   if((node = scamper_tracelb_node_alloc(from)) == NULL ||
+     tracelb_node_ptr(task, node) != 0 ||
      scamper_tracelb_node_add(trace, node) != 0)
     {
-      printerror(errno, strerror, __func__, "could not alloc node");
+      printerror(__func__, "could not alloc node");
       goto err;
     }
+  node = NULL;
 
   tracelb_paths_assert(state);
   tracelb_queue(task);
@@ -3621,7 +3712,7 @@ static void tracelb_handle_rt(scamper_route_t *rt)
   /* if there was a problem getting the ifindex, handle that */
   if(rt->error != 0 || rt->ifindex < 0)
     {
-      printerror(errno, strerror, __func__, "could not get ifindex");
+      printerror(__func__, "could not get ifindex");
       tracelb_handleerror(task, errno);
       goto done;
     }
@@ -3644,7 +3735,10 @@ static void tracelb_handle_rt(scamper_route_t *rt)
       goto done;
     }
   dl = scamper_fd_dl_get(state->dl);
-  state->dlhdr->dst = scamper_addr_use(trace->dst);
+  if(trace->rtr != NULL)
+    state->dlhdr->dst = scamper_addr_use(trace->rtr);
+  else
+    state->dlhdr->dst = scamper_addr_use(trace->dst);
   state->dlhdr->gw = rt->gw != NULL ? scamper_addr_use(rt->gw) : NULL;
   state->dlhdr->ifindex = rt->ifindex;
   state->dlhdr->txtype = scamper_dl_tx_type(dl);
@@ -3683,6 +3777,7 @@ static void tracelb_state_free(scamper_tracelb_t *trace,tracelb_state_t *state)
 {
   tracelb_branch_t *br;
   tracelb_probe_t *pr;
+  tracelb_host_t *th;
   int i;
 
   tracelb_paths_dump(state);
@@ -3691,6 +3786,17 @@ static void tracelb_state_free(scamper_tracelb_t *trace,tracelb_state_t *state)
   /* free the address tree */
   if(state->addrs != NULL)
     splaytree_free(state->addrs, (splaytree_free_t)scamper_addr_free);
+
+  /* free any outstanding ptr requests */
+  if(state->ths != NULL)
+    {
+      while((th = dlist_head_pop(state->ths)) != NULL)
+	{
+	  th->dn = NULL;
+	  tracelb_host_free(state, th);
+	}
+      dlist_free(state->ths);
+    }
 
   /* free the active branch records */
   if(state->active != NULL)
@@ -3816,7 +3922,7 @@ static int tracelb_state_alloc(scamper_task_t *task)
 
   if((state = malloc_zero(sizeof(tracelb_state_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc state");
+      printerror(__func__, "could not malloc state");
       goto err;
     }
 
@@ -3836,30 +3942,30 @@ static int tracelb_state_alloc(scamper_task_t *task)
 
   if((state->addrs = splaytree_alloc((splaytree_cmp_t)scamper_addr_cmp))==NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc addr tree");
+      printerror(__func__, "could not alloc addr tree");
       goto err;
     }
 
   if((state->active = heap_alloc((heap_cmp_t)tracelb_branch_active_cmp))==NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc active heap");
+      printerror(__func__, "could not alloc active heap");
       goto err;
     }
   heap_onremove(state->active, tracelb_branch_onremove);
   if((state->waiting=heap_alloc((heap_cmp_t)tracelb_branch_waiting_cmp))==NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc waiting heap");
+      printerror(__func__, "could not alloc waiting heap");
       goto err;
     }
   heap_onremove(state->waiting, tracelb_branch_onremove);
 
   if((branch = malloc_zero(sizeof(tracelb_branch_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc branch");
+      printerror(__func__, "could not alloc branch");
       goto err;
     }
 
-  if(SCAMPER_TRACELB_TYPE_VARY_SPORT(trace))
+  if(SCAMPER_TRACELB_TYPE_VARY_SPORT(trace) || trace->rtr != NULL)
     {
       branch->mode = MODE_RTSOCK;
 
@@ -3930,7 +4036,7 @@ static int tracelb_state_alloc(scamper_task_t *task)
     {
       if(realloc_wrap((void **)&pktbuf, state->payload_size) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not realloc");
+	  printerror(__func__, "could not realloc");
 	  goto err;
 	}
       pktbuf_len = state->payload_size;
@@ -4002,7 +4108,10 @@ static void do_tracelb_probe(scamper_task_t *task)
 
   if(branch->mode == MODE_RTSOCK)
     {
-      state->route = scamper_route_alloc(trace->dst, task, tracelb_handle_rt);
+      if(trace->rtr != NULL)
+	state->route = scamper_route_alloc(trace->rtr,task,tracelb_handle_rt);
+      else
+	state->route = scamper_route_alloc(trace->dst,task,tracelb_handle_rt);
       if(state->route == NULL)
 	goto err;
 
@@ -4047,7 +4156,7 @@ static void do_tracelb_probe(scamper_task_t *task)
   if((tp = malloc_zero(sizeof(tracelb_probe_t))) == NULL ||
      (tp->probe = scamper_tracelb_probe_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc probe");
+      printerror(__func__, "could not alloc probe");
       goto err;
     }
 
@@ -4190,7 +4299,7 @@ static void do_tracelb_probe(scamper_task_t *task)
 	probe.pr_tcp_flags = TH_ACK;
     }
 
-  if(SCAMPER_TRACELB_TYPE_VARY_SPORT(trace))
+  if(state->dl != NULL)
     {
       probe.pr_dl        = scamper_fd_dl_get(state->dl);
       probe.pr_dl_buf    = state->dlhdr->buf;
@@ -4235,9 +4344,9 @@ static void do_tracelb_probe(scamper_task_t *task)
   return;
 }
 
-static int tracelb_arg_param_validate(int optid, char *param, long *out)
+static int tracelb_arg_param_validate(int optid, char *param, long long *out)
 {
-  long tmp;
+  long tmp = 0;
 
   switch(optid)
     {
@@ -4274,6 +4383,11 @@ static int tracelb_arg_param_validate(int optid, char *param, long *out)
 	{
 	  goto err;
 	}
+      break;
+
+    case TRACE_OPT_OPTION:
+      if(strcasecmp(param, "ptr") != 0)
+	goto err;
       break;
 
     case TRACE_OPT_PROTOCOL:
@@ -4342,13 +4456,17 @@ static int tracelb_arg_param_validate(int optid, char *param, long *out)
 	}
       break;
 
+      /* these parameters are validated at execution time */
+    case TRACE_OPT_RTRADDR:
+      break;
+
     default:
       return -1;
     }
 
   /* valid parameter */
   if(out != NULL)
-    *out = tmp;
+    *out = (long long)tmp;
   return 0;
 
  err:
@@ -4378,8 +4496,10 @@ void *scamper_do_tracelb_alloc(char *str)
   uint32_t probec_max   = SCAMPER_DO_TRACELB_PROBECMAX_DEF;
   uint8_t  gaplimit     = SCAMPER_DO_TRACELB_GAPLIMIT_DEF;
   uint32_t userid       = 0;
-  char *addr;
-  long tmp = 0;
+  uint8_t  flags        = 0;
+  char *rtr = NULL, *addr;
+  long long tmp = 0;
+  int af;
 
   /* try and parse the string passed in */
   if(scamper_options_parse(str, opts, opts_cnt, &opts_out, &addr) != 0)
@@ -4420,6 +4540,16 @@ void *scamper_do_tracelb_alloc(char *str)
 	  gaplimit = (uint8_t)tmp;
 	  break;
 
+	case TRACE_OPT_OPTION:
+	  if(strcasecmp(opt->str, "ptr") == 0)
+	    flags |= SCAMPER_TRACELB_FLAG_PTR;
+	  else
+	    {
+	      scamper_debug(__func__, "unknown option %s", opt->str);
+	      goto err;
+	    }
+	  break;
+
 	case TRACE_OPT_PROTOCOL:
 	  type = (uint8_t)tmp;
 	  break;
@@ -4447,6 +4577,12 @@ void *scamper_do_tracelb_alloc(char *str)
 	case TRACE_OPT_WAITTIMEOUT:
 	  wait_timeout = (uint8_t)tmp;
 	  break;
+
+	case TRACE_OPT_RTRADDR:
+	  if(rtr != NULL)
+	    goto err;
+	  rtr = opt->str;
+	  break;
 	}
     }
 
@@ -4468,6 +4604,14 @@ void *scamper_do_tracelb_alloc(char *str)
       goto err;
     }
 
+  af = scamper_addr_af(trace->dst);
+  if(af != AF_INET && af != AF_INET6)
+    goto err;
+
+  if(rtr != NULL &&
+     (trace->rtr = scamper_addr_resolve(af, rtr)) == NULL)
+    goto err;
+
   trace->sport        = sport;
   trace->dport        = dport;
   trace->tos          = tos;
@@ -4480,6 +4624,7 @@ void *scamper_do_tracelb_alloc(char *str)
   trace->probec_max   = probec_max;
   trace->gaplimit     = gaplimit;
   trace->userid       = userid;
+  trace->flags        = flags;
 
   switch(trace->dst->type)
     {

@@ -1,4 +1,4 @@
-.Dd February 2, 2016
+.Dd November 21, 2017
 .Dt SC_RADARGUN 1
 .Os
 .Sh NAME
@@ -32,7 +32,7 @@ The
 .Nm
 utility provides the ability to connect to a running
 .Xr scamper 1
-instance and have a set of IPv4 addresses for aliases using the
+instance and infer which of the supplied IPv4 addresses are aliases using the
 Radargun technique.
 For all addresses in the file,
 .Nm
@@ -55,7 +55,15 @@ addresses.  The file can either contain sets to test, one set per line,
 or simply one set, one address per line.
 .It Fl d Ar dump
 specifies the dump ID to use to analyze the collected data.
-Currently, only dumpid 1 is valid, which dumps candidate aliases.
+The current choices for this option are:
+.Bl -dash -offset 2n -compact -width 1n
+.It
+.Sy 1:
+dump inferred aliases.
+.It
+.Sy 2:
+dump interface classifications.
+.El
 .It Fl f Ar fudge
 specifies the fudge to use when inferring if a device is deriving
 IP-ID values from a counter.  By default, responses the maximum
@@ -75,16 +83,20 @@ The current choices for this option are:
 .Sy nobs:
 do not consider if IP-ID values might be byte-swapped in the header
 .It
+.Sy nobudget:
+do not consider if the radargun measurement can complete in the round
+time give the packets-per-second rate specified.
+.It
+.Sy noradargun:
+do not conduct radargun step.  Stop after classifying interface IP-ID
+behavior.
+.It
 .Sy noreserved:
 do not probe reserved IP addresses.
 .It
 .Sy rows:
 the addresses in the input file are supplied in rows, and the radargun
-measurements should consider each set in turn.
-.It
-.Sy nobudget:
-do not consider if the radargun measurement can complete in the round
-time give the packets-per-second rate specified.
+measurements will probe and evaluate each set independently.
 .It
 .Sy tc:
 when dumping candidate aliases, report the transitive closure, rather
@@ -168,7 +180,7 @@ organized as sets of candidate aliases to test:
 .fi
 .in -.3i
 .Pp
-the following command will test these organized sets IP addresses for
+the following command will test these organized sets of IP addresses for
 aliases:
 .Pp
 .in +.3i
@@ -186,13 +198,23 @@ and stored in set-2.warts, to infer likely aliases, reported in pairs:
 sc_radargun -d 1 set-2.warts
 .fi
 .in -.3i
+.Pp
+To use data previously collected with
+.Nm
+and stored in set-2.warts, to report interface IP-ID classifications:
+.Pp
+.in +.3i
+.nf
+sc_radargun -d 2 set-2.warts
+.fi
+.in -.3i
 .Sh SEE ALSO
 .Rs
 .%A "A. Bender"
 .%A "R. Sherwood"
 .%A "N. Spring"
 .%T "Fixing Ally's growing pains with velocity modeling"
-.% "Proc ACM Internet Measurement Conference 2008"
+.%O "Proc ACM Internet Measurement Conference 2008"
 .Re
 .Xr scamper 1 ,
 .Xr sc_ally 1 ,

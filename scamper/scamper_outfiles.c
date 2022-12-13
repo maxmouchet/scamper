@@ -1,7 +1,7 @@
 /*
  * scamper_outfiles: hold a collection of output targets together
  *
- * $Id: scamper_outfiles.c,v 1.45 2015/07/19 06:50:58 mjl Exp $
+ * $Id: scamper_outfiles.c,v 1.50 2021/08/22 08:11:53 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -22,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_outfiles.c,v 1.45 2015/07/19 06:50:58 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -61,7 +56,7 @@ static scamper_outfile_t *outfile_alloc(char *name, scamper_file_t *sf)
 
   if((sof = malloc_zero(sizeof(scamper_outfile_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc sof");
+      printerror(__func__, "could not malloc sof");
       goto err;
     }
 
@@ -70,13 +65,13 @@ static scamper_outfile_t *outfile_alloc(char *name, scamper_file_t *sf)
 
   if((sof->name = strdup(name)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup");
+      printerror(__func__, "could not strdup");
       goto err;
     }
 
   if(splaytree_insert(outfiles, sof) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not insert");
+      printerror(__func__, "could not insert");
       goto err;
     }
 
@@ -239,14 +234,13 @@ scamper_outfile_t *scamper_outfile_open(char *name, char *file, char *mo)
   /* make sure the fd is valid, otherwise bail */
   if(fd == -1)
     {
+      printerror(__func__, "could not open %s", file);
       return NULL;
     }
 
 #if defined(WITHOUT_PRIVSEP) && !defined(_WIN32)
   if((uid = getuid()) != geteuid() && fchown(fd, uid, -1) != 0)
-    {
-      printerror(errno, strerror, __func__, "could not fchown");
-    }
+    printerror(__func__, "could not fchown");
 #endif
 
   if((sf = scamper_file_openfd(fd, file, sf_mode, "warts")) == NULL)
@@ -282,7 +276,7 @@ static int outfile_opendef(char *filename, char *type)
   flags |= O_BINARY;
 #endif
 
-  if(strcmp(filename, "-") == 0)
+  if(string_isdash(filename) != 0)
     {
       fd = STDOUT_FILENO;
     }
@@ -293,6 +287,12 @@ static int outfile_opendef(char *filename, char *type)
 #else
       fd = scamper_privsep_open_file(filename, flags, mode);
 #endif
+
+      if(fd == -1)
+	{
+	  printerror(__func__, "could not open %s", filename);
+	  return -1;
+	}
     }
 
   if(fd == -1)
@@ -332,14 +332,14 @@ scamper_outfile_t *scamper_outfile_openfd(char *name, int fd, char *type)
   return sof;
 }
 
-scamper_outfile_t *scamper_outfile_opennull(char *name)
+scamper_outfile_t *scamper_outfile_opennull(char *name, char *format)
 {
   scamper_outfile_t *sof;
   scamper_file_t *sf;
 
-  if((sf = scamper_file_opennull('w')) == NULL)
+  if((sf = scamper_file_opennull('w', format)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not opennull");
+      printerror(__func__, "could not opennull");
       return NULL;
     }
 
@@ -363,7 +363,7 @@ int scamper_outfiles_init(char *def_filename, char *def_type)
 {
   if((outfiles = splaytree_alloc((splaytree_cmp_t)outfile_cmp)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc outfiles tree");
+      printerror(__func__, "could not alloc outfiles tree");
       return -1;
     }
 

@@ -1,7 +1,7 @@
 /*
  * scamper_source_control.c
  *
- * $Id: scamper_source_control.c,v 1.14 2012/04/05 18:00:54 mjl Exp $
+ * $Id: scamper_source_control.c,v 1.15 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2007-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -20,11 +20,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_source_control.c,v 1.14 2012/04/05 18:00:54 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

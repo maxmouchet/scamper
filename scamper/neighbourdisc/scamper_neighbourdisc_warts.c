@@ -1,9 +1,9 @@
 /*
  * scamper_neighbourdisc_warts.h
  *
- * $Id: scamper_neighbourdisc_warts.c,v 1.7 2016/12/02 09:13:42 mjl Exp $
+ * $Id: scamper_neighbourdisc_warts.c,v 1.10.4.1 2022/07/22 07:18:49 mjl Exp $
  *
- * Copyright (C) 2009-2016 Matthew Luckie
+ * Copyright (C) 2009-2021 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,11 +19,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_neighbourdisc_warts.c,v 1.7 2016/12/02 09:13:42 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -82,7 +77,7 @@ static const warts_var_t neighbourdisc_vars[] =
 static const warts_var_t neighbourdisc_probe_vars[] =
 {
   {WARTS_NEIGHBOURDISC_PROBE_TX,  8, -1},
-  {WARTS_NEIGHBOURDISC_PROBE_RXC, 4, -1},
+  {WARTS_NEIGHBOURDISC_PROBE_RXC, 2, -1},
 };
 #define neighbourdisc_probe_vars_mfb WARTS_VAR_MFB(neighbourdisc_probe_vars)
 
@@ -111,14 +106,14 @@ typedef struct warts_neighbourdisc_probe
   warts_neighbourdisc_reply_t *rxs;
 } warts_neighbourdisc_probe_t;
 
-
 static int warts_neighbourdisc_reply_state(scamper_neighbourdisc_reply_t *reply,
 					   warts_neighbourdisc_reply_t *state,
 					   warts_addrtable_t *table,
 					   uint32_t *len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   memset(state->flags, 0, neighbourdisc_reply_vars_mfb);
   state->params_len = 0;
@@ -173,7 +168,11 @@ static int warts_neighbourdisc_reply_read(scamper_neighbourdisc_reply_t *reply,
     {&reply->mac, (wpr_t)extract_addr,    table},
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
-  return warts_params_read(buf, off, len, handlers, handler_cnt);
+  if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0)
+    return -1;
+  if(reply->mac == NULL)
+    return -1;
+  return 0;
 }
 
 static int warts_neighbourdisc_probe_state(const scamper_file_t *sf,
@@ -183,8 +182,8 @@ static int warts_neighbourdisc_probe_state(const scamper_file_t *sf,
 					   uint32_t *len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
-  size_t size;
+  int max_id = 0;
+  size_t i, size;
 
   memset(state->flags, 0, neighbourdisc_probe_vars_mfb);
   state->params_len = 0;
@@ -296,8 +295,9 @@ static void warts_neighbourdisc_params(const scamper_neighbourdisc_t *nd,
 				       uint8_t *flags, uint16_t *flags_len,
 				       uint16_t *params_len)
 {
-  int i, max_id = 0;
   const warts_var_t *var;
+  int max_id = 0;
+  size_t i;
 
   memset(flags, 0, neighbourdisc_vars_mfb);
   *params_len = 0;
@@ -407,7 +407,7 @@ static int warts_neighbourdisc_params_read(scamper_neighbourdisc_t *nd,
   if((rc = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
     return rc;
 
-  if(nd->src_mac == NULL)
+  if(nd->src_mac == NULL || nd->dst_ip == NULL)
     return -1;
 
   return 0;

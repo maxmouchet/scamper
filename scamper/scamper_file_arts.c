@@ -1,7 +1,7 @@
 /*
  * scamper_file_arts.c
  *
- * $Id: scamper_file_arts.c,v 1.62.4.1 2017/06/22 08:33:25 mjl Exp $
+ * $Id: scamper_file_arts.c,v 1.64 2020/03/17 07:32:16 mjl Exp $
  *
  * code to read the legacy arts data file format into scamper_hop structures.
  *
@@ -24,11 +24,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_file_arts.c,v 1.62.4.1 2017/06/22 08:33:25 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

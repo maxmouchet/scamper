@@ -1,10 +1,11 @@
 /*
  * scamper_icmp6.c
  *
- * $Id: scamper_icmp6.c,v 1.98 2016/09/17 05:48:23 mjl Exp $
+ * $Id: scamper_icmp6.c,v 1.100.10.2 2022/08/10 22:39:48 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
+ * Copyright (C) 2022      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -21,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_icmp6.c,v 1.98 2016/09/17 05:48:23 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -196,7 +192,7 @@ int scamper_icmp6_probe(scamper_probe_t *probe)
   if(setsockopt(probe->pr_fd,
 		IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)&i, sizeof(i)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set hlim to %d", i);
+      printerror(__func__, "could not set hlim to %d", i);
       return -1;
     }
 
@@ -204,7 +200,7 @@ int scamper_icmp6_probe(scamper_probe_t *probe)
     {
       if(realloc_wrap((void **)&txbuf, len) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not realloc");
+	  printerror(__func__, "could not realloc");
 	  return -1;
 	}
       txbuf_len = len;
@@ -236,8 +232,7 @@ int scamper_icmp6_probe(scamper_probe_t *probe)
     {
       /* error condition, could not send the packet at all */
       probe->pr_errno = errno;
-      printerror(probe->pr_errno, strerror, __func__,
-		 "could not send to %s (%d ttl, %d seq, %d len)",
+      printerror(__func__, "could not send to %s (%d ttl, %d seq, %d len)",
 		 scamper_addr_tostr(probe->pr_ip_dst, addr, sizeof(addr)),
 		 probe->pr_ip_ttl, probe->pr_icmp_seq, len);
       return -1;
@@ -245,10 +240,9 @@ int scamper_icmp6_probe(scamper_probe_t *probe)
   else if((size_t)i != len)
     {
       /* error condition, sent a portion of the probe */
-      fprintf(stderr,
-	      "scamper_icmp6_probe: sent %d bytes of %d byte packet to %s",
-	      i, (int)len,
-	      scamper_addr_tostr(probe->pr_ip_dst, addr, sizeof(addr)));
+      printerror_msg(__func__, "sent %d bytes of %d byte packet to %s",
+		     i, (int)len,
+		     scamper_addr_tostr(probe->pr_ip_dst, addr, sizeof(addr)));
       return -1;
     }
 
@@ -367,7 +361,7 @@ int scamper_icmp6_recv(int fd, scamper_icmp_resp_t *resp)
 
   if((pbuflen = recvmsg(fd, &msg, 0)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not recvmsg");
+      printerror(__func__, "could not recvmsg");
       return -1;
     }
 #endif
@@ -377,7 +371,7 @@ int scamper_icmp6_recv(int fd, scamper_icmp_resp_t *resp)
   if((pbuflen = recvfrom(fd, rxbuf, sizeof(rxbuf), 0,
 			 (struct sockaddr *)&from, &fromlen)) < 0)
     {
-      printerror(errno, strerror, __func__, "could not recvfrom");
+      printerror(__func__, "could not recvfrom");
       return -1;
     }
 #endif
@@ -580,14 +574,14 @@ int scamper_icmp6_open(const void *addr)
   opt = 65535 + 128;
   if(setsockopt(fd, SOL_SOCKET, SO_RCVBUF, (char *)&opt, sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not SO_RCVBUF");
+      printerror(__func__, "could not SO_RCVBUF");
       goto err;
     }
 
   opt = 65535 + 128;
   if(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (char *)&opt, sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not SO_SNDBUF");
+      printerror(__func__, "could not SO_SNDBUF");
       return -1;
     }
 
@@ -595,7 +589,7 @@ int scamper_icmp6_open(const void *addr)
   opt = 1;
   if(setsockopt(fd, SOL_SOCKET, SO_TIMESTAMP, &opt, sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set SO_TIMESTAMP");
+      printerror(__func__, "could not set SO_TIMESTAMP");
       goto err;
     }
 #endif
@@ -613,7 +607,7 @@ int scamper_icmp6_open(const void *addr)
   ICMP6_FILTER_SETPASS(ICMP6_ECHO_REPLY, &filter);
   if(setsockopt(fd,IPPROTO_ICMPV6,ICMP6_FILTER,&filter,sizeof(filter)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not IPV6_FILTER");
+      printerror(__func__, "could not IPV6_FILTER");
       goto err;
     }
 #endif
@@ -622,7 +616,7 @@ int scamper_icmp6_open(const void *addr)
   opt = 1;
   if(setsockopt(fd,IPPROTO_IPV6,IPV6_DONTFRAG,(char *)&opt, sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set IPV6_DONTFRAG");
+      printerror(__func__, "could not set IPV6_DONTFRAG");
       goto err;
     }
 #endif
@@ -635,13 +629,13 @@ int scamper_icmp6_open(const void *addr)
   opt = 1;
   if(setsockopt(fd, IPPROTO_IPV6,IPV6_RECVHOPLIMIT, &opt,sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set IPV6_RECVHOPLIMIT");
+      printerror(__func__, "could not set IPV6_RECVHOPLIMIT");
     }
 #elif defined(IPV6_HOPLIMIT)
   opt = 1;
   if(setsockopt(fd,IPPROTO_IPV6,IPV6_HOPLIMIT,(char *)&opt,sizeof(opt)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not set IPV6_HOPLIMIT");
+      printerror(__func__, "could not set IPV6_HOPLIMIT");
     }
 #endif
 
@@ -650,7 +644,7 @@ int scamper_icmp6_open(const void *addr)
       sockaddr_compose((struct sockaddr *)&sin6, AF_INET6, addr, 0);
       if(bind(fd, (struct sockaddr *)&sin6, sizeof(sin6)) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not bind");
+	  printerror(__func__, "could not bind");
 	  goto err;
 	}
     }

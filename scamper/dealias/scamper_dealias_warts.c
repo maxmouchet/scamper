@@ -4,10 +4,10 @@
  * Copyright (C) 2008-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2012-2014 The Regents of the University of California
- * Copyright (C) 2015-2016 Matthew Luckie
+ * Copyright (C) 2015-2021 Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_dealias_warts.c,v 1.15.2.1 2017/06/22 08:30:47 mjl Exp $
+ * $Id: scamper_dealias_warts.c,v 1.19 2021/08/24 09:03:07 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_dealias_warts.c,v 1.15.2.1 2017/06/22 08:30:47 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -268,7 +263,8 @@ static void warts_dealias_params(const scamper_dealias_t *dealias,
 				 uint16_t *params_len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   memset(flags, 0, dealias_vars_mfb);
   *params_len = 0;
@@ -342,7 +338,8 @@ static int warts_dealias_probedef_params(const scamper_file_t *sf,
 					 uint32_t *len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   memset(state->flags, 0, dealias_probedef_vars_mfb);
   state->params_len = 0;
@@ -568,8 +565,8 @@ static int warts_dealias_prefixscan_state(const scamper_file_t *sf,
   const scamper_dealias_prefixscan_t *p = data;
   const warts_var_t *var;
   int max_id = 0;
-  uint16_t i, j;
-  size_t size;
+  uint16_t j;
+  size_t i, size;
 
   if(p->probedefc > 0)
     {
@@ -909,8 +906,8 @@ static int warts_dealias_bump_state(const scamper_file_t *sf, const void *data,
 {
   const scamper_dealias_bump_t *bump = data;
   const warts_var_t *var;
-  int i, max_id = 0;
-  size_t size = sizeof(warts_dealias_probedef_t) * 2;
+  size_t i, size = sizeof(warts_dealias_probedef_t) * 2;
+  int max_id = 0;
 
   if((state->probedefs = malloc_zero(size)) == NULL)
     return -1;
@@ -1014,8 +1011,8 @@ static int warts_dealias_ally_state(const scamper_file_t *sf, const void *data,
 {
   const scamper_dealias_ally_t *ally = data;
   const warts_var_t *var;
-  int i, max_id = 0;
-  size_t size = sizeof(warts_dealias_probedef_t) * 2;
+  size_t i, size = sizeof(warts_dealias_probedef_t) * 2;
+  int max_id = 0;
 
   if((state->probedefs = malloc_zero(size)) == NULL)
     return -1;
@@ -1131,8 +1128,8 @@ static int warts_dealias_mercator_state(const scamper_file_t *sf,
 {
   const scamper_dealias_mercator_t *m = data;
   const warts_var_t *var;
-  int i, max_id = 0;
-  size_t size = sizeof(warts_dealias_probedef_t);
+  size_t i, size = sizeof(warts_dealias_probedef_t);
+  int max_id = 0;
 
   if((state->probedefs = malloc_zero(size)) == NULL)
     return -1;
@@ -1272,7 +1269,8 @@ static int warts_dealias_reply_state(const scamper_dealias_reply_t *reply,
 {
   const warts_var_t *var;
   scamper_icmpext_t *ie;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   memset(state->flags, 0, dealias_reply_vars_mfb);
   state->params_len = 0;
@@ -1379,10 +1377,11 @@ static int warts_dealias_reply_read(scamper_dealias_reply_t *reply,
   };
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
   uint32_t o = *off;
-  int i;
 
-  if((i = warts_params_read(buf, off, len, handlers, handler_cnt)) != 0)
-    return i;
+  if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0)
+    return -1;
+  if(reply->src == NULL)
+    return -1;
 
   if(flag_isset(&buf[o], WARTS_DEALIAS_REPLY_PROTO) == 0)
     {
@@ -1392,7 +1391,7 @@ static int warts_dealias_reply_read(scamper_dealias_reply_t *reply,
 	reply->proto = IPPROTO_ICMPV6;
     }
 
-  return i;
+  return 0;
 }
 
 static int warts_dealias_reply_write(const scamper_dealias_reply_t *r,
@@ -1429,8 +1428,8 @@ static int warts_dealias_probe_state(const scamper_file_t *sf,
 				     warts_addrtable_t *table, uint32_t *len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
-  size_t size;
+  size_t i, size;
+  int max_id = 0;
 
   memset(state->flags, 0, dealias_probe_vars_mfb);
   state->params_len = 0;

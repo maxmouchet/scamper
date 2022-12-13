@@ -1,7 +1,7 @@
 /*
  * scamper_source_file.c
  *
- * $Id: scamper_source_file.c,v 1.21.10.1 2017/06/22 08:18:40 mjl Exp $
+ * $Id: scamper_source_file.c,v 1.27 2021/08/22 08:11:53 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_source_file.c,v 1.21.10.1 2017/06/22 08:18:40 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -116,28 +111,39 @@ static int ssf_open(const char *filename)
   int fd = -1;
 
   /* get a file descriptor to the file */
-  if(strcmp(filename, "-") != 0)
+  if(string_isdash(filename) == 0)
     {
 #if defined(WITHOUT_PRIVSEP)
       fd = open(filename, O_RDONLY);
 #else
       fd = scamper_privsep_open_file(filename, O_RDONLY, 0);
 #endif
+
+      if(fd == -1)
+	{
+	  printerror(__func__, "could not open %s", filename);
+	  goto err;
+	}
     }
-  else if(stdin_used == 0)
+  else
     {
-      fd = STDIN_FILENO;
-      stdin_used = 1;
+      if(stdin_used == 0)
+	{
+	  fd = STDIN_FILENO;
+	  stdin_used = 1;
+	}
+      else
+	{
+	  printerror_msg(__func__, "stdin already used");
+	  goto err;
+	}
     }
 
-  if(fd == -1)
-    {
-      goto err;
-    }
 
 #ifdef O_NONBLOCK
   if(fcntl_set(fd, O_NONBLOCK) == -1)
     {
+      printerror(__func__, "could not set O_NONBLOCK on %s", filename);
       goto err;
     }
 #endif
@@ -168,6 +174,7 @@ static int ssf_read_line(void *param, uint8_t *buf, size_t len)
   /* make sure the string contains only printable characters */
   if(string_isprint(str, len) == 0)
     {
+      printerror(__func__, "%s contains unprintable characters", ssf->filename);
       goto err;
     }
 
@@ -188,6 +195,7 @@ static int ssf_read_line(void *param, uint8_t *buf, size_t len)
 	{
 	  if((cmd = malloc_zero(reqd_len)) == NULL)
 	    {
+	      printerror(__func__, "could not malloc %u bytes", reqd_len);
 	      goto err;
 	    }
 	}
@@ -240,7 +248,7 @@ static void ssf_read(const int fd, void *param)
        * if probe queue for this source is sufficiently large, then
        * don't read any more for the time being
        */
-      if(scamper_source_getcommandcount(source) >= scamper_pps_get())
+      if(scamper_source_getcommandcount(source) >= scamper_option_pps_get())
 	{
 	  scamper_fd_read_pause(ssf->fd);
 	}
@@ -332,7 +340,7 @@ static void ssf_read(const int fd, void *param)
 
       if(errno != EAGAIN && errno != EINTR)
 	{
-	  printerror(errno, strerror, __func__, "read failed fd %d", fd);
+	  printerror(__func__, "read failed fd %d", fd);
 	  goto err;
 	}
     }
@@ -387,7 +395,7 @@ static int ssf_take(void *data)
   scamper_source_file_t *ssf = (scamper_source_file_t *)data;
 
   if(scamper_source_getcyclecount(ssf->source) < 2 &&
-     scamper_source_getcommandcount(ssf->source) < scamper_pps_get() &&
+     scamper_source_getcommandcount(ssf->source) < scamper_option_pps_get() &&
      ssf->cycles != 0)
     {
       scamper_fd_read_unpause(ssf->fd);
@@ -530,7 +538,7 @@ scamper_source_t *scamper_source_file_alloc(scamper_source_params_t *ssp,
     }
 
   /* allocate a scamper_fd_t to monitor when new data is able to be read */
-  if(strcmp(filename, "-") != 0)
+  if(string_isdash(filename) == 0)
     ssf->fd = scamper_fd_file(fd, ssf_read, ssf);
   else
     ssf->fd = scamper_fd_private(fd, ssf, ssf_read, NULL);

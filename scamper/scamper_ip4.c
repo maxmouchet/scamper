@@ -1,7 +1,7 @@
 /*
  * scamper_ip4.c
  *
- * $Id: scamper_ip4.c,v 1.16 2015/04/23 21:57:49 mjl Exp $
+ * $Id: scamper_ip4.c,v 1.18 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2009-2011 The University of Waikato
  * Author: Matthew Luckie
@@ -20,11 +20,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_ip4.c,v 1.16 2015/04/23 21:57:49 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -55,13 +50,13 @@ int scamper_ip4_openraw_fd(void)
   int fd, hdr;
   if((fd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open socket");
+      printerror(__func__, "could not open socket");
       goto err;
     }
   hdr = 1;
   if(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, (void *)&hdr, sizeof(hdr)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not IP_HDRINCL");
+      printerror(__func__, "could not IP_HDRINCL");
       goto err;
     }
   return fd;

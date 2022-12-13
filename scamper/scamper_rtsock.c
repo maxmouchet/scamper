@@ -1,7 +1,7 @@
 /*
  * scamper_rtsock: code to deal with a route socket or equivalent
  *
- * $Id: scamper_rtsock.c,v 1.81 2016/08/08 08:42:08 mjl Exp $
+ * $Id: scamper_rtsock.c,v 1.87 2020/06/10 09:09:27 mjl Exp $
  *
  *          Matthew Luckie
  *
@@ -40,11 +40,6 @@
  *
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_rtsock.c,v 1.81 2016/08/08 08:42:08 mjl Exp $";
-#endif
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -56,21 +51,6 @@ static int broken = -1;
 
 /* include support for the netlink socket in linux */
 #if defined(__linux__)
-
-struct nlmsghdr
-{
-  uint32_t        nlmsg_len;
-  uint16_t        nlmsg_type;
-  uint16_t        nlmsg_flags;
-  uint32_t        nlmsg_seq;
-  uint32_t        nlmsg_pid;
-};
-
-struct nlmsgerr
-{
-  int             error;
-  struct nlmsghdr msg;
-};
 
 struct rtattr
 {
@@ -90,12 +70,6 @@ struct rtmsg
   unsigned char   rtm_type;
   unsigned        rtm_flags;
 };
-
-#define NLMSG_ERROR         0x2
-#define NLMSG_ALIGNTO       4
-#define NLMSG_ALIGN(len)   (((len)+NLMSG_ALIGNTO-1) & ~(NLMSG_ALIGNTO-1))
-#define NLMSG_LENGTH(len)  ((len)+NLMSG_ALIGN(sizeof(struct nlmsghdr)))
-#define NLMSG_DATA(nlh)    ((void*)(((char*)nlh) + NLMSG_LENGTH(0)))
 
 #define RTA_ALIGNTO           4
 #define RTA_ALIGN(len)        (((len)+RTA_ALIGNTO-1) & ~(RTA_ALIGNTO-1))
@@ -125,7 +99,6 @@ struct rtmsg
 #define RTM_BASE            0x10
 #define RTM_NEWROUTE       (RTM_BASE+8)
 #define RTM_GETROUTE       (RTM_BASE+10)
-#define NLM_F_REQUEST       1
 #define NETLINK_ROUTE       0
 
 #endif
@@ -212,7 +185,7 @@ static void rtmsg_dump(const uint8_t *buf, size_t len)
     {
       if(k == 20)
 	{
-	  printerror(0, NULL, __func__, "%s", str);
+	  printerror_msg(__func__, "%s", str);
 	  k = 0;
 	  off = 0;
 	}
@@ -224,12 +197,12 @@ static void rtmsg_dump(const uint8_t *buf, size_t len)
     }
 
   if(k != 0)
-    printerror(0, NULL, __func__, "%s", str);
+    printerror_msg(__func__, "%s", str);
   return;
 }
 #endif
 
-int scamper_rtsock_roundup(size_t len)
+size_t scamper_rtsock_roundup(size_t len)
 {
 #ifdef __APPLE__
   const scamper_osinfo_t *osinfo;
@@ -308,7 +281,7 @@ static int scamper_rtsock_getifindex(int fd, scamper_addr_t *dst)
 
   if((ss = write(fd, buf, len)) < 0 || (size_t)ss != len)
     {
-      printerror(errno, strerror, __func__, "could not write routing socket");
+      printerror(__func__, "could not write routing socket");
       return -1;
     }
 
@@ -386,7 +359,7 @@ static int scamper_rtsock_getifindex(int fd, scamper_addr_t *dst)
   /* send the request */
   if((error = send(fd, buf, nlmsg->nlmsg_len, 0)) != nlmsg->nlmsg_len)
     {
-      printerror(errno, strerror, __func__, "could not send");
+      printerror(__func__, "could not send");
       return -1;
     }
 
@@ -549,8 +522,8 @@ static void rtsock_parsemsg(uint8_t *buf, size_t len)
   struct sockaddr_dl *sdl;
   struct sockaddr    *sa;
   struct in6_addr    *ip6;
-  size_t              off, tmp, x;
-  int                 i, ifindex;
+  size_t              off, x;
+  int                 i, tmp, ifindex;
   void               *addr;
   scamper_addr_t     *gw;
   rtsock_pair_t      *pair;
@@ -600,9 +573,9 @@ static void rtsock_parsemsg(uint8_t *buf, size_t len)
 	  if(rtm->rtm_addrs & (1 << i))
 	    {
 	      addrs[i] = sa = (struct sockaddr *)(buf + x + off);
-	      if((tmp = sockaddr_len(sa)) == -1)
+	      if((tmp = sockaddr_len(sa)) <= 0)
 		{
-		  printerror(0,NULL,__func__,"unhandled af %d",sa->sa_family);
+		  printerror_msg(__func__, "unhandled af %d", sa->sa_family);
 		  route->error = EINVAL;
 		  goto done;
 		}
@@ -614,7 +587,7 @@ static void rtsock_parsemsg(uint8_t *buf, size_t len)
 	{
 	  if(sdl->sdl_family != AF_LINK)
 	    {
-	      printerror(0, NULL, __func__, "sdl_family %d", sdl->sdl_family);
+	      printerror_msg(__func__, "sdl_family %d", sdl->sdl_family);
 	      route->error = EINVAL;
 	      goto done;
 	    }
@@ -696,7 +669,7 @@ void scamper_rtsock_read_cb(const int fd, void *param)
 
   if((len = recv(fd, buf, sizeof(buf), 0)) < 0)
     {
-      printerror(errno, strerror, __func__, "recv failed");
+      printerror(__func__, "recv failed");
       return;
     }
 
@@ -733,7 +706,7 @@ int scamper_rtsock_open()
   if((fd = scamper_privsep_open_rtsock()) == -1)
 #endif
     {
-      printerror(errno, strerror, __func__, "could not open route socket");
+      printerror(__func__, "could not open route socket");
       return -1;
     }
 
@@ -815,7 +788,7 @@ int scamper_rtsock_init()
 #ifndef _WIN32
   if((pairs = dlist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not allocate pair list");
+      printerror(__func__, "could not allocate pair list");
       return -1;
     }
   pid = getpid();

@@ -4,10 +4,10 @@
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2010-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2021 Matthew Luckie
  * Authors: Matthew Luckie, Ben Stasiewicz
  *
- * $Id: scamper_tbit_warts.c,v 1.25.2.2 2017/06/22 08:39:56 mjl Exp $
+ * $Id: scamper_tbit_warts.c,v 1.33 2021/08/28 20:31:23 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_tbit_warts.c,v 1.25.2.2 2017/06/22 08:39:56 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -235,7 +230,8 @@ static void warts_tbit_blind_params(const scamper_tbit_t *tbit,
 {
   scamper_tbit_blind_t *blind = tbit->data;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tbit_blind_vars_mfb);
@@ -265,7 +261,8 @@ static void warts_tbit_icw_params(const scamper_tbit_t *tbit,
 {
   scamper_tbit_icw_t *icw = tbit->data;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tbit_icw_vars_mfb);
@@ -295,7 +292,8 @@ static void warts_tbit_null_params(const scamper_tbit_t *tbit,
 {
   scamper_tbit_null_t *null = tbit->data;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tbit_null_vars_mfb);
@@ -329,7 +327,8 @@ static void warts_tbit_pmtud_params(const scamper_tbit_t *tbit,
 {
   scamper_tbit_pmtud_t *pmtud = tbit->data;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tbit_pmtud_vars_mfb);
@@ -510,7 +509,8 @@ static void warts_tbit_app_http_params(const scamper_tbit_t *tbit,
 {
   scamper_tbit_app_http_t *http = tbit->app_data;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tbit_app_http_vars_mfb);
@@ -600,7 +600,8 @@ static void warts_tbit_app_bgp_params(const scamper_tbit_t *tbit,
 {
   scamper_tbit_app_bgp_t *bgp = tbit->app_data;
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* unset all the flags possible */
   memset(state->flags, 0, tbit_app_bgp_vars_mfb);
@@ -663,7 +664,7 @@ static void warts_tbit_pkt_params(const scamper_tbit_pkt_t *pkt,
 {
   const warts_var_t *var;
   int max_id = 0;
-  uint16_t i;
+  size_t i;
 
   memset(state->flags, 0, tbit_pkt_vars_mfb);
   state->params_len = 0;
@@ -704,7 +705,7 @@ static scamper_tbit_pkt_t *warts_tbit_pkt_read(warts_state_t *state,
   scamper_tbit_pkt_t *pkt = NULL;
   uint8_t dir, *data = NULL;
   struct timeval tv;
-  uint16_t plen;
+  uint16_t plen = 0;
   warts_param_reader_t handlers[] = {
     {&dir,  (wpr_t)extract_byte,         NULL},
     {&tv,   (wpr_t)extract_timeval,      NULL},
@@ -714,6 +715,7 @@ static scamper_tbit_pkt_t *warts_tbit_pkt_read(warts_state_t *state,
   const int handler_cnt = sizeof(handlers)/sizeof(warts_param_reader_t);
 
   if(warts_params_read(buf, off, len, handlers, handler_cnt) != 0 ||
+     data == NULL || plen == 0 ||
      (pkt = scamper_tbit_pkt_alloc(dir, data, plen, &tv)) == NULL)
     goto err;
 
@@ -771,7 +773,8 @@ static void warts_tbit_params(const scamper_tbit_t *tbit,
 			      uint16_t *flags_len, uint16_t *params_len)
 {
   const warts_var_t *var;
-  int i, max_id = 0;
+  int max_id = 0;
+  size_t i;
 
   /* Unset all flags */
   memset(flags, 0, tbit_vars_mfb);
@@ -984,6 +987,7 @@ int scamper_file_warts_tbit_read(scamper_file_t *sf, const warts_hdr_t *hdr,
     case SCAMPER_TBIT_TYPE_BLIND_RST:
     case SCAMPER_TBIT_TYPE_BLIND_SYN:
     case SCAMPER_TBIT_TYPE_BLIND_DATA:
+    case SCAMPER_TBIT_TYPE_BLIND_FIN:
       if((tbit->data = scamper_tbit_blind_alloc()) == NULL)
 	goto err;
       break;      
@@ -1014,6 +1018,9 @@ int scamper_file_warts_tbit_read(scamper_file_t *sf, const warts_hdr_t *hdr,
       if(extract_uint32(buf, &off, hdr->len, &junk32, NULL) != 0)
 	goto err;
 
+      if(hdr->len - off < junk32)
+	goto err;
+
       i = off;
       if(junk16 == WARTS_TBIT_STRUCT_TYPE)
 	{
@@ -1037,6 +1044,7 @@ int scamper_file_warts_tbit_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 	    case SCAMPER_TBIT_TYPE_BLIND_RST:
 	    case SCAMPER_TBIT_TYPE_BLIND_SYN:
 	    case SCAMPER_TBIT_TYPE_BLIND_DATA:
+	    case SCAMPER_TBIT_TYPE_BLIND_FIN:
 	      if(warts_tbit_blind_read(tbit, buf, &i, hdr->len) != 0)
 		goto err;
 	      break;
@@ -1055,6 +1063,7 @@ int scamper_file_warts_tbit_read(scamper_file_t *sf, const warts_hdr_t *hdr,
 		goto err;
 	    }
 	}
+      else goto err;
 
       off += junk32;
     }
@@ -1130,6 +1139,7 @@ int scamper_file_warts_tbit_write(const scamper_file_t *sf,
 	case SCAMPER_TBIT_TYPE_BLIND_RST:
 	case SCAMPER_TBIT_TYPE_BLIND_SYN:
 	case SCAMPER_TBIT_TYPE_BLIND_DATA:
+	case SCAMPER_TBIT_TYPE_BLIND_FIN:
 	  warts_tbit_blind_params(tbit, &blind);
 	  len += (2 + 4 + blind.len);
 	  break;
@@ -1201,6 +1211,7 @@ int scamper_file_warts_tbit_write(const scamper_file_t *sf,
 	case SCAMPER_TBIT_TYPE_BLIND_RST:
 	case SCAMPER_TBIT_TYPE_BLIND_SYN:
 	case SCAMPER_TBIT_TYPE_BLIND_DATA:
+	case SCAMPER_TBIT_TYPE_BLIND_FIN:
 	  insert_uint32(buf, &off, len, &blind.len, NULL);
 	  warts_tbit_blind_write(tbit, buf, &off, len, &blind);
 	  break;

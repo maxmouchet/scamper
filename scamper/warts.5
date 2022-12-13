@@ -1,4 +1,4 @@
-.Dd May 16, 2011
+.Dd April 2, 2020
 .Dt WARTS 5
 .Os
 .Sh NAME
@@ -315,6 +315,10 @@ address: Source address used in probes, included if flag 26 is set
 address: Destination address used in probes, included if flag 27 is set
 .It
 uint32_t: User ID assigned to the traceroute, included if flag 28 is set
+.It
+uint16_t: IP offset value used in probes, included if flag 29 is set
+.It
+address: Router address used to send probes, included if flag 30 is set
 .El
 .Pp
 The traceroute flags field has the following fields:
@@ -469,6 +473,33 @@ flag 3 is set.
 .El
 The tree types of PMTUD notes are: ordinary PTB (1), PTB with invalid
 next-hop MTU (2), and an inferred MTU in the absence of a PTB (3).
+.Pp
+The format of doubletree data is:
+.Bl -dash -offset 2n -compact -width 1n
+.It
+uint16_t: traceroute optional data header, type = 3.
+.It
+Variable: doubletree flags and parameters
+.El
+The format of the doubletree flags and attributes is:
+.Bl -dash -offset 2n -compact -width 1n
+.It
+uint32_t: Local Stop Set stop IP address ID assigned by warts,
+included if flag 1 is set
+.It
+uint32_t: Global Stop Set stop IP address ID assigned by warts,
+included if flag 2 is set
+.It
+uint8_t: First hop to probe from, included if flag 3 is set.
+.It
+address: Local Stop Set stop address, included if flag 4 is set.
+.It
+address: Global Stop Set stop address, included if flag 5 is set.
+.It
+String: Local Stop Set name, included if flag 6 is set.
+.It
+uint8_t: doubltree flags, included if flag 7 is set.
+.El
 .Sh PING STRUCTURE
 Ping structures consist of ping parameters and responses.
 The general form of a ping recorded in warts is as follows:
@@ -545,6 +576,14 @@ uint16_t: Reply psuedo Path MTU, included if flag 26 is set
 uint8_t: Probe timeout, included if flag 27 is set
 .It
 uint32_t: Probe wait (microseconds), included if flag 28 is set
+.It
+uint32_t: Probe TCP acknowledgment value, included if flag 29 is set
+.It
+uint16_t: Ping flags, included if flag 30 is set.
+.It
+uint32_t: Probe TCP sequence number value, included if flag 31 is set
+.It
+address: Router address used to send probes, included if flag 32 is set
 .El
 .Pp
 Ping response records are written in series.  Each record takes the following

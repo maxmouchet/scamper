@@ -1,13 +1,16 @@
 /*
  * sc_bdrmap: driver to map first hop border routers of networks
  *
- * $Id: sc_bdrmap.c,v 1.4.4.1 2016/12/04 06:35:21 mjl Exp $
+ * $Id: sc_bdrmap.c,v 1.32.4.1 2022/12/10 04:57:38 mjl Exp $
  *
  *         Matthew Luckie
  *         mjl@caida.org / mjl@wand.net.nz
  *
  * Copyright (C) 2014-2015 The Regents of the University of California
  * Copyright (C) 2015-2016 The University of Waikato
+ * Copyright (C) 2017      The Regents of the University of California
+ * Copyright (C) 2018-2020 The University of Waikato
+ * Copyright (C) 2020-2022 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,17 +27,11 @@
  *
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_bdrmap.c,v 1.4.4.1 2016/12/04 06:35:21 mjl Exp $";
-#endif
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 #include "internal.h"
 
-#include "config.h"
 #include "scamper_addr.h"
 #include "scamper_list.h"
 #include "ping/scamper_ping.h"
@@ -218,7 +215,7 @@ typedef struct sc_indir
 {
   scamper_addr_t *dst;
   uint8_t         ttl;
-  uint16_t        csum;
+  uint16_t        flowid;
 } sc_indir_t;
 
 /*
@@ -400,14 +397,14 @@ typedef struct sc_prov
 /*
  * sc_linkprobe_t
  *
- * this structure supplies the address, ttl, and checksum (the flow) to use
+ * this structure supplies the address, ttl, and flowid to use
  * to find a given hop.
  */
 typedef struct sc_linkprobe
 {
   scamper_addr_t   *dst;
   uint8_t           ttl;
-  uint16_t          csum;
+  uint16_t          flowid;
 } sc_linkprobe_t;
 
 /*
@@ -530,8 +527,12 @@ static uint32_t               options       = 0;
 static char                  *unix_name     = NULL;
 static unsigned int           port          = 0;
 static uint8_t                firsthop      = 1;
+static uint16_t               flowid        = 0x420;
+static scamper_addr_t        *srcaddr       = NULL;
 static prefixtree_t          *ip2as_pt      = NULL;
 static char                  *ip2as_fn      = NULL;
+static prefixtree_t          *ipmap_pt      = NULL;
+static char                  *ipmap_fn      = NULL;
 static splaytree_t           *ip2name_tree  = NULL;
 static char                  *ip2name_fn    = NULL;
 static prefixtree_t          *ixp_pt        = NULL;
@@ -561,7 +562,6 @@ static uint32_t              *vpas          = NULL;
 static int                    vpasc         = 0;
 static uint32_t              *targetas      = NULL;
 static int                    targetasc     = 0;
-static char                  *vpas_str      = NULL;
 static char                 **opt_args      = NULL;
 static int                    opt_argc      = 0;
 static int                    scamper_fd    = -1;
@@ -576,6 +576,7 @@ static int                    probing       = 0;
 static int                    waittime      = 0;
 static int                    attempts      = 5;
 static int                    random_dst    = 0;
+static int                    protocol      = 0;
 static int                    impatient     = 0;
 static int                    allyconf      = 5;
 static int                    allyconf_wait = 60 * 5;
@@ -583,16 +584,18 @@ static int                    dump_borders  = 0;
 static int                    dump_onedsts  = 0;
 static int                    dump_tracesets = 0;
 static int                    no_ipopts     = 0;
+static int                    no_alias      = 0;
 static int                    no_gss        = 0;
 static int                    no_self       = 0;
-static int                    no_merge      = 0;
+static int                    no_merge      = 1;
 static int                    fudge         = 5000;
 static int                    af            = AF_INET;
 static struct timeval         now;
 static char                   cmd[32768];
 static int                    dump_id       = 0;
 static const sc_dump_t        dump_funcs[]  = {
-  {NULL, NULL, NULL, NULL},
+  {NULL, NULL,
+   NULL,   NULL,            NULL,           NULL,              NULL},
   {"infer border routers", "routers",
    init_1, process_1_trace, process_1_ping, process_1_dealias, finish_1},
   {"dump annotated traceroutes", "traces",
@@ -622,6 +625,9 @@ typedef void (*sc_stree_free_t)(void *ptr);
 #define OPT_REMOTE      0x020000
 #define OPT_ALLYCONF    0x040000
 #define OPT_DELEGATED   0x080000
+#define OPT_FLOWID      0x100000
+#define OPT_IPMAP       0x200000
+#define OPT_SRCADDR     0x400000
 
 #define TEST_TRACE      0x00
 #define TEST_LINK       0x01
@@ -671,12 +677,14 @@ static void usage(uint32_t opts)
   int i;
 
   fprintf(stderr,
-    "usage: sc_bdrmap [-6ADi] [-a ip2as] [-c allyconf] [-f firsthop]\n"
-    "                 [-l log] [-o warts] [-O option] [-p port] [-U unix]\n"
-    "                 [-R unix] [-v vpases] [-x ixps]\n"
+    "usage: sc_bdrmap [-6Di] [-a ip2as] [-A targetases] [-c allyconf]\n"
+    "                 [-C flowid] [-f firsthop] [-l log] [-M ipmap]\n"
+    "                 [-o warts] [-O option] [-p port] [-U unix] [-R unix]\n"
+    "                 [-S srcaddr] [-v vpases] [-x ixps]\n"
     "\n"
-    "       sc_bdrmap [-6] [-a ip2as] [-d dump] [-g delegated] [-n names]\n"
-    "                 [-r rels] [-v vpases] [-x ixps] file1 .. fileN\n");
+    "       sc_bdrmap [-6] [-a ip2as] [-A targetases] [-d dump]\n"
+    "                 [-g delegated] [-M ipmap] [-n names] [-r rels]\n"
+    "                 [-v vpases] [-x ixps] file1 .. fileN\n");
 
   if(opts == 0)
     {
@@ -695,6 +703,8 @@ static void usage(uint32_t opts)
     fprintf(stderr, "       -A: map interconnections towards specified ASes\n");
   if(opts & OPT_ALLYCONF)
     fprintf(stderr, "       -c: how many times to confirm alias inference\n");
+  if(opts & OPT_FLOWID)
+    fprintf(stderr, "       -C: flowid (ICMP csum or UDP sport) for Paris traceroute\n");
   if(opts & OPT_DUMP)
     {
       fprintf(stderr, "       -d: dump id\n");
@@ -714,6 +724,8 @@ static void usage(uint32_t opts)
     fprintf(stderr, "       -i: map interconnections towards specified IPs\n");
   if(opts & OPT_LOGFILE)
     fprintf(stderr, "       -l: log activity to specified file\n");
+  if(opts & OPT_IPMAP)
+    fprintf(stderr, "       -M: static IP mapping file\n");
   if(opts & OPT_NAMEFILE)
     fprintf(stderr, "       -n: IP to name file\n");
   if(opts & OPT_OUTFILE)
@@ -721,14 +733,17 @@ static void usage(uint32_t opts)
   if(opts & OPT_OPTIONS)
     {
       fprintf(stderr, "       -O: options\n");
+      fprintf(stderr, "           udp: use UDP traceroute probes\n");
       fprintf(stderr, "           randomdst: probe random IPs in prefixes\n");
       fprintf(stderr, "           impatient: probe large sets first\n");
       fprintf(stderr, "           dumpborders: dump only border routers\n");
       fprintf(stderr, "           dumponedsts: annotate onedst routers\n");
       fprintf(stderr, "           dumptracesets: dump unused tracesets\n");
-      fprintf(stderr, "           noipopts: do not tx probes with options\n");
+      fprintf(stderr, "           noalias: do not tx alias resolution pkts\n");
       fprintf(stderr, "           nogss: do not use global stop set\n");
+      fprintf(stderr, "           noipopts: do not tx probes with options\n");
       fprintf(stderr, "           noself: do not print adjacent VP routers\n");
+      fprintf(stderr, "           merge: analytically merge routers\n");
       fprintf(stderr, "           nomerge: do not analytically merge routers\n");
     }
   if(opts & OPT_PORT)
@@ -747,6 +762,41 @@ static void usage(uint32_t opts)
   return;
 }
 
+static int uint32_find(const uint32_t *ptr, int c, uint32_t x)
+{
+  int i;
+  for(i=0; i<c; i++)
+    if(ptr[i] == x)
+      return i;
+  return -1;
+}
+
+static int uint32_add(uint32_t **ptr, int *c, uint32_t x)
+{
+  uint32_t *a = *ptr;
+
+  if(uint32_find(a, *c, x) >= 0)
+    return 0;
+
+  if(realloc_wrap((void **)&a, sizeof(uint32_t) * (*c + 1)) != 0)
+    return -1;
+
+  a[*c] = x;
+  *ptr = a;
+  *c = *c + 1;
+
+  return 0;
+}
+
+static int uint32_cmp(const void *va, const void *vb)
+{
+  const uint32_t a = *((const uint32_t *)va);
+  const uint32_t b = *((const uint32_t *)vb);
+  if(a < b) return -1;
+  if(a > b) return  1;
+  return 0;
+}
+
 static int check_options_once(char ch, uint32_t flag)
 {
   if((options & flag) == 0)
@@ -757,12 +807,97 @@ static int check_options_once(char ch, uint32_t flag)
   return -1;
 }
 
+static int vpas_line(char *line, void *param)
+{
+  long lo;
+  if(line[0] == '\0' || line[0] == '#')
+    return 0;
+  if(string_tolong(line, &lo) != 0 || lo < 1 ||
+     uint32_add(&vpas, &vpasc, lo) != 0)
+    return -1;
+  return 0;
+}
+
+static int check_options_vpas(const char *vpas_str)
+{
+  struct stat sb;
+  char *vp = NULL, *cur, *next;
+  long lo;
+
+  if(stat(vpas_str, &sb) == 0)
+    {
+      if(file_lines(vpas_str, vpas_line, NULL) != 0)
+	{
+	  fprintf(stderr, "could not read file %s\n", vpas_str);
+	  goto err;
+	}
+    }
+  else
+    {
+      if((vp = strdup(vpas_str)) == NULL)
+	{
+	  fprintf(stderr, "could not dup vpas_str: %s\n", strerror(errno));
+	  goto err;
+	}
+      cur = vp;
+      while(cur != NULL)
+	{
+	  string_nullterm_char(cur, ',', &next);
+	  if(string_tolong(cur, &lo) != 0 || lo < 1 ||
+	     uint32_add(&vpas, &vpasc, lo) != 0)
+	    {
+	      fprintf(stderr, "malformed -v %s: not a file or set of ASes\n",
+		      vpas_str);
+	      goto err;
+	    }
+	  cur = next;
+	}
+      free(vp); vp = NULL;
+    }
+
+  return 0;
+
+ err:
+  if(vp != NULL) free(vp);
+  return -1;
+}
+
+static int check_options_targetases(slist_t *list)
+{
+  char *opt;
+  long lo;
+
+  while((opt = slist_head_pop(list)) != NULL)
+    {
+      if(string_tolong(opt, &lo) != 0 || lo < 1)
+	{
+	  fprintf(stderr, "%s is not a valid ASN\n", opt);
+	  return -1;
+	}
+      if(uint32_find(vpas, vpasc, lo) >= 0)
+	{
+	  fprintf(stderr, "%ld is also a VP ASN\n", lo);
+	  return -1;
+	}
+      if(uint32_add(&targetas, &targetasc, lo) != 0)
+	{
+	  fprintf(stderr, "could not add %ld to targetas set\n", lo);
+	  return -1;
+	}
+    }
+
+  qsort(targetas, targetasc, sizeof(uint32_t), uint32_cmp);
+  return 0;
+}
+
 static int check_options(int argc, char *argv[])
 {
-  int x = 0, ch; long lo;
-  char *opts = "?6a:Ac:d:Df:g:il:n:o:O:p:r:R:U:v:x:";
+  int rc = -1, x = 0, ch; long lo;
+  char *opts = "?6a:A:c:C:d:Df:g:il:M:n:o:O:p:r:R:S:U:v:x:";
   char *opt_port = NULL, *opt_firsthop = NULL, *opt_dumpid = NULL;
-  char *opt_unix = NULL, *opt_allyconf = NULL;
+  char *opt_unix = NULL, *opt_allyconf = NULL, *opt_vpases = NULL;
+  char *opt_flowid = NULL, *opt_srcaddr = NULL;
+  slist_t *opt_targetases = NULL;
 
   while((ch = getopt(argc, argv, opts)) != -1)
     {
@@ -772,78 +907,95 @@ static int check_options(int argc, char *argv[])
 	case '?':
 	  options |= OPT_HELP;
 	  usage(0xffffffff);
-	  return 0;
+	  rc = 0;
+	  goto done;
 
 	case '6':
 	  if(check_options_once(ch, OPT_IPV6) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_IPV6;
 	  af = AF_INET6;
 	  break;
 
 	case 'a':
 	  if(check_options_once(ch, OPT_IP2AS) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_IP2AS;
 	  ip2as_fn = optarg;
 	  break;
 
+	case 'C':
+	  if(check_options_once(ch, OPT_FLOWID) != 0)
+	    goto done;
+	  options |= OPT_FLOWID;
+	  opt_flowid = optarg;
+	  break;
+
 	case 'A':
-	  if(check_options_once(ch, OPT_TARGETASES) != 0)
-	    return -1;
 	  options |= OPT_TARGETASES;
+	  if(opt_targetases == NULL && (opt_targetases=slist_alloc()) == NULL)
+	    goto done;
+	  if(slist_tail_push(opt_targetases, optarg) == NULL)
+	    goto done;
 	  break;
 
 	case 'c':
 	  if(check_options_once(ch, OPT_ALLYCONF) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_ALLYCONF;
 	  opt_allyconf = optarg;
 	  break;
 
 	case 'd':
 	  if(check_options_once(ch, OPT_DUMP) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_DUMP;
 	  opt_dumpid = optarg;
 	  break;
 
 	case 'D':
 	  if(check_options_once(ch, OPT_DAEMON) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_DAEMON;
 	  break;
 
 	case 'f':
 	  if(check_options_once(ch, OPT_FIRSTHOP) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_FIRSTHOP;
 	  opt_firsthop = optarg;
 	  break;
 
 	case 'g':
 	  if(check_options_once(ch, OPT_DELEGATED) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_DELEGATED;
 	  delegated_fn = optarg;
 	  break;
 
 	case 'i':
 	  if(check_options_once(ch, OPT_TARGETIPS) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_TARGETIPS;
 	  break;
 
 	case 'l':
 	  if(check_options_once(ch, OPT_LOGFILE) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_LOGFILE;
 	  logfile_fn = optarg;
 	  break;
 
+	case 'M':
+	  if(check_options_once(ch, OPT_IPMAP) != 0)
+	    goto done;
+	  options |= OPT_IPMAP;
+	  ipmap_fn = optarg;
+	  break;
+
 	case 'o':
 	  if(check_options_once(ch, OPT_OUTFILE) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_OUTFILE;
 	  outfile_fn = optarg;
 	  break;
@@ -858,70 +1010,83 @@ static int check_options(int argc, char *argv[])
 	    dump_tracesets = 1;
 	  else if(strcasecmp(optarg, "impatient") == 0)
 	    impatient = 1;
+	  else if(strcasecmp(optarg, "noalias") == 0)
+	    no_alias = 1;
 	  else if(strcasecmp(optarg, "nogss") == 0)
 	    no_gss = 1;
 	  else if(strcasecmp(optarg, "noipopts") == 0)
 	    no_ipopts = 1;
+	  else if(strcasecmp(optarg, "merge") == 0)
+	    no_merge = 0;
 	  else if(strcasecmp(optarg, "nomerge") == 0)
 	    no_merge = 1;
 	  else if(strcasecmp(optarg, "noself") == 0)
 	    no_self = 1;
 	  else if(strcasecmp(optarg, "randomdst") == 0)
 	    random_dst = 1;
+	  else if(strcasecmp(optarg, "udp") == 0)
+	    protocol = 1;
 	  else
 	    {
 	      fprintf(stderr, "unknown option %s\n", optarg);
-	      return -1;
+	      goto done;
 	    }
 	  break;
 
 	case 'n':
 	  if(check_options_once(ch, OPT_NAMEFILE) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_NAMEFILE;
 	  ip2name_fn = optarg;
 	  break;
 
 	case 'p':
 	  if(check_options_once(ch, OPT_PORT) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_PORT;
 	  opt_port = optarg;
 	  break;
 
 	case 'r':
 	  if(check_options_once(ch, OPT_RELFILE) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_RELFILE;
 	  relfile_fn = optarg;
 	  break;
 
 	case 'R':
 	  if(check_options_once(ch, OPT_REMOTE) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_REMOTE;
 	  opt_unix = optarg;
 	  break;
 
+	case 'S':
+	  if(check_options_once(ch, OPT_SRCADDR) != 0)
+	    goto done;
+	  options |= OPT_SRCADDR;
+	  opt_srcaddr = optarg;
+	  break;
+
 	case 'U':
 	  if(check_options_once(ch, OPT_UNIX) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_UNIX;
 	  opt_unix = optarg;
 	  break;
 
 	case 'x':
 	  if(check_options_once(ch, OPT_IXPFILE) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_IXPFILE;
 	  ixp_fn = optarg;
 	  break;
 
 	case 'v':
 	  if(check_options_once(ch, OPT_VPASES) != 0)
-	    return -1;
+	    goto done;
 	  options |= OPT_VPASES;
-	  vpas_str = optarg;
+	  opt_vpases = optarg;
 	  break;
 	}
     }
@@ -929,7 +1094,7 @@ static int check_options(int argc, char *argv[])
   if(x == 0)
     {
       usage(0);
-      return -1;
+      goto done;
     }
 
   opt_args = argv + optind;
@@ -938,22 +1103,33 @@ static int check_options(int argc, char *argv[])
   if((options & OPT_VPASES) == 0)
     {
       usage(OPT_VPASES);
-      return -1;
+      goto done;
     }
   if((options & OPT_IP2AS) == 0)
     {
       usage(OPT_IP2AS);
-      return -1;
+      goto done;
     }
+
+  if(check_options_vpas(opt_vpases) != 0)
+    goto done;
+
+  if((options & (OPT_TARGETIPS|OPT_TARGETASES))==(OPT_TARGETIPS|OPT_TARGETASES))
+    {
+      usage(OPT_TARGETIPS|OPT_TARGETASES);
+      goto done;
+    }
+  if(options & OPT_TARGETASES && check_options_targetases(opt_targetases) != 0)
+    goto done;
 
   if(options & OPT_DUMP)
     {
       if(string_isnumber(opt_dumpid) != 0)
 	{
-	  if(string_tolong(opt_dumpid, &lo) != 0 || lo < 1 || lo > dump_funcc)
+	  if(string_tolong(opt_dumpid, &lo) != 0 || lo < 1 || lo >= dump_funcc)
 	    {
 	      usage(OPT_DUMP);
-	      return -1;
+	      goto done;
 	    }
 	  dump_id = lo;
 	}
@@ -969,7 +1145,7 @@ static int check_options(int argc, char *argv[])
 	  if(x == dump_funcc)
 	    {
 	      usage(OPT_DUMP);
-	      return -1;
+	      goto done;
 	    }
 	  dump_id = x;
 	}
@@ -977,9 +1153,10 @@ static int check_options(int argc, char *argv[])
       if(opt_argc < 1)
 	{
 	  usage(0);
-	  return -1;
+	  goto done;
 	}
-      return 0;
+      rc = 0;
+      goto done;
     }
 
   if(options & OPT_ALLYCONF)
@@ -987,7 +1164,7 @@ static int check_options(int argc, char *argv[])
       if(string_tolong(opt_allyconf, &lo) != 0 || lo < 0 || lo > 10)
 	{
 	  usage(OPT_ALLYCONF);
-	  return -1;
+	  goto done;
 	}
       allyconf = lo;
     }
@@ -997,37 +1174,34 @@ static int check_options(int argc, char *argv[])
       if(string_tolong(opt_firsthop, &lo) != 0 || lo < 1 || lo > 4)
 	{
 	  usage(OPT_FIRSTHOP);
-	  return -1;
+	  goto done;
 	}
       firsthop = lo;
     }
 
-  if((options & (OPT_TARGETIPS|OPT_TARGETASES))==(OPT_TARGETIPS|OPT_TARGETASES))
+  if(options & OPT_FLOWID)
     {
-      usage(OPT_TARGETIPS|OPT_TARGETASES);
-      return -1;
+      if(string_tolong(opt_flowid, &lo) != 0 || lo < 1 || lo > 65535)
+	{
+	  usage(OPT_FLOWID);
+	  return -1;
+	}
+      flowid = lo;
     }
+
   if(options & OPT_TARGETIPS)
     {
       if(opt_argc < 1)
 	{
 	  usage(OPT_TARGETIPS);
-	  return -1;
-	}
-    }
-  if(options & OPT_TARGETASES)
-    {
-      if(opt_argc < 1)
-	{
-	  usage(OPT_TARGETASES);
-	  return -1;
+	  goto done;
 	}
     }
 
   if((options & OPT_OUTFILE) == 0)
     {
       usage(OPT_OUTFILE);
-      return -1;
+      goto done;
     }
   if((options & (OPT_PORT|OPT_REMOTE|OPT_UNIX)) == 0 ||
      ((options & (OPT_PORT|OPT_REMOTE|OPT_UNIX)) != OPT_PORT &&
@@ -1035,7 +1209,7 @@ static int check_options(int argc, char *argv[])
       (options & (OPT_PORT|OPT_REMOTE|OPT_UNIX)) != OPT_UNIX))
     {
       usage(OPT_PORT|OPT_REMOTE|OPT_UNIX);
-      return -1;
+      goto done;
     }
 
   if(options & OPT_PORT)
@@ -1043,7 +1217,7 @@ static int check_options(int argc, char *argv[])
       if(string_tolong(opt_port, &lo) != 0 || lo < 1 || lo > 65535)
 	{
 	  usage(OPT_PORT);
-	  return -1;
+	  goto done;
 	}
       port = lo;
     }
@@ -1052,14 +1226,25 @@ static int check_options(int argc, char *argv[])
       unix_name = opt_unix;
     }
 
+  if(options & OPT_SRCADDR &&
+     (srcaddr = scamper_addr_resolve(af, opt_srcaddr)) == NULL)
+    {
+      usage(OPT_SRCADDR);
+      goto done;
+    }
+
   if(logfile_fn != NULL && (logfile = fopen(logfile_fn, "w")) == NULL)
     {
       usage(OPT_LOGFILE);
       fprintf(stderr, "could not open %s\n", logfile_fn);
-      return -1;
+      goto done;
     }
 
-  return 0;
+  rc = 0;
+
+ done:
+  if(opt_targetases != NULL) slist_free(opt_targetases);
+  return rc;
 }
 
 static int tree_to_slist(void *ptr, void *entry)
@@ -1138,41 +1323,6 @@ static char *class_tostr(char *str, size_t len, uint8_t class)
   return str;
 }
 
-static int uint32_find(const uint32_t *ptr, int c, uint32_t x)
-{
-  int i;
-  for(i=0; i<c; i++)
-    if(ptr[i] == x)
-      return i;
-  return -1;
-}
-
-static int uint32_add(uint32_t **ptr, int *c, uint32_t x)
-{
-  uint32_t *a = *ptr;
-
-  if(uint32_find(a, *c, x) >= 0)
-    return 0;
-
-  if(realloc_wrap((void **)&a, sizeof(uint32_t) * (*c + 1)) != 0)
-    return -1;
-
-  a[*c] = x;
-  *ptr = a;
-  *c = *c + 1;
-
-  return 0;
-}
-
-static int uint32_cmp(const void *va, const void *vb)
-{
-  const uint32_t a = *((const uint32_t *)va);
-  const uint32_t b = *((const uint32_t *)vb);
-  if(a < b) return -1;
-  if(a > b) return  1;
-  return 0;
-}
-
 static void *pt_find(prefixtree_t *pt, scamper_addr_t *addr)
 {
   prefix4_t *p4; prefix6_t *p6;
@@ -1193,6 +1343,8 @@ static void *pt_find(prefixtree_t *pt, scamper_addr_t *addr)
 
 static int is_ixp(scamper_addr_t *addr)
 {
+  if(ipmap_pt != NULL && pt_find(ipmap_pt, addr) != NULL)
+    return 0;
   if(ixp_pt != NULL && pt_find(ixp_pt, addr) != NULL)
     return 1;
   return 0;
@@ -1200,6 +1352,8 @@ static int is_ixp(scamper_addr_t *addr)
 
 static int is_reserved(scamper_addr_t *addr)
 {
+  if(ipmap_pt != NULL && pt_find(ipmap_pt, addr) != NULL)
+    return 0;
   return scamper_addr_isreserved(addr);
 }
 
@@ -1563,7 +1717,7 @@ static int sc_prov_add(uint32_t a, uint32_t b)
 static int vp_r(uint32_t peer, uint32_t *sib_as, int *r)
 {
   int custc = 0, peerc = 0, provc = 0;
-  uint32_t custas, peeras, provas;
+  uint32_t custas = 0, peeras = 0, provas = 0;
   int i, rl;
 
   for(i=0; i<vpasc; i++)
@@ -1612,7 +1766,9 @@ static int vp_r(uint32_t peer, uint32_t *sib_as, int *r)
 static int asmap_r(sc_asmap_t *peer, uint32_t *sib, uint32_t *neigh, int *r)
 {
   int custc = 0, peerc = 0, provc = 0;
-  uint32_t cust_sib, cust_neigh, peer_sib, peer_neigh, prov_sib, prov_neigh;
+  uint32_t peer_neigh = 0, peer_sib = 0;
+  uint32_t cust_neigh = 0, cust_sib = 0;
+  uint32_t prov_sib = 0, prov_neigh = 0;
   int i, j, rl;
 
   if(peer->asc == 1)
@@ -1892,7 +2048,6 @@ static sc_prefix_t *sc_prefix_alloc(void *net, int len)
 static sc_prefix_t *sc_prefix_find_in(void *addr)
 {
   prefix4_t *p4; prefix6_t *p6;
-
   if(af == AF_INET)
     {
       if((p4 = prefixtree_find_ip4(ip2as_pt, addr)) != NULL)
@@ -1908,7 +2063,10 @@ static sc_prefix_t *sc_prefix_find_in(void *addr)
 
 static sc_prefix_t *sc_prefix_find(scamper_addr_t *addr)
 {
-  if(scamper_addr_isreserved(addr) != 0)
+  sc_prefix_t *pfx;
+  if(ipmap_pt != NULL && (pfx = pt_find(ipmap_pt, addr)) != NULL)
+    return pfx;
+  if(is_reserved(addr) != 0)
     return NULL;
   if(ixp_pt != NULL && pt_find(ixp_pt, addr) != NULL)
     return NULL;
@@ -2047,8 +2205,8 @@ static void sc_linktest_free(sc_linktest_t *lt)
 
 static int sc_linktest_alloc(scamper_addr_t *a, scamper_addr_t *b)
 {
+  sc_linktest_t *lt = NULL;
   sc_link_t *link;
-  sc_linktest_t *lt;
   sc_test_t *test;
 
   /* the two addresses should not be the same */
@@ -2062,7 +2220,10 @@ static int sc_linktest_alloc(scamper_addr_t *a, scamper_addr_t *b)
      (lt = malloc_zero(sizeof(sc_linktest_t))) == NULL ||
      (lt->ta = sc_target_alloc(a)) == NULL ||
      (lt->tb = sc_target_alloc(b)) == NULL)
-    return -1;
+    {
+      if(lt != NULL) sc_linktest_free(lt);
+      return -1;
+    }
   lt->link = link;
 
   if((test = sc_test_alloc(TEST_LINK, lt)) == NULL || sc_waittest(test) != 0)
@@ -2159,7 +2320,10 @@ static sc_test_t *sc_pingtest_alloc(scamper_addr_t *addr)
 
   if((pt = malloc_zero(sizeof(sc_pingtest_t))) == NULL ||
      (pt->target = sc_target_alloc(addr)) == NULL)
-    return NULL;
+    {
+      if(pt != NULL) sc_pingtest_free(pt);
+      return NULL;
+    }
   pt->ping = ping;
 
   if((test = sc_test_alloc(TEST_PING, pt)) == NULL)
@@ -3199,7 +3363,7 @@ static int sc_astraces_aliases(sc_astraces_t *traces)
 	     (b = sc_ping_alloc(link->b)) == NULL)
 	    goto err;
 	  b->indir.dst = scamper_addr_use(indir->dst);
-	  b->indir.csum = indir->csum;
+	  b->indir.flowid = indir->flowid;
 	  b->indir.ttl = indir->ttl+1;
 	  if(slist_tail_push(a2a->list[0], b) == NULL)
 	    goto err;
@@ -3209,7 +3373,7 @@ static int sc_astraces_aliases(sc_astraces_t *traces)
 	 (a = sc_ping_alloc(link->a)) == NULL)
 	goto err;
       a->indir.dst = scamper_addr_use(indir->dst);
-      a->indir.csum = indir->csum;
+      a->indir.flowid = indir->flowid;
       a->indir.ttl = indir->ttl;
       if(slist_tail_push(a2a->list[1], a) == NULL)
 	goto err;
@@ -3329,9 +3493,9 @@ static int sc_astraces_link_add(sc_astraces_t *traces, scamper_addr_t *a,
       logerr("%s: indir alloc: %s\n", __func__, strerror(errno));
       goto err;
     }
-  indir->dst  = scamper_addr_use(indir_in->dst);
-  indir->ttl  = indir_in->ttl;
-  indir->csum = indir_in->csum;
+  indir->dst    = scamper_addr_use(indir_in->dst);
+  indir->ttl    = indir_in->ttl;
+  indir->flowid = indir_in->flowid;
 
   if(sc_stree_add(traces->links, link) != 0)
     {
@@ -3567,12 +3731,19 @@ static uint8_t sc_delegated_netlen(sc_delegated_t *dg)
   return 0;
 }
 
+static char *rtt_tostr(const struct timeval *rtt, char *str, size_t len)
+{
+  uint32_t v = (rtt->tv_sec * 10000) + (rtt->tv_usec / 100);
+  snprintf(str, len, "%d.%01d", v / 10, v % 10);
+  return str;
+}
+
 static void trace_dump(const scamper_trace_t *trace, sc_routerset_t *rtrset)
 {
   scamper_trace_hop_t *hop;
   sc_prefix_t *pfx;
   sc_router_t *rtr;
-  char buf[128];
+  char buf[128], rtt[128];
   int i;
 
   /* dump the traceroute output */
@@ -3589,9 +3760,10 @@ static void trace_dump(const scamper_trace_t *trace, sc_routerset_t *rtrset)
 	  printf("*\n");
 	  continue;
 	}
-      printf("%s <%u,%u> %d",
+      printf("%s <%u,%u> %s %d",
 	     scamper_addr_tostr(hop->hop_addr, buf, sizeof(buf)),
 	     hop->hop_icmp_type, hop->hop_icmp_code,
+	     rtt_tostr(&hop->hop_rtt, rtt, sizeof(rtt)),
 	     is_vp(hop->hop_addr));
       if(is_ixp(hop->hop_addr) != 0)
 	printf(" ixp");
@@ -3642,7 +3814,14 @@ static int do_method_trace(sc_test_t *test, char *cmd, size_t len)
 	return -1;
     }
 
-  string_concat(cmd, len, &off, "trace -w 1 -P icmp-paris");
+  string_concat(cmd, len, &off, "trace -w 1");
+  if(srcaddr != NULL)
+    string_concat(cmd, len, &off, " -S %s",
+		  scamper_addr_tostr(srcaddr, buf, sizeof(buf)));
+  if(protocol == 0)
+    string_concat(cmd, len, &off, " -P icmp-paris -d %u", flowid);
+  else if(protocol == 1)
+    string_concat(cmd, len, &off, " -P udp-paris -s %u", flowid);
   if(firsthop > 1)
     string_concat(cmd, len, &off, " -f %u", firsthop);
   if(no_gss == 0 && tt->astraces->gss != NULL)
@@ -3666,8 +3845,7 @@ static int do_method_trace(sc_test_t *test, char *cmd, size_t len)
 
 static int do_method_ping(sc_test_t *test, char *cmd, size_t len)
 {
-  static const char *method[] = {"icmp-echo", "tcp-ack-sport",
-				 "udp-dport", "icmp-echo"};
+  static const char *method[] = {"icmp-echo", "tcp-ack-sport", "udp-dport"};
   static const char *wait[] = {"0.3", "0.5", "1", "0.5"};
   sc_pingtest_t *pt = test->data;
   sc_ping_t *ping = pt->ping;
@@ -3678,16 +3856,28 @@ static int do_method_ping(sc_test_t *test, char *cmd, size_t len)
   assert(pt->method < 4);
   assert(pt->method < 3 || ping->indir.dst != NULL);
 
-  string_concat(cmd, len, &off, "ping -P %s -i %s -c %u -o %u",
-		method[pt->method], wait[pt->method], attempts + 2, attempts);
+  string_concat(cmd, len, &off, "ping -i %s -c %u -o %u",
+		wait[pt->method], attempts + 2, attempts);
+
+  if(srcaddr != NULL)
+    string_concat(cmd, len, &off, " -S %s",
+		  scamper_addr_tostr(srcaddr, buf, sizeof(buf)));
 
   if(pt->method == METHOD_INDIR)
-    string_concat(cmd, len, &off, " -m %u -C %u %s", ping->indir.ttl,
-		  ping->indir.csum,
-		  scamper_addr_tostr(ping->indir.dst, buf, sizeof(buf)));
+    {
+      if(protocol == 0)
+	string_concat(cmd,len,&off, " -P icmp-echo -C %u", ping->indir.flowid);
+      else if(protocol == 1)
+	string_concat(cmd,len,&off, " -P udp -F %u", ping->indir.flowid);
+
+      string_concat(cmd, len, &off, " -m %u %s", ping->indir.ttl,
+		    scamper_addr_tostr(ping->indir.dst, buf, sizeof(buf)));
+    }
   else
-    string_concat(cmd, len, &off, " %s",
-		  scamper_addr_tostr(ping->addr, buf, sizeof(buf)));
+    {
+      string_concat(cmd, len, &off, " -P %s %s", method[pt->method],
+		    scamper_addr_tostr(ping->addr, buf, sizeof(buf)));
+    }
   string_concat(cmd, len, &off, "\n");
 
   return off;
@@ -3762,7 +3952,7 @@ static int do_method_ipidseq_ping(sc_test_t *test, sc_ping_t *ping,
 
   /* set up the indirect probing */
   pt->ping->indir.dst = scamper_addr_use(ping->indir.dst);
-  pt->ping->indir.csum = ping->indir.csum;
+  pt->ping->indir.flowid = ping->indir.flowid;
   pt->ping->indir.ttl = ping->indir.ttl;
 
   /* only try and add t2 if we're probing a different address */
@@ -3832,7 +4022,11 @@ static int do_method_link(sc_test_t *test, char *cmd, size_t len)
 
   if(lt->step == TEST_LINK_RR)
     {
-      string_concat(cmd, len, &off, "ping -R %s\n",
+      string_concat(cmd, len, &off, "ping -R");
+      if(srcaddr != NULL)
+	string_concat(cmd, len, &off, " -S %s",
+		      scamper_addr_tostr(srcaddr, b, sizeof(b)));
+      string_concat(cmd, len, &off, " %s\n",
 		    scamper_addr_tostr(link->b, b, sizeof(b)));
     }
   else if(lt->step == TEST_LINK_PSTS)
@@ -3842,7 +4036,11 @@ static int do_method_link(sc_test_t *test, char *cmd, size_t len)
       else
 	scamper_addr_tostr(lt->ab, a, sizeof(a));
       scamper_addr_tostr(link->b, b, sizeof(b));
-      string_concat(cmd, len, &off, "ping -T tsprespec=%s,%s %s\n", b, a, b);
+      string_concat(cmd, len, &off, "ping -T tsprespec=%s,%s", b, a);
+      if(srcaddr != NULL)
+	string_concat(cmd, len, &off, " -S %s",
+		      scamper_addr_tostr(srcaddr, a, sizeof(a)));
+      string_concat(cmd, len, &off, " %s\n", b);
     }
 
  done:
@@ -3863,10 +4061,22 @@ static int do_method_link(sc_test_t *test, char *cmd, size_t len)
   return off;
 }
 
+static int do_method_ally_indir_P(char *cmd, size_t len, size_t *off,
+				  sc_ping_t *seq)
+{
+  char dst[64];
+  if(protocol == 0)
+    string_concat(cmd, len, off, " -p '-P icmp-echo -c %u", seq->indir.flowid);
+  else if(protocol == 1)
+    string_concat(cmd, len, off, " -p '-P udp -F %u", seq->indir.flowid);
+  string_concat(cmd, len, off, " -t %u -i %s'", seq->indir.ttl,
+		scamper_addr_tostr(seq->indir.dst, dst, sizeof(dst)));
+  return 0;
+}
+
 static int do_method_ally(sc_test_t *test, char *cmd, size_t len)
 {
-  static const char *method[] = {"icmp-echo", "tcp-ack-sport",
-				 "udp-dport", "icmp-echo"};
+  static const char *method[] = {"icmp-echo", "tcp-ack-sport", "udp-dport"};
   static const uint16_t wait[] = {300, 500, 1000, 500};
   sc_allytest_t *at = test->data;
   sc_ping_t *aseq = NULL, *bseq = NULL, *a, *b;
@@ -3950,12 +4160,8 @@ static int do_method_ally(sc_test_t *test, char *cmd, size_t len)
     }
   else
     {
-      string_concat(cmd, len, &off, " -p '-P %s -c %u -t %u -i %s'",
-		    method[at->method], aseq->indir.csum, aseq->indir.ttl,
-		    scamper_addr_tostr(aseq->indir.dst, ab, sizeof(ab)));
-      string_concat(cmd, len, &off, " -p '-P %s -c %u -t %u -i %s'",
-		    method[at->method], bseq->indir.csum, bseq->indir.ttl,
-		    scamper_addr_tostr(bseq->indir.dst, bb, sizeof(bb)));
+      do_method_ally_indir_P(cmd, len, &off, aseq);
+      do_method_ally_indir_P(cmd, len, &off, bseq);
     }
   string_concat(cmd, len, &off, "\n");
 
@@ -3964,8 +4170,7 @@ static int do_method_ally(sc_test_t *test, char *cmd, size_t len)
 
 static int do_method_allyconf(sc_test_t *test, char *cmd, size_t len)
 {
-  static const char *method[] = {"icmp-echo", "tcp-ack-sport",
-				 "udp-dport", "icmp-echo"};
+  static const char *method[] = {"icmp-echo", "tcp-ack-sport", "udp-dport"};
   static const uint16_t wait[] = {300, 500, 1000, 500};
   sc_allyconftest_t *act = test->data;
   sc_ping_t *aseq = NULL, *bseq = NULL;
@@ -3987,7 +4192,7 @@ static int do_method_allyconf(sc_test_t *test, char *cmd, size_t len)
       if((aseq = sc_ping_find(act->ally->a)) == NULL ||
 	 (bseq = sc_ping_find(act->ally->b)) == NULL)
 	{
-	  logerr("%s: could not find ipidseq\n");
+	  logerr("%s: could not find ipidseq\n", __func__);
 	  return -1;
 	}
       a = aseq->indir.dst;
@@ -4031,12 +4236,8 @@ static int do_method_allyconf(sc_test_t *test, char *cmd, size_t len)
     }
   else
     {
-      string_concat(cmd, len, &off, " -p '-P %s -c %u -t %u -i %s'",
-		    method[act->method], aseq->indir.csum, aseq->indir.ttl,
-		    scamper_addr_tostr(aseq->indir.dst, ab, sizeof(ab)));
-      string_concat(cmd, len, &off, " -p '-P %s -c %u -t %u -i %s'",
-		    method[act->method], bseq->indir.csum, bseq->indir.ttl,
-		    scamper_addr_tostr(bseq->indir.dst, bb, sizeof(bb)));
+      do_method_ally_indir_P(cmd, len, &off, aseq);
+      do_method_ally_indir_P(cmd, len, &off, bseq);
     }
   string_concat(cmd, len, &off, "\n");
 
@@ -4574,12 +4775,15 @@ static int do_decoderead_ping_ping(sc_test_t *test, scamper_ping_t *ping)
   if(class == -1)
     return -1;
 
-  if(pt->method == METHOD_ICMP || pt->method == METHOD_INDIR)
+  if(pt->method == METHOD_ICMP)
     assert(SCAMPER_PING_METHOD_IS_ICMP(ping));
   else if(pt->method == METHOD_TCP)
     assert(SCAMPER_PING_METHOD_IS_TCP(ping));
   else if(pt->method == METHOD_UDP)
     assert(SCAMPER_PING_METHOD_IS_UDP(ping));
+  else if(pt->method == METHOD_INDIR)
+    assert((protocol == 0 && SCAMPER_PING_METHOD_IS_ICMP(ping)) ||
+	   (protocol == 1 && SCAMPER_PING_METHOD_IS_UDP(ping)));
   else
     return -1;
 
@@ -4692,7 +4896,10 @@ static int do_decoderead_trace(scamper_trace_t *trace)
 
   /* these fields do not change for this traceroute, so set them now */
   indir.dst = trace->dst;
-  indir.csum = trace->dport;
+  if(protocol == 0)
+    indir.flowid = trace->dport;
+  else if(protocol == 1)
+    indir.flowid = trace->sport;
 
   for(i=trace->firsthop-1; i<=lv; i++)
     {
@@ -4726,7 +4933,7 @@ static int do_decoderead_trace(scamper_trace_t *trace)
     }
 
   /* linktest the apparent last hop in the VP network */
-  if(af == AF_INET && lv-1 >= trace->firsthop-1 &&
+  if(af == AF_INET && lv-1 >= trace->firsthop-1 && no_alias == 0 &&
      (x = trace->hops[lv-1]) != NULL &&
      scamper_addr_cmp(x->hop_addr, trace->hops[lv]->hop_addr) != 0 &&
      sc_linktest_alloc(x->hop_addr, trace->hops[lv]->hop_addr) != 0)
@@ -4743,7 +4950,7 @@ static int do_decoderead_trace(scamper_trace_t *trace)
       if(y == NULL || scamper_addr_cmp(x->hop_addr, y->hop_addr) != 0)
 	{
 	  /* linktest the apparent first hop in the neighbor network */
-	  if(af == AF_INET &&
+	  if(af == AF_INET && no_alias == 0 &&
 	     sc_linktest_alloc(trace->hops[lv]->hop_addr, x->hop_addr) != 0)
 	    goto err;
 
@@ -4769,7 +4976,9 @@ static int do_decoderead_trace(scamper_trace_t *trace)
       /* add the second hop past the last VP address to the GSS */
       if(y != NULL && SCAMPER_TRACE_HOP_IS_ICMP_TTL_EXP(y) &&
 	 scamper_addr_cmp(trace->dst, y->hop_addr) != 0 &&
-	 slist_count(astraces->dsts) > 0 && is_vp(y->hop_addr) != 1 &&
+	 slist_count(astraces->dsts) > 0 &&
+	 is_reserved(y->hop_addr) == 0 &&
+	 is_vp(y->hop_addr) == 0 &&
 	 sc_astraces_gss_add(astraces, y->hop_addr) != 0)
 	goto err;
     }
@@ -4778,7 +4987,7 @@ static int do_decoderead_trace(scamper_trace_t *trace)
   if((addr = slist_head_pop(astraces->dsts)) == NULL)
     {
       /* figure out aliases to test for */
-      if(sc_astraces_aliases(astraces) != 0)
+      if(no_alias == 0 && sc_astraces_aliases(astraces) != 0)
 	goto err;
       sc_astraces_free(astraces);
       return 0;
@@ -5045,7 +5254,7 @@ static int delegated_line(char *line, void *param)
   char *ptr, *net, *size;
   long lo;
 
-  if(line[0] == '#')
+  if(line[0] == '\0' || line[0] == '#')
     return 0;
 
   /* skip over RIR label */
@@ -5113,7 +5322,7 @@ static int ip2name_line(char *line, void *param)
   struct in6_addr in6;
   char *ip, *name;
 
-  if(line[0] == '#')
+  if(line[0] == '\0' || line[0] == '#')
     return 0;
 
   ip = line;
@@ -5123,7 +5332,7 @@ static int ip2name_line(char *line, void *param)
   if(*name == '\0')
     return 0;
   *name = '\0'; name++;
-  while(isspace(*name) == 1)
+  while(isspace(*name) != 0)
     name++;
 
   if(af == AF_INET)
@@ -5153,7 +5362,10 @@ static int ip2name_line(char *line, void *param)
      (a2n->addr = scamper_addr_alloc(sa.type, sa.addr)) == NULL ||
      (a2n->name = strdup(name)) == NULL ||
      splaytree_insert(ip2name_tree, a2n) == NULL)
-    return -1;
+    {
+      if(a2n != NULL) sc_addr2name_free(a2n);
+      return -1;
+    }
 
   return 0;
 }
@@ -5170,7 +5382,7 @@ static int ip2as_line(char *line, void *param)
   int asc = 0, last = 0;
   long lo;
 
-  if(line[0] == '#')
+  if(line[0] == '\0' || line[0] == '#')
     return 0;
 
   n = line;
@@ -5181,7 +5393,7 @@ static int ip2as_line(char *line, void *param)
   if(*m == '\0')
     return -1;
   *m = '\0'; m++;
-  while(isspace(*m) == 1)
+  while(isspace(*m) != 0)
     m++;
   if(string_tolong(m, &lo) != 0)
     return -1;
@@ -5192,7 +5404,7 @@ static int ip2as_line(char *line, void *param)
   if(*a == '\0')
     return -1;
   *a = '\0'; a++;
-  while(isspace(*a) == 1)
+  while(isspace(*a) != 0)
     a++;
 
   if(af == AF_INET)
@@ -5231,7 +5443,7 @@ static int ip2as_line(char *line, void *param)
       u32 = atoi(a);
       /* skip over private / reserved ASNs */
       if(u32 == 0 || u32 == 23456 ||
-	 (u32 >= 64512 && u32 <= 65535) || u32 >= 4200000000)
+	 (u32 >= 64512 && u32 <= 65535) || u32 >= 4200000000UL)
 	continue;
       if(uint32_add(&ases, &asc, u32) != 0)
 	goto err;
@@ -5262,6 +5474,60 @@ static int ip2as_line(char *line, void *param)
   return -1;
 }
 
+static int ipmap_line(char *line, void *param)
+{
+  sc_prefix_t *p = NULL;
+  uint32_t ases[1];
+  struct in_addr in;
+  struct in6_addr in6;
+  char *n, *a;
+  long lo;
+
+  if(line[0] == '\0' || line[0] == '#')
+    return 0;
+
+  n = line;
+  a = line;
+
+  /* get the AS number */
+  while(isspace(*a) == 0 && *a != '\0')
+    a++;
+  if(*a == '\0')
+    goto err;
+  *a = '\0'; a++;
+  while(isspace(*a) != 0)
+    a++;
+  if(string_isnumber(a) == 0 || string_tolong(a, &lo) != 0)
+    goto err;
+
+  if(af == AF_INET)
+    {
+      if(inet_pton(AF_INET, n, &in) != 1 ||
+	 (p = sc_prefix_alloc(&in, 32)) == NULL)
+	goto err;
+    }
+  else
+    {
+      if(inet_pton(AF_INET6, n, &in6) != 1 ||
+	 (p = sc_prefix_alloc(&in6, 128)) == NULL)
+	goto err;
+    }
+
+  ases[0] = lo;
+  if((p->asmap = sc_asmap_get(ases, 1)) == NULL)
+    goto err;
+
+  if((af == AF_INET  && prefixtree_insert4(ipmap_pt,p->pfx.v4) == NULL) ||
+     (af == AF_INET6 && prefixtree_insert6(ipmap_pt,p->pfx.v6) == NULL))
+    goto err;
+
+  return 0;
+
+ err:
+  if(p != NULL) sc_prefix_free(p);
+  return -1;
+}
+
 static int relfile_line(char *line, void *param)
 {
   static int linec = 0;
@@ -5270,7 +5536,7 @@ static int relfile_line(char *line, void *param)
 
   linec++;
 
-  if(line[0] == '#')
+  if(line[0] == '\0' || line[0] == '#')
     return 0;
 
   as = line;
@@ -5314,15 +5580,6 @@ static int relfile_line(char *line, void *param)
 	return -1;
     }
 
-  return 0;
-}
-
-static int vpas_line(char *line, void *param)
-{
-  long lo;
-  if(string_tolong(line, &lo) != 0 || lo < 1 ||
-     uint32_add(&vpas, &vpasc, lo) != 0)
-    return -1;
   return 0;
 }
 
@@ -5381,78 +5638,6 @@ static int do_targetips(void)
 
  err:
   if(astraces != NULL) splaytree_free(astraces, NULL);
-  return -1;
-}
-
-static int do_targetases(void)
-{
-  long lo;
-  int i;
-
-  for(i=0; i<opt_argc; i++)
-    {
-      if(string_tolong(opt_args[i], &lo) != 0 || lo < 1)
-	{
-	  fprintf(stderr, "%s is not a valid ASN\n", opt_args[i]);
-	  return -1;
-	}
-      if(uint32_find(vpas, vpasc, lo) >= 0)
-	{
-	  fprintf(stderr, "%ld is also a VP ASN\n", lo);
-	  return -1;
-	}
-      if(uint32_add(&targetas, &targetasc, lo) != 0)
-	{
-	  fprintf(stderr, "could not add %ld to targetas set\n", lo);
-	  return -1;
-	}
-    }
-  qsort(targetas, targetasc, sizeof(uint32_t), uint32_cmp);
-
-  return 0;
-}
-
-static int do_vpas(void)
-{
-  struct stat sb;
-  char *vp = NULL, *cur, *next;
-  long lo;
-
-  if(stat(vpas_str, &sb) == 0)
-    {
-      if(file_lines(vpas_str, vpas_line, NULL) != 0)
-	{
-	  fprintf(stderr, "could not read file %s\n", vpas_str);
-	  goto err;
-	}
-    }
-  else
-    {
-      if((vp = strdup(vpas_str)) == NULL)
-	{
-	  fprintf(stderr, "could not dup vpas_str: %s\n", strerror(errno));
-	  goto err;
-	}
-      cur = vp;
-      while(cur != NULL)
-	{
-	  string_nullterm_char(cur, ',', &next);
-	  if(string_tolong(cur, &lo) != 0 || lo < 1 ||
-	     uint32_add(&vpas, &vpasc, lo) != 0)
-	    {
-	      fprintf(stderr, "malformed -v %s: not a file or set of ASes\n",
-		      vpas_str);
-	      goto err;
-	    }
-	  cur = next;
-	}
-      free(vp); vp = NULL;
-    }
-
-  return 0;
-
- err:
-  if(vp != NULL) free(vp);
   return -1;
 }
 
@@ -5811,6 +5996,28 @@ static int do_ip2as(void)
   return -1;
 }
 
+static int do_ipmap(void)
+{
+  if(ipmap_fn == NULL)
+    return 0;
+
+  if((ipmap_pt = prefixtree_alloc(af)) == NULL)
+    {
+      logerr("%s: could not alloc pt: %s\n", __func__, strerror(errno));
+      goto err;
+    }
+  if(file_lines(ipmap_fn, ipmap_line, NULL) != 0)
+    {
+      logerr("%s: could not read %s: %s\n",__func__,ipmap_fn,strerror(errno));
+      goto err;
+    }
+
+  return 0;
+
+ err:
+  return -1;
+}
+
 static int ixp_line(char *line, void *param)
 {
   struct addrinfo hints, *res, *res0;
@@ -5819,7 +6026,7 @@ static int ixp_line(char *line, void *param)
   void *va;
   long lo;
 
-  if(line[0] == '#')
+  if(line[0] == '\0' || line[0] == '#')
     return 0;
 
   string_nullterm_char(line, '/', &pf);
@@ -5845,6 +6052,8 @@ static int ixp_line(char *line, void *param)
 	{
 	  if(af != AF_INET) break;
 	  va = &((struct sockaddr_in *)res->ai_addr)->sin_addr;
+	  if(prefixtree_find_exact4(ixp_pt, va, lo) != NULL)
+	    break;
 	  if((p4 = prefix4_alloc(va, lo, NULL)) == NULL)
 	    return -1;
 	  p4->ptr = p4;
@@ -5856,6 +6065,8 @@ static int ixp_line(char *line, void *param)
 	{
 	  if(af != AF_INET6) break;
 	  va = &((struct sockaddr_in6 *)res->ai_addr)->sin6_addr;
+	  if(prefixtree_find_exact6(ixp_pt, va, lo) != NULL)
+	    break;
 	  if((p6 = prefix6_alloc(va, lo, NULL)) == NULL)
 	    return -1;
 	  p6->ptr = p6;
@@ -5906,11 +6117,12 @@ static int bdrmap_data(void)
     }
   else
     {
-      if((options & OPT_TARGETASES) && do_targetases() != 0)
-	goto done;
       if(do_targets() != 0)
 	goto done;
     }
+
+  if(do_ipmap() != 0)
+    return -1;
 
   if(do_scamperconnect() != 0 ||
      (outfile = scamper_file_open(outfile_fn, 'w', "warts")) == NULL ||
@@ -6382,8 +6594,7 @@ static int process_1_trace_work(scamper_trace_t *trace, int lh)
 	 SCAMPER_TRACE_HOP_IS_ICMP_TTL_EXP(x) == 0 ||
 	 SCAMPER_TRACE_HOP_IS_ICMP_TTL_EXP(y) == 0 ||
 	 scamper_addr_cmp(y->hop_addr, trace->dst) == 0 ||
-	 scamper_addr_isreserved(x->hop_addr) ||
-	 scamper_addr_isreserved(y->hop_addr))
+	 is_reserved(x->hop_addr) || is_reserved(y->hop_addr))
 	continue;
 
       /*
@@ -6426,7 +6637,7 @@ static int process_1_trace_work(scamper_trace_t *trace, int lh)
 	    {
 	      if((z = trace->hops[j]) == NULL ||
 		 SCAMPER_TRACE_HOP_IS_ICMP_TTL_EXP(z) == 0 ||
-		 scamper_addr_isreserved(z->hop_addr) ||
+		 is_reserved(z->hop_addr) ||
 		 (pfx = sc_prefix_find(z->hop_addr)) == NULL)
 		continue;
 	      if(sc_link4_addadj(link4, pfx) != 0)
@@ -6589,7 +6800,7 @@ static int process_1_ping(scamper_ping_t *ping)
 	{
 	  if(SCAMPER_PING_REPLY_IS_ICMP_UNREACH_PORT(r) &&
 	     scamper_addr_cmp(r->addr, ping->dst) != 0 &&
-	     scamper_addr_isreserved(r->addr) == 0 &&
+	     is_reserved(r->addr) == 0 &&
 	     sc_link_find(ping->dst, r->addr) == NULL &&
 	     sc_link_find(r->addr, ping->dst) == NULL &&
 	     sc_routerset_getpair(rtrset, ping->dst, r->addr) == NULL)
@@ -6991,7 +7202,8 @@ static int owner_1_traceset(sc_routerset_t *set, sc_traceset_t *ts)
  * yas_set:  networks announcing ttlexp interfaces on router Y
  * a2r_list: the ttlexp interfaces on router Y
  */
-static int owner_1(sc_router_t *y, uint32_t *owner_as, uint8_t *owner_reason)
+static int owner_1(sc_router_t *y, uint32_t *owner_as, uint8_t *owner_reason,
+		   int vp_ipasn)
 {
   sc_stree_t *yas_set = NULL, *zas_set = NULL, *zas2_set = NULL;
   sc_stree_t *adj_set = NULL, *ixp_set = NULL, *tp_set = NULL;
@@ -7184,7 +7396,7 @@ static int owner_1(sc_router_t *y, uint32_t *owner_as, uint8_t *owner_reason)
 		  z = dlist_node_item(dn);
 		  if(z->owner_as != 0)
 		    z_asn = z->owner_as;
-		  else if(owner_1(z, &z_asn, &u8) != 1)
+		  else if(owner_1(z, &z_asn, &u8, 0) != 1)
 		    continue;
 
 		  if(is_vpas(z_asn) || z_asn == y_dstases_owner || z_asn == 0)
@@ -7568,7 +7780,7 @@ static int owner_1(sc_router_t *y, uint32_t *owner_as, uint8_t *owner_reason)
       yas = ((sc_asmapc_t *)slist_head_item(yas_set->list))->asmap;
       for(i=0; i<yas->asc; i++)
 	{
-	  if(is_vpas(yas->ases[i]))
+	  if(is_vpas(yas->ases[i]) && vp_ipasn == 0)
 	    continue;
 	  *owner_as = yas->ases[i];
 	  *owner_reason = SC_ROUTER_OWNER_IP2AS;
@@ -7609,7 +7821,7 @@ static void finish_1(void)
   sc_asmap_t *asmap;
   sc_farrouter_t *fr;
   sc_prefix_t *pfx;
-  int r, lh, rc, owned, changed;
+  int i, r, lh, rc, owned, changed;
   sc_asc_t *asc;
   uint32_t u32, owner_as;
   uint8_t owner_reason;
@@ -7775,7 +7987,7 @@ static void finish_1(void)
 	      y->flags |= SC_ROUTER_FLAG_VISITED;
 
 	      /* if we have an error, break out */
-	      if((rc = owner_1(y, &owner_as, &owner_reason)) < 0)
+	      if((rc = owner_1(y, &owner_as, &owner_reason, 0)) < 0)
 		goto done;
 
 	      /* if we assign an owner, then make a note */
@@ -7807,7 +8019,7 @@ static void finish_1(void)
 	  if(x->flags & SC_ROUTER_FLAG_VISITED)
 	    continue;
 	  x->flags |= SC_ROUTER_FLAG_VISITED;
-	  if((rc = owner_1(x, &owner_as, &owner_reason)) < 0)
+	  if((rc = owner_1(x, &owner_as, &owner_reason, 1)) < 0)
 	    goto done;
 	  if(rc > 0)
 	    {
@@ -7982,10 +8194,10 @@ static void finish_1(void)
 	    {
 	      asmapc = slist_head_item(y->dstases->list);
 	      asmap = asmapc->asmap;
-	      for(u32=0; u32 < asmap->asc; u32++)
-		if(asmap->ases[u32] == y->owner_as)
+	      for(i=0; i < asmap->asc; i++)
+		if(asmap->ases[i] == y->owner_as)
 		  break;
-	      if(u32 == asmap->asc)
+	      if(i == asmap->asc)
 		printf(":%s", sc_asmap_tostr(asmap, buf, sizeof(buf)));
 	    }
 
@@ -8046,8 +8258,33 @@ static void finish_1(void)
 
 static int process_2_trace(scamper_trace_t *trace)
 {
+  sc_prefix_t *pfx;
+  int i, j;
+
+  /*
+   * if ASes are specified on the command line, filter the traceroutes
+   * so that only traceroutes towards a specific AS are dumped
+   */
+  if(targetasc > 0)
+    {
+      if((pfx = sc_prefix_find(trace->dst)) == NULL)
+	goto done;
+      for(i=0; i<pfx->asmap->asc; i++)
+	{
+	  for(j=0; j<targetasc; j++)
+	    if(pfx->asmap->ases[i] == targetas[j])
+	      break;
+	  if(j != targetasc)
+	    break;
+	}
+      if(i == pfx->asmap->asc)
+	goto done;
+    }
+
   trace_dump(trace, NULL);
   printf("\n");
+
+ done:
   scamper_trace_free(trace);
   return 0;
 }
@@ -8079,13 +8316,16 @@ static int bdrmap_dump(void)
 	return -1;
     }
 
+  if(do_ipmap() != 0)
+    return -1;
+
   if(dump_funcs[dump_id].init != NULL)
     dump_funcs[dump_id].init();
 
   for(i=0; i<opt_argc; i++)
     {
       filename = opt_args[i];
-      if(strcmp(filename, "-") == 0)
+      if(string_isdash(filename) != 0)
 	{
 	  if(stdin_used == 1)
 	    {
@@ -8161,9 +8401,6 @@ static int bdrmap_init(void)
       return -1;
     }
 
-  if(vpas_str != NULL && do_vpas() != 0)
-    return -1;
-
   if(ip2as_fn != NULL && do_ip2as() != 0)
     return -1;
 
@@ -8206,6 +8443,12 @@ static void cleanup(void)
     {
       prefixtree_free(ip2as_pt);
       ip2as_pt = NULL;
+    }
+
+  if(ipmap_pt != NULL)
+    {
+      prefixtree_free(ipmap_pt);
+      ipmap_pt = NULL;
     }
 
   if(ixp_pt != NULL)

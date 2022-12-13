@@ -3,12 +3,12 @@
 .\"
 .\" Author: Matthew Luckie <mjl@luckie.org.nz>
 .\"
-.\" Copyright (c) 2014-2015 Matthew Luckie
+.\" Copyright (c) 2014-2020 Matthew Luckie
 .\"               All rights reserved
 .\"
-.\" $Id: sc_remoted.1,v 1.9 2016/11/20 17:33:49 mjl Exp $
+.\" $Id: sc_remoted.1,v 1.14.10.1 2022/06/12 05:37:34 mjl Exp $
 .\"
-.Dd September 21, 2014
+.Dd March 28, 2020
 .Dt SC_REMOTED 1
 .Os
 .Sh NAME
@@ -19,10 +19,13 @@
 .Bk -words
 .Op Fl ?46D
 .Op Fl O Ar options
-.Op Fl P Ar port
+.Op Fl P Ar [ip:]port
 .Op Fl U Ar directory
+.Op Fl C Ar tls-ca
 .Op Fl c Ar tls-certificate
 .Op Fl p Ar tls-privatekey
+.Op Fl e Ar pidfile
+.Op Fl Z Ar zombie-time
 .Ek
 .\""""""""""""
 .Sh DESCRIPTION
@@ -64,6 +67,9 @@ unix domain sockets created by
 allow anyone on the system access to the unix domain sockets created by
 .Nm
 .It
+.Sy debug:
+print debugging messages
+.It
 .Sy select:
 use
 .Xr select 2
@@ -71,14 +77,27 @@ with all sockets, rather than
 .Xr epoll 2
 or
 .Xr kqueue 2
+.It
+.Sy skipnameverification:
+do not verify the monitor name, if presented, against the name in the
+certificate that the client presents if doing client TLS
+authentication.
 .El
-.It Fl P Ar port
-specifies the port on the local host where
+.It Fl P Ar [ip:]port
+specifies the IP address and port on the local host where
 .Nm
 should listen for incoming connections.
+If an IP address is not specified,
+.Nm
+will listen on all available IP addresses for incoming connections.
 .It Fl U Ar directory
 specifies the directory on the local host where unix domain sockets
 corresponding to remote hosts should be placed.
+.It Fl C Ar tls-ca
+specifies the certificate authority certificate file in PEM format
+for
+.Nm
+to use to verify client certificates.
 .It Fl c Ar tls-certificate
 specifies the server certificate file in PEM format to advertise to
 remote
@@ -89,6 +108,16 @@ specifies the private key file in PEM format that corresponds to the
 certificate file.  This key should have a passphrase.
 .Nm
 will prompt for the passphrase when starting up.
+.It Fl e Ar pidfile
+specifies the name of a file to write the process ID to.
+.It Fl Z Ar zombie-time
+specifies the length of time
+.Nm
+will retain state for a disconnected
+.Xr scamper 1
+instance, allowing it to resume.  By default
+.Nm
+retains state for 15 minutes.
 .El
 .\""""""""""""
 .Sh EXAMPLES
@@ -170,6 +199,18 @@ to enable TLS support:
 and then passing the -O tls option to scamper:
 .Pp
 .Dl scamper -R example.com:31337 -O tls
+.Pp
+.\""""""""""""
+.Sh SIGNAL HANDLERS
+.Nm
+installs handlers for two signals: SIGINT and SIGHUP.
+SIGINT causes
+.Nm
+to exit gracefully.
+SIGHUP causes
+.Nm
+to reload the TLS certificate and private key, without interrupting
+existing TLS connections.
 .Pp
 .\""""""""""""
 .Sh SEE ALSO

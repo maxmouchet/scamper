@@ -4,9 +4,10 @@
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
+ * Copyright (C) 2020      Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_ping.c,v 1.33 2016/09/17 05:52:37 mjl Exp $
+ * $Id: scamper_ping.c,v 1.38.4.1 2022/10/29 22:20:51 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_ping.c,v 1.33 2016/09/17 05:52:37 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -49,9 +45,12 @@ char *scamper_ping_method2str(const scamper_ping_t *ping, char *buf, size_t len)
     "udp-dport",
     "icmp-time",
     "tcp-syn",
+    "tcp-synack",
+    "tcp-rst",
+    "tcp-syn-sport",
   };
 
-  if(ping->probe_method > sizeof(m) / sizeof(char *))
+  if(ping->probe_method >= sizeof(m) / sizeof(char *))
     {
       snprintf(buf, len, "%d", ping->probe_method);
       return buf;
@@ -253,6 +252,7 @@ void scamper_ping_free(scamper_ping_t *ping)
 
   if(ping->dst != NULL) scamper_addr_free(ping->dst);
   if(ping->src != NULL) scamper_addr_free(ping->src);
+  if(ping->rtr != NULL) scamper_addr_free(ping->rtr);
 
   if(ping->cycle != NULL) scamper_cycle_free(ping->cycle);
   if(ping->list != NULL) scamper_list_free(ping->list);

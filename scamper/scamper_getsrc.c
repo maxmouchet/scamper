@@ -1,7 +1,7 @@
 /*
  * scamper_getsrc.c
  *
- * $Id: scamper_getsrc.c,v 1.18 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_getsrc.c,v 1.20 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2005 Matthew Luckie
  * Copyright (C) 2007-2010 The University of Waikato
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_getsrc.c,v 1.18 2011/09/16 03:15:44 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -62,7 +57,7 @@ scamper_addr_t *scamper_getsrc(const scamper_addr_t *dst, int ifindex)
     {
       if(udp4 == -1 && (udp4 = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
 	{
-	  printerror(errno, strerror, __func__, "could not open udp4 sock");
+	  printerror(__func__, "could not open udp4 sock");
 	  return NULL;
 	}
 
@@ -76,7 +71,7 @@ scamper_addr_t *scamper_getsrc(const scamper_addr_t *dst, int ifindex)
     {
       if(udp6 == -1 && (udp6 = socket(AF_INET6, SOCK_DGRAM,IPPROTO_UDP)) == -1)
 	{
-	  printerror(errno, strerror, __func__, "could not open udp6 sock");
+	  printerror(__func__, "could not open udp6 sock");
 	  return NULL;
 	}
 
@@ -95,7 +90,7 @@ scamper_addr_t *scamper_getsrc(const scamper_addr_t *dst, int ifindex)
 
   if(connect(sock, (struct sockaddr *)&sas, socklen) != 0)
     {
-      printerror(errno, strerror, __func__, "connect to dst failed for %s",
+      printerror(__func__, "connect to dst failed for %s",
 		 scamper_addr_tostr(dst, buf, sizeof(buf)));
       return NULL;
     }
@@ -103,7 +98,7 @@ scamper_addr_t *scamper_getsrc(const scamper_addr_t *dst, int ifindex)
   sockleno = socklen;
   if(getsockname(sock, (struct sockaddr *)&sas, &sockleno) != 0)
     {
-      printerror(errno, strerror, __func__, "could not getsockname for %s",
+      printerror(__func__, "could not getsockname for %s",
 		 scamper_addr_tostr(dst, buf, sizeof(buf)));
       return NULL;
     }

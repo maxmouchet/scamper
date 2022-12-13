@@ -1,4 +1,4 @@
-# $Id: Makefile.am,v 1.26 2016/08/26 10:08:32 mjl Exp $
+# $Id: Makefile.am,v 1.36.4.1 2022/06/12 07:10:39 mjl Exp $
 
 AUTOMAKE_OPTIONS = subdir-objects
 
@@ -8,16 +8,16 @@ bin_PROGRAMS = scamper
 
 lib_LTLIBRARIES = libscamperfile.la
 
-libscamperfile_la_LDFLAGS = -version-info 0:0:0
+libscamperfile_la_LDFLAGS = -version-info 3:0:0
 
 libscamperfile_la_SOURCES = \
 	../mjl_splaytree.c \
-	../mjl_patricia.c \
 	../utils.c \
 	scamper_file.c \
 	scamper_file_arts.c \
 	scamper_file_warts.c \
 	scamper_file_text.c \
+	scamper_file_json.c \
 	scamper_addr.c \
 	scamper_list.c \
 	scamper_icmpext.c \
@@ -32,6 +32,7 @@ libscamperfile_la_SOURCES = \
 	tracelb/scamper_tracelb.c \
 	tracelb/scamper_tracelb_warts.c \
 	tracelb/scamper_tracelb_text.c \
+	tracelb/scamper_tracelb_json.c \
 	dealias/scamper_dealias.c \
 	dealias/scamper_dealias_warts.c \
 	dealias/scamper_dealias_text.c \
@@ -46,7 +47,9 @@ libscamperfile_la_SOURCES = \
 	tbit/scamper_tbit_text.c \
 	tbit/scamper_tbit_json.c \
 	sniff/scamper_sniff.c \
-	sniff/scamper_sniff_warts.c
+	sniff/scamper_sniff_warts.c \
+	host/scamper_host.c \
+	host/scamper_host_warts.c
 
 scamper_SOURCES = \
 	../mjl_list.c \
@@ -91,6 +94,7 @@ scamper_SOURCES = \
 	scamper_file_arts.c \
 	scamper_file_warts.c \
 	scamper_file_text.c \
+	scamper_file_json.c \
 	scamper_sources.c \
 	scamper_source_cmdline.c \
 	scamper_source_control.c \
@@ -109,6 +113,7 @@ scamper_SOURCES = \
 	tracelb/scamper_tracelb.c \
 	tracelb/scamper_tracelb_warts.c \
 	tracelb/scamper_tracelb_text.c \
+	tracelb/scamper_tracelb_json.c \
 	tracelb/scamper_tracelb_do.c \
 	dealias/scamper_dealias.c \
 	dealias/scamper_dealias_warts.c \
@@ -129,7 +134,10 @@ scamper_SOURCES = \
 	tbit/scamper_tbit_do.c \
 	sniff/scamper_sniff.c \
 	sniff/scamper_sniff_warts.c \
-	sniff/scamper_sniff_do.c
+	sniff/scamper_sniff_do.c \
+	host/scamper_host.c \
+	host/scamper_host_warts.c \
+	host/scamper_host_do.c
 
 scamper_CFLAGS = $(AM_CFLAGS)
 
@@ -148,13 +156,14 @@ include_HEADERS = \
 	sting/scamper_sting.h \
 	neighbourdisc/scamper_neighbourdisc.h \
 	tbit/scamper_tbit.h \
-	sniff/scamper_sniff.h
+	sniff/scamper_sniff.h \
+	host/scamper_host.h
 
 man_MANS = \
 	scamper.1 \
 	libscamperfile.3 \
 	warts.5
 
-CLEANFILES = *~ *.core scamper.1.html \
+CLEANFILES = *~ *.core \
 	trace/*~ ping/*~ tracelb/*~ dealias/*~ sting/*~ \
-	neighbourdisc/*~ tbit/*~ sniff/*~
+	neighbourdisc/*~ tbit/*~ sniff/*~ host/*~

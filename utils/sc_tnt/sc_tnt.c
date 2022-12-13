@@ -1868,7 +1868,7 @@ static int scamper_trace_tnt_print(scamper_trace_t *trace)
     printf("%-15s", scamper_addr_tostr(hop->hop_addr, buf, sizeof(buf)));
     
     /* RTT */
-    timeval_tostr(&hop->hop_rtt, str_rtt, sizeof(str_rtt));
+    timeval_tostr_us(&hop->hop_rtt, str_rtt, sizeof(str_rtt));
     printf(" %s ms", str_rtt);
     
     /* Reserved IP */

@@ -1,7 +1,7 @@
 /*
  * scamper_tcp4.c
  *
- * $Id: scamper_tcp4.c,v 1.57 2015/04/23 22:09:03 mjl Exp $
+ * $Id: scamper_tcp4.c,v 1.59 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -22,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_tcp4.c,v 1.57 2015/04/23 22:09:03 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -301,7 +296,7 @@ int scamper_tcp4_probe(scamper_probe_t *pr)
     {
       if(realloc_wrap((void **)&pktbuf, len) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not realloc");
+	  printerror(__func__, "could not realloc");
 	  return -1;
 	}
       pktbuf_len = len;
@@ -330,8 +325,7 @@ int scamper_tcp4_probe(scamper_probe_t *pr)
     {
       /* error condition, could not send the packet at all */
       pr->pr_errno = errno;
-      printerror(pr->pr_errno, strerror, __func__,
-		 "could not send to %s (%d ttl, %d dport, %d len)",
+      printerror(__func__, "could not send to %s (%d ttl, %d dport, %d len)",
 		 scamper_addr_tostr(pr->pr_ip_dst, addr, sizeof(addr)),
 		 pr->pr_ip_ttl, pr->pr_tcp_dport, len);
       return -1;
@@ -339,10 +333,9 @@ int scamper_tcp4_probe(scamper_probe_t *pr)
   else if((size_t)i != len)
     {
       /* error condition, sent a portion of the probe */
-      fprintf(stderr,
-	      "scamper_tcp4_probe: sent %d bytes of %d byte packet to %s",
-	      i, (int)len,
-	      scamper_addr_tostr(pr->pr_ip_dst, addr, sizeof(addr)));
+      printerror_msg(__func__, "sent %d bytes of %d byte packet to %s",
+		     i, (int)len,
+		     scamper_addr_tostr(pr->pr_ip_dst, addr, sizeof(addr)));
       return -1;
     }
 
@@ -378,21 +371,21 @@ int scamper_tcp4_open(const void *addr, int sport)
 
   if((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open socket");
+      printerror(__func__, "could not open socket");
       goto err;
     }
 
   opt = 1;
   if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt)) != 0)
     {
-      printerror(errno, strerror, __func__, "could not set SO_REUSEADDR");
+      printerror(__func__, "could not set SO_REUSEADDR");
       goto err;
     }
 
   opt = 65535 + 128;
   if(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (char *)&opt, sizeof(opt)) != 0)
     {
-      printerror(errno,strerror,__func__,"could not set SO_SNDBUF");
+      printerror(__func__, "could not set SO_SNDBUF");
       return -1;
     }
 
@@ -400,9 +393,9 @@ int scamper_tcp4_open(const void *addr, int sport)
   if(bind(fd, (struct sockaddr *)&sin4, sizeof(sin4)) == -1)
     {
       if(addr == NULL || addr_tostr(AF_INET, addr, tmp, sizeof(tmp)) == NULL)
-	printerror(errno,strerror,__func__, "could not bind port %d", sport);
+	printerror(__func__, "could not bind port %d", sport);
       else
-	printerror(errno,strerror,__func__, "could not bind %s:%d", tmp, sport);
+	printerror(__func__, "could not bind %s:%d", tmp, sport);
       goto err;
     }
 

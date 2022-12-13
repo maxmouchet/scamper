@@ -1,7 +1,7 @@
 /*
  * scamper_do_neighbourdisc
  *
- * $Id: scamper_neighbourdisc_do.c,v 1.35.18.1 2017/06/22 08:44:30 mjl Exp $
+ * $Id: scamper_neighbourdisc_do.c,v 1.40 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2009-2011 Matthew Luckie
  *
@@ -19,11 +19,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_neighbourdisc_do.c,v 1.35.18.1 2017/06/22 08:44:30 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -136,45 +131,44 @@ static int nd_state_alloc(scamper_task_t *task)
 
   if((state = malloc_zero(sizeof(nd_state_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc state");
+      printerror(__func__, "could not malloc state");
       goto err;
     }
 
   if(scamper_if_getifindex(nd->ifname, &state->ifindex) != 0)
     {
-      printerror(errno, strerror, __func__,
-		 "could not get ifindex for %s", nd->ifname);
+      printerror(__func__, "could not get ifindex for %s", nd->ifname);
       goto err;
     }
 
   if(nd->src_ip == NULL &&
      (nd->src_ip = scamper_getsrc(nd->dst_ip, state->ifindex)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get src ip");
+      printerror(__func__, "could not get src ip");
       goto err;
     }
 
   if(scamper_if_getmac(state->ifindex, src) != 0)
     {
-      printerror(errno, strerror, __func__, "could not get src mac");
+      printerror(__func__, "could not get src mac");
       goto err;
     }
 
   if((nd->src_mac = scamper_addrcache_get_ethernet(addrcache, src)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get src mac");
+      printerror(__func__, "could not get src mac");
       goto err;
     }
 
   if((state->fd = scamper_fd_dl(state->ifindex)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get fd");
+      printerror(__func__, "could not get fd");
       goto err;
     }
 
   if((dl = scamper_fd_dl_get(state->fd)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get dl");
+      printerror(__func__, "could not get dl");
       goto err;
     }
 
@@ -256,7 +250,7 @@ static void do_nd_probe_nsol(scamper_task_t *task)
   uint16_t u16, *w;
   uint8_t ip6_dst[16];
   uint8_t sol[4];
-  size_t off = 0;
+  size_t off = 0, icmp_off;
   int i, sum = 0;
 
   /* figure out the lower 4 bytes of the solicited multicast address */
@@ -288,6 +282,7 @@ static void do_nd_probe_nsol(scamper_task_t *task)
   memcpy(&ip6->ip6_dst, ip6_dst, 16);
 
   /* ICMP6 neighbour discovery: 32 bytes */
+  icmp_off = off;
   icmp6 = (struct icmp6_hdr *)(pktbuf+off); off += sizeof(struct icmp6_hdr);
   icmp6->icmp6_type = ND_NEIGHBOR_SOLICIT;
   icmp6->icmp6_code = 0;
@@ -310,7 +305,7 @@ static void do_nd_probe_nsol(scamper_task_t *task)
   sum += *w++; sum += *w++; sum += *w++; sum += *w++;
   sum += ip6->ip6_plen;
   sum += htons(IPPROTO_ICMPV6);
-  w = (uint16_t *)icmp6;
+  w = (uint16_t *)(pktbuf + icmp_off);
   for(i = ntohs(ip6->ip6_plen); i > 1; i -= 2)
     sum += *w++;
   if(i != 0)
@@ -388,14 +383,14 @@ static void do_nd_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
 
   if((reply = scamper_neighbourdisc_reply_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc reply");
+      printerror(__func__, "could not alloc reply");
       goto err;
     }
   timeval_cpy(&reply->rx, &dl->dl_tv);
   reply->mac = scamper_addrcache_get_ethernet(addrcache, mac);
   if(reply->mac == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get reply->mac");
+      printerror(__func__, "could not get reply->mac");
       goto err;
     }
 
@@ -405,7 +400,7 @@ static void do_nd_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
 
   if(scamper_neighbourdisc_reply_add(probe, reply) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add reply");
+      printerror(__func__, "could not add reply");
       goto err;
     }
 
@@ -453,7 +448,7 @@ static void do_nd_probe(scamper_task_t *task)
     {
       if(realloc_wrap((void **)&pktbuf, len) != 0)
 	{
-	  printerror(errno, strerror, __func__, "could not realloc");
+	  printerror(__func__, "could not realloc");
 	  goto err;
 	}
       pktbuf_len = len;
@@ -469,7 +464,7 @@ static void do_nd_probe(scamper_task_t *task)
   /* allocate a probe record to store tx time and associated replies */
   if((probe = scamper_neighbourdisc_probe_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc probe");
+      printerror(__func__, "could not alloc probe");
       goto err;
     }
 
@@ -487,7 +482,7 @@ static void do_nd_probe(scamper_task_t *task)
 
   if(scamper_neighbourdisc_probe_add(nd, probe) != 0)
     {
-      printerror(errno, strerror, __func__, "could not add probe");
+      printerror(__func__, "could not add probe");
       goto err;
     }
 
@@ -546,7 +541,7 @@ static void do_nd_free(scamper_task_t *task)
   return;
 }
 
-static int nd_arg_param_validate(int optid, char *param, long *out)
+static int nd_arg_param_validate(int optid, char *param, long long *out)
 {
   long tmp;
 
@@ -577,7 +572,7 @@ static int nd_arg_param_validate(int optid, char *param, long *out)
     }
 
   if(out != NULL)
-    *out = tmp;
+    *out = (long long)tmp;
 
   return 0;
 }
@@ -634,7 +629,7 @@ void *scamper_do_neighbourdisc_alloc(char *str)
   uint8_t  flags    = 0;
   char    *dst      = NULL;
   char    *src      = NULL;
-  long     tmp      = 0;
+  long long tmp     = 0;
 
   /* try and parse the string passed in */
   if(scamper_options_parse(str, opts, opts_cnt, &opts_out, &dst) != 0)
@@ -787,12 +782,12 @@ static scamper_neighbourdisc_do_t *scamper_neighbourdisc_do_add(
 
   if(state->cbs == NULL && (state->cbs = dlist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc state->cbs");
+      printerror(__func__, "could not alloc state->cbs");
       return NULL;
     }
   if((nddo = malloc_zero(sizeof(scamper_neighbourdisc_do_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc nddo");
+      printerror(__func__, "could not alloc nddo");
       return NULL;
     }
   nddo->task = task;
@@ -800,7 +795,7 @@ static scamper_neighbourdisc_do_t *scamper_neighbourdisc_do_add(
   nddo->param = param;
   if((nddo->node = dlist_tail_push(state->cbs, nddo)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not add nddo");
+      printerror(__func__, "could not add nddo");
       free(nddo);
       return NULL;
     }
@@ -835,12 +830,12 @@ scamper_neighbourdisc_do_t *scamper_do_neighbourdisc_do(
 
   if((nd = scamper_neighbourdisc_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc nd");
+      printerror(__func__, "could not alloc nd");
       goto err;
     }
   if(scamper_neighbourdisc_ifname_set(nd, ifname) != 0)
     {
-      printerror(errno, strerror, __func__, "could not set ifname");
+      printerror(__func__, "could not set ifname");
       goto err;
     }
 

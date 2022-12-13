@@ -1,11 +1,12 @@
 /*
  * scamper_addr2mac.c: handle a cache of IP to MAC address mappings
  *
- * $Id: scamper_addr2mac.c,v 1.40 2014/06/12 19:59:48 mjl Exp $
+ * $Id: scamper_addr2mac.c,v 1.45 2020/04/28 22:30:07 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2014 The Regents of the University of California
+ * Copyright (C) 2020      Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,15 +24,13 @@
  *
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_addr2mac.c,v 1.40 2014/06/12 19:59:48 mjl Exp $";
-#endif
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 #include "internal.h"
+
+#include "scamper_task.h"
+#include "scamper_queue.h"
 
 #if defined(__APPLE__)
 #define HAVE_BSD_ARPCACHE
@@ -65,39 +64,11 @@ struct ndmsg
   uint8_t         ndm_type;
 };
 
-struct sockaddr_nl
-{
-  sa_family_t     nl_family;
-  unsigned short  nl_pad;
-  uint32_t        nl_pid;
-  uint32_t        nl_groups;
-};
-
-struct nlmsghdr
-{
-  uint32_t        nlmsg_len;
-  uint16_t        nlmsg_type;
-  uint16_t        nlmsg_flags;
-  uint32_t        nlmsg_seq;
-  uint32_t        nlmsg_pid;
-};
-
 struct rtattr
 {
   unsigned short  rta_len;
   unsigned short  rta_type;
 };
-
-#define NLMSG_ERROR         0x2
-#define NLMSG_DONE          0x3
-#define NLMSG_ALIGNTO       4
-#define NLMSG_ALIGN(len)    (((len)+NLMSG_ALIGNTO-1) & ~(NLMSG_ALIGNTO-1))
-#define NLMSG_LENGTH(len)   ((len)+NLMSG_ALIGN(sizeof(struct nlmsghdr)))
-#define NLMSG_DATA(nlh)     ((void*)(((char*)nlh) + NLMSG_LENGTH(0)))
-#define NLMSG_NEXT(nlh,len) ((len) -= NLMSG_ALIGN((nlh)->nlmsg_len), \
-                             (struct nlmsghdr*)(((char*)(nlh)) + NLMSG_ALIGN((nlh)->nlmsg_len)))
-#define NLMSG_OK(nlh,len)   ((len) > 0 && (nlh)->nlmsg_len >= sizeof(struct nlmsghdr) && \
-                             (nlh)->nlmsg_len <= (len))
 
 #define RTA_ALIGNTO           4
 #define RTA_ALIGN(len)        (((len)+RTA_ALIGNTO-1) & ~(RTA_ALIGNTO-1))
@@ -117,9 +88,6 @@ struct rtattr
 #define RTM_BASE        0x10
 #define RTM_NEWNEIGH   (RTM_BASE+12)
 #define RTM_GETNEIGH   (RTM_BASE+14)
-#define NLM_F_REQUEST   1
-#define NLM_F_ROOT      0x100
-#define NLM_F_MATCH     0x200
 #define NETLINK_ROUTE   0
 #define NUD_REACHABLE   0x02
 
@@ -135,10 +103,11 @@ struct rtattr
 
 typedef struct addr2mac
 {
-  int             ifindex;
-  scamper_addr_t *ip;
-  scamper_addr_t *mac;
-  time_t          expire;
+  int               ifindex;
+  scamper_addr_t   *ip;
+  scamper_addr_t   *mac;
+  scamper_queue_t  *sq;
+  splaytree_node_t *node;
 } addr2mac_t;
 
 static splaytree_t *tree = NULL;
@@ -153,28 +122,43 @@ static int addr2mac_cmp(const addr2mac_t *a, const addr2mac_t *b)
 
 static void addr2mac_free(addr2mac_t *addr2mac)
 {
+  if(addr2mac->sq != NULL) scamper_queue_free(addr2mac->sq);
   if(addr2mac->ip != NULL) scamper_addr_free(addr2mac->ip);
   if(addr2mac->mac != NULL) scamper_addr_free(addr2mac->mac);
   free(addr2mac);
   return;
 }
 
+static int addr2mac_expire(void *param)
+{
+  addr2mac_t *a2m = param;
+  if(a2m->node != NULL) splaytree_remove_node(tree, a2m->node);
+  addr2mac_free(a2m);
+  return 0;
+}
+
 static addr2mac_t *addr2mac_alloc(const int ifindex, scamper_addr_t *ip,
 				  scamper_addr_t *mac, time_t expire)
 {
-  addr2mac_t *addr2mac;
+  struct timeval tv;
+  addr2mac_t *a2m;
 
-  if((addr2mac = malloc_zero(sizeof(addr2mac_t))) == NULL)
+  tv.tv_sec = expire;
+  tv.tv_usec = 0;
+
+  if((a2m = malloc_zero(sizeof(addr2mac_t))) == NULL ||
+     (a2m->sq = scamper_queue_event(&tv, addr2mac_expire, a2m)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc addr2mac");
+      printerror(__func__, "could not malloc addr2mac");
+      if(a2m != NULL) addr2mac_free(a2m);
       return NULL;
     }
 
-  addr2mac->ifindex = ifindex;
-  addr2mac->ip      = ip  != NULL ? scamper_addr_use(ip)  : NULL;
-  addr2mac->mac     = mac != NULL ? scamper_addr_use(mac) : NULL;
-  addr2mac->expire  = expire;
-  return addr2mac;
+  a2m->ifindex = ifindex;
+  a2m->ip      = ip  != NULL ? scamper_addr_use(ip)  : NULL;
+  a2m->mac     = mac != NULL ? scamper_addr_use(mac) : NULL;
+
+  return a2m;
 }
 
 static int addr2mac_add(const int ifindex, const int type, const void *ipraw,
@@ -188,13 +172,13 @@ static int addr2mac_add(const int ifindex, const int type, const void *ipraw,
 
   if((ip = scamper_addrcache_get(addrcache, type, ipraw)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get ip");
+      printerror(__func__, "could not get ip");
       goto err;
     }
 
   if((mac = scamper_addrcache_get(addrcache, mt, macraw)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get mac");
+      printerror(__func__, "could not get mac");
       goto err;
     }
 
@@ -206,9 +190,9 @@ static int addr2mac_add(const int ifindex, const int type, const void *ipraw,
   scamper_addr_free(ip);  ip  = NULL;
   scamper_addr_free(mac); mac = NULL;
 
-  if(splaytree_insert(tree, addr2mac) == NULL)
+  if((addr2mac->node = splaytree_insert(tree, addr2mac)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not add %s:%s to tree",
+      printerror(__func__, "could not add %s:%s to tree",
 		 scamper_addr_tostr(addr2mac->ip, ipstr, sizeof(ipstr)),
 		 scamper_addr_tostr(addr2mac->mac, macstr, sizeof(macstr)));
       goto err;
@@ -229,18 +213,20 @@ static int addr2mac_add(const int ifindex, const int type, const void *ipraw,
 
 int scamper_addr2mac_add(int ifindex, scamper_addr_t *ip, scamper_addr_t *mac)
 {
+  struct timeval tv;
   addr2mac_t *a2m = NULL;
   char ipstr[128], macstr[128];
 
   if(scamper_addr2mac_whohas(ifindex, ip) != NULL)
     return 0;
 
-  if((a2m = addr2mac_alloc(ifindex, ip, mac, 0)) == NULL)
+  gettimeofday_wrap(&tv);
+  if((a2m = addr2mac_alloc(ifindex, ip, mac, tv.tv_sec + 600)) == NULL)
     return -1;
 
-  if(splaytree_insert(tree, a2m) == NULL)
+  if((a2m->node = splaytree_insert(tree, a2m)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not add %s:%s to tree",
+      printerror(__func__, "could not add %s:%s to tree",
 		 scamper_addr_tostr(a2m->ip, ipstr, sizeof(ipstr)),
 		 scamper_addr_tostr(a2m->mac, macstr, sizeof(macstr)));
       addr2mac_free(a2m);
@@ -308,7 +294,7 @@ static int addr2mac_init_linux()
 
   if((fd = socket(PF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not open netlink");
+      printerror(__func__, "could not open netlink");
       goto err;
     }
 
@@ -317,11 +303,12 @@ static int addr2mac_init_linux()
     {
       if(ssize == -1)
 	{
-	  printerror(errno, strerror, __func__, "could not send netlink");
+	  printerror(__func__, "could not send netlink");
 	}
       goto err;
     }
 
+  gettimeofday_wrap(&tv);
   for(;;)
     {
       iov.iov_base = buf;
@@ -338,11 +325,9 @@ static int addr2mac_init_linux()
       if((len = recvmsg(fd, &msg, 0)) == -1)
 	{
 	  if(errno == EINTR) continue;
-	  printerror(errno, strerror, __func__, "could not recvmsg");
+	  printerror(__func__, "could not recvmsg");
 	  goto err;
 	}
-
-      gettimeofday_wrap(&tv);
 
       nlmsg = (struct nlmsghdr *)buf;
       while(NLMSG_OK(nlmsg, len))
@@ -414,7 +399,7 @@ static int addr2mac_init_linux()
 	  ip = RTA_DATA(tb[NDA_DST]);
 	  mac = RTA_DATA(tb[NDA_LLADDR]);
 
-	  addr2mac_add(ndmsg->ndm_ifindex, iptype, ip, mac, tv.tv_sec+600);
+	  addr2mac_add(ndmsg->ndm_ifindex, iptype, ip, mac, tv.tv_sec+60);
 
 	skip:
 	  nlmsg = NLMSG_NEXT(nlmsg, len);
@@ -453,6 +438,8 @@ static int addr2mac_init_bsd(void)
   struct sockaddr_inarp *sin;
   struct sockaddr_in6   *sin6;
   struct sockaddr_dl    *sdl;
+  struct timeval         tv;
+  time_t                 tt;
   int                    iptype;
   void                  *ip, *mac;
   int                    mib[6];
@@ -468,12 +455,13 @@ static int addr2mac_init_bsd(void)
   addr2mac_mib_make(mib, AF_INET);
   if(sysctl_wrap(mib, 6, &vbuf, &size) == -1)
     {
-      printerror(errno, strerror, __func__, "sysctl arp cache");
+      printerror(__func__, "sysctl arp cache");
       goto err;
     }
 
   iptype = SCAMPER_ADDR_TYPE_IPV4;
   buf = (uint8_t *)vbuf;
+  gettimeofday_wrap(&tv);
   for(i=0; i<size; i += rtm->rtm_msglen)
     {
       j = i;
@@ -491,9 +479,13 @@ static int addr2mac_init_bsd(void)
 
       ip = &sin->sin_addr;
       mac = sdl->sdl_data + sdl->sdl_nlen;
+      if((time_t)rtm->rtm_rmx.rmx_expire < tv.tv_sec ||
+	 (time_t)rtm->rtm_rmx.rmx_expire > tv.tv_sec + 60)
+	tt = tv.tv_sec + 60;
+      else
+	tt = (time_t)rtm->rtm_rmx.rmx_expire;
 
-      addr2mac_add(sdl->sdl_index, iptype, ip, mac,
-		   (time_t)rtm->rtm_rmx.rmx_expire);
+      addr2mac_add(sdl->sdl_index, iptype, ip, mac, tt);
     }
   if(vbuf != NULL)
     {
@@ -512,12 +504,13 @@ static int addr2mac_init_bsd(void)
       if(errno == EINVAL || errno == EAFNOSUPPORT)
 	return 0;
 
-      printerror(errno, strerror, __func__, "sysctl ndp cache");
+      printerror(__func__, "sysctl ndp cache");
       goto err;
     }
 
   iptype = SCAMPER_ADDR_TYPE_IPV6;
   buf = (uint8_t *)vbuf;
+  gettimeofday_wrap(&tv);
   for(i=0; i<size; i += rtm->rtm_msglen)
     {
       j = i;
@@ -543,9 +536,13 @@ static int addr2mac_init_bsd(void)
 
       ip = &sin6->sin6_addr;
       mac = sdl->sdl_data + sdl->sdl_nlen;
+      if((time_t)rtm->rtm_rmx.rmx_expire < tv.tv_sec ||
+	 (time_t)rtm->rtm_rmx.rmx_expire > tv.tv_sec + 60)
+	tt = tv.tv_sec + 60;
+      else
+	tt = (time_t)rtm->rtm_rmx.rmx_expire;
 
-      addr2mac_add(sdl->sdl_index, iptype, ip, mac,
-		   (time_t)rtm->rtm_rmx.rmx_expire);
+      addr2mac_add(sdl->sdl_index, iptype, ip, mac, tt);
     }
   if(vbuf != NULL)
     {
@@ -589,10 +586,14 @@ static int GetIpNetTable_wrap(MIB_IPNETTABLE **table, ULONG *size)
 
 static int addr2mac_init_win32()
 {
+  struct timeval  tv;
   MIB_IPNETTABLE *table;
   ULONG           size;
   DWORD           dw;
   int             iptype;
+
+  gettimeofday_wrap(&tv);
+  tv.tv_sec += 60;
 
   iptype = SCAMPER_ADDR_TYPE_IPV4;
   if(GetIpNetTable_wrap(&table, &size) == 0 && table != NULL)
@@ -601,7 +602,7 @@ static int addr2mac_init_win32()
 	{
 	  addr2mac_add(table->table[dw].dwIndex, iptype,
 		       &table->table[dw].dwAddr,
-		       table->table[dw].bPhysAddr, 0);
+		       table->table[dw].bPhysAddr, tv.tv_sec);
 	}
       free(table);
     }
@@ -614,7 +615,7 @@ int scamper_addr2mac_init()
 {
   if((tree = splaytree_alloc((splaytree_cmp_t)addr2mac_cmp)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc tree");
+      printerror(__func__, "could not alloc tree");
       return -1;
     }
 
@@ -647,6 +648,10 @@ int scamper_addr2mac_init()
 
 void scamper_addr2mac_cleanup()
 {
-  splaytree_free(tree, (splaytree_free_t)addr2mac_free);
+  if(tree != NULL)
+    {
+      splaytree_free(tree, (splaytree_free_t)addr2mac_free);
+      tree = NULL;
+    }
   return;
 }

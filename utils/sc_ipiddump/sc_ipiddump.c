@@ -1,7 +1,7 @@
 /*
  * sc_ipiddump
  *
- * $Id: sc_ipiddump.c,v 1.13 2015/10/21 06:07:56 mjl Exp $
+ * $Id: sc_ipiddump.c,v 1.16 2021/08/22 08:11:53 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: sc_ipiddump.c,v 1.13 2015/10/21 06:07:56 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -130,7 +125,7 @@ static int check_options(int argc, char *argv[])
   char *opts = "?i:O:U:";
   char *opt_userid = NULL, *opt_ips = NULL;
   char *str, *next;
-  int i, x;
+  size_t i, x;
 
   while((ch = getopt(argc, argv, opts)) != -1)
     {
@@ -488,7 +483,7 @@ int main(int argc, char *argv[])
 
   for(i=0; i<filelist_len; i++)
     {
-      if(strcmp(filelist[i], "-") == 0)
+      if(string_isdash(filelist[i]) != 0)
 	{
 	  if(stdin_used == 1)
 	    {

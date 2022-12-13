@@ -10,10 +10,13 @@ sc_speedtrap_SOURCES = \
 	../../mjl_heap.c \
 	../../mjl_list.c \
 	../../mjl_splaytree.c \
+	../../mjl_threadpool.c \
 	../../scamper/scamper_linepoll.c \
 	../../scamper/scamper_writebuf.c
 
-sc_speedtrap_LDADD = ../../scamper/libscamperfile.la
+sc_speedtrap_CFLAGS = @PTHREAD_CFLAGS@
+sc_speedtrap_LDFLAGS = @PTHREAD_CFLAGS@
+sc_speedtrap_LDADD = ../../scamper/libscamperfile.la @PTHREAD_LIBS@
 
 man_MANS = sc_speedtrap.1
 

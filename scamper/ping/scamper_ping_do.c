@@ -1,12 +1,12 @@
 /*
  * scamper_do_ping.c
  *
- * $Id: scamper_ping_do.c,v 1.149 2016/01/08 07:28:32 mjl Exp $
+ * $Id: scamper_ping_do.c,v 1.156.10.8 2022/11/18 19:13:58 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2022 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_ping_do.c,v 1.149 2016/01/08 07:28:32 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -93,8 +88,9 @@ static const char rcsid[] =
 #define SCAMPER_DO_PING_PATTERN_DEF       0
 #define SCAMPER_DO_PING_PATTERN_MAX       32
 
-#define SCAMPER_DO_PING_PROBETIMEOUT_MIN  1
-#define SCAMPER_DO_PING_PROBETIMEOUT_MAX  255
+#define SCAMPER_DO_PING_PROBETIMEOUT_US_MIN 1000
+#define SCAMPER_DO_PING_PROBETIMEOUT_DEF    1
+#define SCAMPER_DO_PING_PROBETIMEOUT_MAX    255
 
 /* the callback functions registered with the ping task */
 static scamper_task_funcs_t ping_funcs;
@@ -122,8 +118,6 @@ typedef struct ping_state
   uint16_t           payload_len;
   struct in_addr     tsps_ips[4];
   uint8_t            tsps_ipc;
-  uint32_t           tcp_seq;
-  uint32_t           tcp_ack;
   uint8_t            mode;
   uint8_t           *quote;
   uint16_t           quote_len;
@@ -148,11 +142,14 @@ typedef struct ping_state
 #define PING_OPT_PROBETOS     17
 #define PING_OPT_REPLYPMTU    18
 #define PING_OPT_PROBETIMEOUT 19
+#define PING_OPT_PROBETCPACK  20
+#define PING_OPT_RTRADDR      21
 
 #define PING_MODE_PROBE       0
 #define PING_MODE_PTB         1
 
 static const scamper_option_in_t opts[] = {
+  {'A', NULL, PING_OPT_PROBETCPACK,  SCAMPER_OPTION_TYPE_NUM},
   {'B', NULL, PING_OPT_PAYLOAD,      SCAMPER_OPTION_TYPE_STR},
   {'c', NULL, PING_OPT_PROBECOUNT,   SCAMPER_OPTION_TYPE_NUM},
   {'C', NULL, PING_OPT_PROBEICMPSUM, SCAMPER_OPTION_TYPE_STR},
@@ -165,12 +162,13 @@ static const scamper_option_in_t opts[] = {
   {'O', NULL, PING_OPT_OPTION,       SCAMPER_OPTION_TYPE_STR},
   {'p', NULL, PING_OPT_PATTERN,      SCAMPER_OPTION_TYPE_STR},
   {'P', NULL, PING_OPT_PROBEMETHOD,  SCAMPER_OPTION_TYPE_STR},
+  {'r', NULL, PING_OPT_RTRADDR,      SCAMPER_OPTION_TYPE_STR},
   {'R', NULL, PING_OPT_RECORDROUTE,  SCAMPER_OPTION_TYPE_NULL},
   {'s', NULL, PING_OPT_PROBESIZE,    SCAMPER_OPTION_TYPE_NUM},
   {'S', NULL, PING_OPT_SRCADDR,      SCAMPER_OPTION_TYPE_STR},
   {'T', NULL, PING_OPT_TIMESTAMP,    SCAMPER_OPTION_TYPE_STR},
   {'U', NULL, PING_OPT_USERID,       SCAMPER_OPTION_TYPE_NUM},
-  {'W', NULL, PING_OPT_PROBETIMEOUT, SCAMPER_OPTION_TYPE_NUM},
+  {'W', NULL, PING_OPT_PROBETIMEOUT, SCAMPER_OPTION_TYPE_STR},
   {'z', NULL, PING_OPT_PROBETOS,     SCAMPER_OPTION_TYPE_NUM},
 };
 
@@ -178,11 +176,12 @@ static const int opts_cnt = SCAMPER_OPTION_COUNT(opts);
 
 const char *scamper_do_ping_usage(void)
 {
-  return "ping [-R] [-B payload] [-c count] [-C icmp-sum] [-d dport]\n"
-         "     [-F sport] [-i wait-probe] [-m ttl] [-M pmtu]\n"
-         "     [-o reply-count] [-O option] [-p pattern] [-P method]\n"
-         "     [-U userid] [-s probe-size] [-S srcaddr]\n"
-         "     [-T timestamp-option] [-W timeout] [-z tos]";
+  return
+    "ping [-R] [-A tcp-ack] [-B payload] [-c count] [-C icmp-sum]\n"
+    "     [-d dport] [-F sport] [-i wait-probe] [-m ttl] [-M pmtu]\n"
+    "     [-o reply-count] [-O option] [-p pattern] [-P method]\n"
+    "     [-r rtraddr] [-s probe-size] [-S srcaddr]\n"
+    "     [-T timestamp-option] [-U userid] [-W timeout] [-z tos]";
 }
 
 static scamper_ping_t *ping_getdata(const scamper_task_t *task)
@@ -223,7 +222,7 @@ static scamper_addr_t *ping_addr(scamper_ping_t *ping,
     }
   if((state->last_addr = scamper_addr_alloc(ping->dst->type, addr)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get reply addr");
+      printerror(__func__, "could not get reply addr");
       return NULL;
     }
   return scamper_addr_use(state->last_addr);
@@ -378,7 +377,9 @@ static void do_ping_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
 	return;
 
       if(ping->probe_method == SCAMPER_PING_METHOD_TCP_ACK ||
-	 ping->probe_method == SCAMPER_PING_METHOD_TCP_SYN)
+	 ping->probe_method == SCAMPER_PING_METHOD_TCP_SYN ||
+	 ping->probe_method == SCAMPER_PING_METHOD_TCP_SYNACK ||
+	 ping->probe_method == SCAMPER_PING_METHOD_TCP_RST)
 	{
 	  /* we send a series of probes using the same src port */
 	  if(dl->dl_tcp_dport != ping->probe_sport)
@@ -394,7 +395,8 @@ static void do_ping_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
 	  else
 	    seq = state->seq - 1;
 	}
-      else if(ping->probe_method == SCAMPER_PING_METHOD_TCP_ACK_SPORT)
+      else if(ping->probe_method == SCAMPER_PING_METHOD_TCP_ACK_SPORT ||
+	      ping->probe_method == SCAMPER_PING_METHOD_TCP_SYN_SPORT)
 	{
 	  seq = dl->dl_tcp_dport;
 	  if(dl->dl_tcp_dport < ping->probe_sport)
@@ -426,7 +428,7 @@ static void do_ping_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
   /* allocate a reply structure for the response */
   if((reply = scamper_ping_reply_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc ping reply");
+      printerror(__func__, "could not alloc ping reply");
       goto err;
     }
 
@@ -858,10 +860,13 @@ static int ping_state_payload(scamper_ping_t *ping, ping_state_t *state)
       off += 12;
     }
 
-  if((ping->flags & SCAMPER_PING_FLAG_SPOOF) != 0)
+  if((ping->flags & SCAMPER_PING_FLAG_SPOOF) != 0 &&
+     (ping->flags & SCAMPER_PING_FLAG_NOSRC) == 0 &&
+     ping->probe_method != SCAMPER_PING_METHOD_TCP_SYNACK &&
+     ping->probe_method != SCAMPER_PING_METHOD_TCP_RST)
     {
-      /* get the source IP address to embed in the probe */
       assert(state->payload_len >= al);
+      /* get the source IP address to embed in the probe */
       if((src = scamper_getsrc(ping->dst, 0)) == NULL)
 	return -1;
       memcpy(state->payload+off, src->addr, al);
@@ -934,13 +939,13 @@ static int ping_state_alloc(scamper_task_t *task)
 
   if(scamper_ping_replies_alloc(ping, ping->probe_count) != 0)
     {
-      printerror(errno, strerror, __func__, "could not malloc replies");
+      printerror(__func__, "could not malloc replies");
       goto err;
     }
 
   if((state = malloc_zero(sizeof(ping_state_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc state");
+      printerror(__func__, "could not malloc state");
       goto err;
     }
   scamper_task_setstate(task, state);
@@ -948,7 +953,7 @@ static int ping_state_alloc(scamper_task_t *task)
   size = ping->probe_count * sizeof(ping_probe_t *);
   if((state->probes = malloc_zero(size)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc state->probes");
+      printerror(__func__, "could not malloc state->probes");
       goto err;
     }
 
@@ -959,12 +964,6 @@ static int ping_state_alloc(scamper_task_t *task)
   if(ping->probe_tsps != NULL)
     for(i=0; i<ping->probe_tsps->ipc; i++)
       memcpy(&state->tsps_ips[i], ping->probe_tsps->ips[i]->addr, 4);
-
-  if(SCAMPER_PING_METHOD_IS_TCP(ping))
-    {
-      if(random_u32(&state->tcp_seq) != 0 || random_u32(&state->tcp_ack) != 0)
-	return -1;
-    }
 
   return 0;
 
@@ -1004,6 +1003,7 @@ static void do_ping_probe(scamper_task_t *task)
   memset(&probe, 0, sizeof(probe));
   probe.pr_ip_src = ping->src;
   probe.pr_ip_dst = ping->dst;
+  probe.pr_rtr = ping->rtr;
 
   if(ping->flags & SCAMPER_PING_FLAG_DL)
     probe.pr_flags |= SCAMPER_PROBE_FLAG_DL;
@@ -1017,7 +1017,7 @@ static void do_ping_probe(scamper_task_t *task)
 	    {
 	      if(random_u16(&ipid) != 0)
 		{
-		  printerror(errno, strerror, __func__, "could not rand ipid");
+		  printerror(__func__, "could not rand ipid");
 		  goto err;
 		}
 	      if(ipid != 0)
@@ -1102,26 +1102,35 @@ static void do_ping_probe(scamper_task_t *task)
 	  probe.pr_ip_proto  = IPPROTO_TCP;
 	  probe.pr_tcp_dport = ping->probe_dport;
 	  probe.pr_tcp_sport = ping->probe_sport;
+	  probe.pr_tcp_seq   = ping->probe_tcpseq;
+	  probe.pr_tcp_ack   = ping->probe_tcpack;
+	  probe.pr_tcp_win   = 65535;
 
 	  if(ping->probe_method == SCAMPER_PING_METHOD_TCP_ACK)
 	    {
 	      probe.pr_tcp_flags = TH_ACK;
-	      probe.pr_tcp_seq   = state->tcp_seq;
-	      probe.pr_tcp_ack   = state->tcp_ack;
 	    }
 	  else if(ping->probe_method == SCAMPER_PING_METHOD_TCP_ACK_SPORT)
 	    {
 	      probe.pr_tcp_flags  = TH_ACK;
 	      probe.pr_tcp_sport += state->seq;
-	      if(random_u32(&probe.pr_tcp_seq) != 0 ||
-		 random_u32(&probe.pr_tcp_ack) != 0)
-		goto err;
 	    }
 	  else if(ping->probe_method == SCAMPER_PING_METHOD_TCP_SYN)
 	    {
 	      probe.pr_tcp_flags = TH_SYN;
-	      probe.pr_tcp_seq   = state->tcp_seq;
-	      probe.pr_tcp_ack   = state->tcp_ack;
+	    }
+	  else if(ping->probe_method == SCAMPER_PING_METHOD_TCP_SYNACK)
+	    {
+	      probe.pr_tcp_flags = TH_SYN | TH_ACK;
+	    }
+	  else if(ping->probe_method == SCAMPER_PING_METHOD_TCP_RST)
+	    {
+	      probe.pr_tcp_flags = TH_RST;
+	    }
+	  else if(ping->probe_method == SCAMPER_PING_METHOD_TCP_SYN_SPORT)
+	    {
+	      probe.pr_tcp_flags = TH_SYN;
+	      probe.pr_tcp_sport += state->seq;
 	    }
 	}
       else if(SCAMPER_PING_METHOD_IS_UDP(ping))
@@ -1193,6 +1202,7 @@ static void do_ping_probe(scamper_task_t *task)
   else
     {
       timeval_add_s(&wait_tv, &probe.pr_tx, ping->probe_timeout);
+      timeval_add_us(&wait_tv, &wait_tv, ping->probe_timeout_us);
     }
 
   scamper_task_queue_wait_tv(task, &wait_tv);
@@ -1210,18 +1220,17 @@ static void do_ping_write(scamper_file_t *sf, scamper_task_t *task)
   return;
 }
 
-static int validate_probe_wait(char *s_str, long *out)
+static int validate_wait(char *s_str, long long *out, long long min, long max)
 {
   char *us_str = NULL;
-  long s = 0, us = 0;
+  long long s = 0, us = 0;
 
   string_nullterm_char(s_str, '.', &us_str);
-  if(string_tolong(s_str, &s) == -1 ||
-     s < 0 || s > SCAMPER_DO_PING_PROBEWAIT_MAX)
+  if(string_tollong(s_str, &s) == -1 || s < 0 || s > max)
     return -1;
 
   if(us_str != NULL &&
-     (string_tolong(us_str, &us) == -1 || us < 0 || us >= 1000000))
+     (string_tollong(us_str, &us) == -1 || us < 0 || us >= 1000000))
     return -1;
 
   if(us      < 10) us *= 100000;
@@ -1231,19 +1240,24 @@ static int validate_probe_wait(char *s_str, long *out)
   else if(us < 100000) us *= 10;
 
   *out = (s * 1000000) + us;
-  if(*out < SCAMPER_DO_PING_PROBEWAIT_US_MIN)
+  if(*out < min)
     return -1;
 
   return 0;
 }
 
-static int ping_arg_param_validate(int optid, char *param, long *out)
+static int ping_arg_param_validate(int optid, char *param, long long *out)
 {
-  long tmp = 0;
+  long long tmp = 0;
   int i;
 
   switch(optid)
     {
+    case PING_OPT_PROBETCPACK:
+      if(string_tollong(param, &tmp) == 1 || tmp < 0 || tmp > TCP_MAX_SEQNUM)
+	goto err;
+      break;
+
     case PING_OPT_PAYLOAD:
       for(i=0; param[i] != '\0'; i++)
 	if(ishex(param[i]) == 0)
@@ -1256,7 +1270,7 @@ static int ping_arg_param_validate(int optid, char *param, long *out)
       break;
 
     case PING_OPT_PROBECOUNT:
-      if(string_tolong(param, &tmp) == -1 ||
+      if(string_tollong(param, &tmp) == -1 ||
 	 tmp < SCAMPER_DO_PING_PROBECOUNT_MIN ||
 	 tmp > SCAMPER_DO_PING_PROBECOUNT_MAX)
 	{
@@ -1265,12 +1279,12 @@ static int ping_arg_param_validate(int optid, char *param, long *out)
       break;
 
     case PING_OPT_PROBEICMPSUM:
-      if(string_tolong(param, &tmp) == -1 || tmp < 0 || tmp > 65535)
+      if(string_tollong(param, &tmp) == -1 || tmp < 0 || tmp > 65535)
 	goto err;
       break;
 
     case PING_OPT_PROBEDPORT:
-      if(string_tolong(param, &tmp) == -1 ||
+      if(string_tollong(param, &tmp) == -1 ||
 	 tmp < SCAMPER_DO_PING_PROBEDPORT_MIN ||
 	 tmp > SCAMPER_DO_PING_PROBEDPORT_MAX)
 	{
@@ -1279,7 +1293,7 @@ static int ping_arg_param_validate(int optid, char *param, long *out)
       break;
 
     case PING_OPT_PROBESPORT:
-      if(string_tolong(param, &tmp) == -1 ||
+      if(string_tollong(param, &tmp) == -1 ||
 	 tmp < SCAMPER_DO_PING_PROBESPORT_MIN ||
 	 tmp > SCAMPER_DO_PING_PROBESPORT_MAX)
 	{
@@ -1302,19 +1316,26 @@ static int ping_arg_param_validate(int optid, char *param, long *out)
 	tmp = SCAMPER_PING_METHOD_ICMP_TIME;
       else if(strcasecmp(param, "tcp-syn") == 0)
 	tmp = SCAMPER_PING_METHOD_TCP_SYN;
+      else if(strcasecmp(param, "tcp-synack") == 0)
+	tmp = SCAMPER_PING_METHOD_TCP_SYNACK;
+      else if(strcasecmp(param, "tcp-rst") == 0)
+	tmp = SCAMPER_PING_METHOD_TCP_RST;
+      else if(strcasecmp(param, "tcp-syn-sport") == 0)
+	tmp = SCAMPER_PING_METHOD_TCP_SYN_SPORT;
       else
 	goto err;
       break;
 
     /* how long to wait between sending probes */
     case PING_OPT_PROBEWAIT:
-      if(validate_probe_wait(param, &tmp) != 0)
+      if(validate_wait(param, &tmp, SCAMPER_DO_PING_PROBEWAIT_US_MIN,
+		       SCAMPER_DO_PING_PROBEWAIT_MAX) != 0)
 	goto err;
       break;
 
     /* the ttl to probe with */
     case PING_OPT_PROBETTL:
-      if(string_tolong(param, &tmp) == -1 ||
+      if(string_tollong(param, &tmp) == -1 ||
 	 tmp < SCAMPER_DO_PING_PROBETTL_MIN  ||
 	 tmp > SCAMPER_DO_PING_PROBETTL_MAX)
 	{
@@ -1324,7 +1345,7 @@ static int ping_arg_param_validate(int optid, char *param, long *out)
 
     /* how many unique replies are required before the ping completes */
     case PING_OPT_REPLYCOUNT:
-      if(string_tolong(param, &tmp) == -1  ||
+      if(string_tollong(param, &tmp) == -1  ||
 	 tmp < SCAMPER_DO_PING_REPLYCOUNT_MIN ||
 	 tmp > SCAMPER_DO_PING_REPLYCOUNT_MAX)
 	{
@@ -1333,7 +1354,7 @@ static int ping_arg_param_validate(int optid, char *param, long *out)
       break;
 
     case PING_OPT_REPLYPMTU:
-      if(string_tolong(param, &tmp) != 0 ||
+      if(string_tollong(param, &tmp) != 0 ||
 	 tmp < SCAMPER_DO_PING_REPLYPMTU_MIN ||
 	 tmp > SCAMPER_DO_PING_REPLYPMTU_MAX)
 	{
@@ -1343,7 +1364,7 @@ static int ping_arg_param_validate(int optid, char *param, long *out)
 
     case PING_OPT_OPTION:
       if(strcasecmp(param, "spoof") != 0 && strcasecmp(param, "dl") != 0 &&
-	 strcasecmp(param, "tbt") != 0)
+	 strcasecmp(param, "tbt") != 0 && strcasecmp(param, "nosrc") != 0)
 	goto err;
       break;
 
@@ -1362,24 +1383,25 @@ static int ping_arg_param_validate(int optid, char *param, long *out)
 
     /* the size of each probe */
     case PING_OPT_PROBESIZE:
-      if(string_tolong(param, &tmp) == -1 || tmp < 0 || tmp > 65535)
+      if(string_tollong(param, &tmp) == -1 || tmp < 0 || tmp > 65535)
 	{
 	  goto err;
 	}
       break;
 
     case PING_OPT_USERID:
-      if(string_tolong(param, &tmp) != 0 || tmp < 0)
+      if(string_tollong(param, &tmp) != 0 || tmp < 0)
 	goto err;
       break;
 
     case PING_OPT_SRCADDR:
     case PING_OPT_TIMESTAMP:
+    case PING_OPT_RTRADDR:
       break;
 
     /* the tos bits to include in each probe */
     case PING_OPT_PROBETOS:
-      if(string_tolong(param, &tmp) == -1 ||
+      if(string_tollong(param, &tmp) == -1 ||
 	 tmp < SCAMPER_DO_PING_PROBETOS_MIN  ||
 	 tmp > SCAMPER_DO_PING_PROBETOS_MAX)
 	{
@@ -1388,9 +1410,8 @@ static int ping_arg_param_validate(int optid, char *param, long *out)
       break;
 
     case PING_OPT_PROBETIMEOUT:
-      if(string_tolong(param, &tmp) != 0 ||
-	 tmp < SCAMPER_DO_PING_PROBETIMEOUT_MIN ||
-	 tmp > SCAMPER_DO_PING_PROBETIMEOUT_MAX)
+      if(validate_wait(param, &tmp, SCAMPER_DO_PING_PROBETIMEOUT_US_MIN,
+		       SCAMPER_DO_PING_PROBETIMEOUT_MAX) != 0)
 	goto err;
       break;
 
@@ -1418,7 +1439,7 @@ int scamper_do_ping_arg_validate(int argc, char *argv[], int *stop)
 				  ping_arg_param_validate);
 }
 
-static int ping_tsopt(scamper_ping_t *ping, uint8_t *flags, char *tsopt)
+static int ping_tsopt(scamper_ping_t *ping, uint32_t *flags, char *tsopt)
 {
   scamper_ping_v4ts_t *ts = NULL;
   char *ips[4], *ptr = tsopt;
@@ -1497,6 +1518,7 @@ void *scamper_do_ping_alloc(char *str)
   uint8_t   probe_tos     = SCAMPER_DO_PING_PROBETOS_DEF;
   uint8_t   probe_method  = SCAMPER_DO_PING_PROBEMETHOD_DEF;
   int       probe_timeout = -1;
+  uint32_t  probe_timeout_us = 0;
   int       probe_sport   = -1;
   int       probe_dport   = -1;
   uint16_t  reply_count   = SCAMPER_DO_PING_REPLYCOUNT_DEF;
@@ -1504,12 +1526,14 @@ void *scamper_do_ping_alloc(char *str)
   uint16_t  probe_size    = 0; /* unset */
   uint16_t  pattern_len   = 0;
   uint16_t  probe_icmpsum = 0;
+  uint32_t  probe_tcpack  = 0;
   uint8_t   pattern[SCAMPER_DO_PING_PATTERN_MAX/2];
   uint16_t  payload_len   = 0;
   uint8_t  *payload       = NULL;
   uint32_t  userid        = 0;
-  uint8_t   flags         = 0;
+  uint32_t  flags         = 0;
   char     *src           = NULL;
+  char     *rtr           = NULL;
   char     *tsopt         = NULL;
   int       af;
 
@@ -1518,8 +1542,9 @@ void *scamper_do_ping_alloc(char *str)
   uint16_t cmps = 0; /* calculated minimum probe size */
   char *addr;
   size_t size;
-  long tmp = 0;
-  int i;
+  long long tmp = 0;
+  int i, A = 0;
+  uint16_t u16;
 
   /* try and parse the string passed in */
   if(scamper_options_parse(str, opts, opts_cnt, &opts_out, &addr) != 0)
@@ -1545,6 +1570,11 @@ void *scamper_do_ping_alloc(char *str)
 
       switch(opt->id)
 	{
+	case PING_OPT_PROBETCPACK:
+	  probe_tcpack = (uint32_t)tmp;
+	  A = 1;
+	  break;
+
 	case PING_OPT_PAYLOAD:
 	  payload_len = (uint16_t)tmp;
 	  if(payload_len == 0 || (payload = malloc_zero(payload_len)) == NULL)
@@ -1603,6 +1633,8 @@ void *scamper_do_ping_alloc(char *str)
 	    flags |= SCAMPER_PING_FLAG_DL;
 	  else if(strcasecmp(opt->str, "tbt") == 0)
 	    flags |= SCAMPER_PING_FLAG_TBT;
+	  else if(strcasecmp(opt->str, "nosrc") == 0)
+	    flags |= SCAMPER_PING_FLAG_NOSRC;
 	  else
 	    {
 	      scamper_debug(__func__, "unknown option %s", opt->str);
@@ -1637,6 +1669,12 @@ void *scamper_do_ping_alloc(char *str)
 	  userid = (uint32_t)tmp;
 	  break;
 
+	case PING_OPT_RTRADDR:
+	  if(rtr != NULL)
+	    goto err;
+	  rtr = opt->str;
+	  break;
+
 	case PING_OPT_RECORDROUTE:
 	  flags |= SCAMPER_PING_FLAG_V4RR;
 	  break;
@@ -1659,7 +1697,8 @@ void *scamper_do_ping_alloc(char *str)
 	  break;
 
 	case PING_OPT_PROBETIMEOUT:
-	  probe_timeout = (uint8_t)tmp;
+	  probe_timeout    = (int)(tmp / 1000000);
+	  probe_timeout_us = (uint32_t)(tmp % 1000000);
 	  break;
 	}
     }
@@ -1708,13 +1747,19 @@ void *scamper_do_ping_alloc(char *str)
 	cmps += 40;
       else if(flags & SCAMPER_PING_FLAG_TSANDADDR)
 	cmps += 36;
-      if(flags & SCAMPER_PING_FLAG_SPOOF)
+      if((flags & SCAMPER_PING_FLAG_SPOOF) != 0 &&
+	 (flags & SCAMPER_PING_FLAG_NOSRC) == 0 &&
+	 probe_method != SCAMPER_PING_METHOD_TCP_SYNACK &&
+	 probe_method != SCAMPER_PING_METHOD_TCP_RST)
 	cmps += 4;
     }
   else if(ping->dst->type == SCAMPER_ADDR_TYPE_IPV6)
     {
       cmps = 40;
-      if(flags & SCAMPER_PING_FLAG_SPOOF)
+      if((flags & SCAMPER_PING_FLAG_SPOOF) != 0 &&
+	 (flags & SCAMPER_PING_FLAG_NOSRC) == 0 &&
+	 probe_method != SCAMPER_PING_METHOD_TCP_SYNACK &&
+	 probe_method != SCAMPER_PING_METHOD_TCP_RST)
 	cmps += 16;
     }
   else goto err;
@@ -1785,14 +1830,17 @@ void *scamper_do_ping_alloc(char *str)
       goto err;
     }
 
-  if(src != NULL)
-    {
-      af = scamper_addr_af(ping->dst);
-      if(af != AF_INET && af != AF_INET6)
-	goto err;
-      if((ping->src = scamper_addr_resolve(af, src)) == NULL)
-	goto err;
-    }
+  af = scamper_addr_af(ping->dst);
+  if(af != AF_INET && af != AF_INET6)
+    goto err;
+
+  if(src != NULL &&
+     (ping->src = scamper_addr_resolve(af, src)) == NULL)
+    goto err;
+
+  if(rtr != NULL &&
+     (ping->rtr = scamper_addr_resolve(af, rtr)) == NULL)
+    goto err;
 
   /* copy in the data bytes, if any */
   if(pattern_len != 0)
@@ -1813,6 +1861,11 @@ void *scamper_do_ping_alloc(char *str)
       else
 	probe_sport = (pid & 0xffff) | 0x8000;
     }
+  else if(probe_sport == 0)
+    {
+      random_u16(&u16);
+      probe_sport = u16 | 0x8000;
+    }
 
   if(probe_dport == -1)
     {
@@ -1825,25 +1878,52 @@ void *scamper_do_ping_alloc(char *str)
   if(probe_timeout == -1)
     {
       if(probe_wait >= 1)
-	probe_timeout = probe_wait;
+	{
+	  probe_timeout    = probe_wait;
+	  probe_timeout_us = probe_wait_us;
+	}
       else
-	probe_timeout = 1;
+	{
+	  probe_timeout    = SCAMPER_DO_PING_PROBETIMEOUT_DEF;
+	  probe_timeout_us = 0;
+	}
     }
 
-  ping->probe_count   = probe_count;
-  ping->probe_size    = probe_size;
-  ping->probe_wait    = probe_wait;
-  ping->probe_wait_us = probe_wait_us;
-  ping->probe_timeout = probe_timeout;
-  ping->probe_ttl     = probe_ttl;
-  ping->probe_tos     = probe_tos;
-  ping->probe_sport   = probe_sport;
-  ping->probe_dport   = probe_dport;
-  ping->probe_icmpsum = probe_icmpsum;
-  ping->reply_count   = reply_count;
-  ping->reply_pmtu    = reply_pmtu;
-  ping->userid        = userid;
-  ping->flags         = flags;
+  ping->probe_count      = probe_count;
+  ping->probe_size       = probe_size;
+  ping->probe_wait       = probe_wait;
+  ping->probe_wait_us    = probe_wait_us;
+  ping->probe_timeout    = probe_timeout;
+  ping->probe_timeout_us = probe_timeout_us;
+  ping->probe_ttl        = probe_ttl;
+  ping->probe_tos        = probe_tos;
+  ping->probe_sport      = probe_sport;
+  ping->probe_dport      = probe_dport;
+  ping->probe_icmpsum    = probe_icmpsum;
+  ping->reply_count      = reply_count;
+  ping->reply_pmtu       = reply_pmtu;
+  ping->userid           = userid;
+  ping->flags            = flags;
+
+  if(SCAMPER_PING_METHOD_IS_TCP(ping))
+    {
+      if(A == 0 && random_u32(&probe_tcpack) != 0)
+	goto err;
+
+      if(ping->probe_method == SCAMPER_PING_METHOD_TCP_SYN ||
+	 ping->probe_method == SCAMPER_PING_METHOD_TCP_SYN_SPORT ||
+	 ping->probe_method == SCAMPER_PING_METHOD_TCP_RST)
+	{
+	  ping->probe_tcpseq = probe_tcpack;
+	  ping->probe_tcpack = 0;
+	}
+      else
+	{
+	  ping->probe_tcpack = probe_tcpack;
+	  if(random_u32(&ping->probe_tcpseq) != 0)
+	    goto err;
+	}
+    }
 
   return ping;
 

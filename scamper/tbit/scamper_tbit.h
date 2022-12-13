@@ -1,7 +1,7 @@
 /*
  * scamper_tbit.h
  *
- * $Id: scamper_tbit.h,v 1.53.4.1 2016/12/04 05:46:57 mjl Exp $
+ * $Id: scamper_tbit.h,v 1.55 2017/09/27 01:54:17 mjl Exp $
  *
  * Copyright (C) 2009-2010 Ben Stasiewicz
  * Copyright (C) 2010-2011 University of Waikato
@@ -44,6 +44,7 @@
 #define SCAMPER_TBIT_TYPE_BLIND_DATA         7
 #define SCAMPER_TBIT_TYPE_BLIND_RST          8
 #define SCAMPER_TBIT_TYPE_BLIND_SYN          9
+#define SCAMPER_TBIT_TYPE_BLIND_FIN          10
 
 /* tbit options */
 #define SCAMPER_TBIT_OPTION_TCPTS            0x01 /* tcp timestamps */

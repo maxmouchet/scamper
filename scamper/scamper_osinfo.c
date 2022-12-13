@@ -1,7 +1,7 @@
 /*
  * scamper_osinfo.c
  *
- * $Id: scamper_osinfo.c,v 1.4 2016/08/08 19:30:54 mjl Exp $
+ * $Id: scamper_osinfo.c,v 1.6 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2006 Matthew Luckie
  * Copyright (C) 2014 The Regents of the University of California
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_osinfo.c,v 1.4 2016/08/08 19:30:54 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -61,21 +56,21 @@ int scamper_osinfo_init(void)
   /* call uname to get the information */
   if(uname(&utsname) < 0)
     {
-      printerror(errno, strerror, __func__, "could not uname");
+      printerror(__func__, "could not uname");
       goto err;
     }
 
   /* allocate our wrapping struct */
   if((osinfo = malloc_zero(sizeof(scamper_osinfo_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc osinfo");
+      printerror(__func__, "could not malloc osinfo");
       goto err;
     }
 
   /* copy sysname in */
   if((osinfo->os = strdup(utsname.sysname)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup sysname");
+      printerror(__func__, "could not strdup sysname");
       goto err;
     }
 
@@ -96,7 +91,7 @@ int scamper_osinfo_init(void)
   /* parse the release integer string */
   if((nos = slist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc nos");
+      printerror(__func__, "could not alloc nos");
       goto err;
     }
 
@@ -112,7 +107,7 @@ int scamper_osinfo_init(void)
 	  *ptr = '\0';
 	  if(slist_tail_push(nos, str) == NULL)
 	    {
-	      printerror(errno, strerror, __func__, "could not push str");
+	      printerror(__func__, "could not push str");
 	      goto err;
 	    }
 	  str = ptr + 1;
@@ -124,7 +119,7 @@ int scamper_osinfo_init(void)
 	{
 	  if(slist_tail_push(nos, str) == NULL)
 	    {
-	      printerror(errno, strerror, __func__, "could not push str");
+	      printerror(__func__, "could not push str");
 	      goto err;
 	    }
 	  break;
@@ -137,7 +132,7 @@ int scamper_osinfo_init(void)
       size = osinfo->os_rel_dots * sizeof(long);
       if((osinfo->os_rel = malloc_zero(size)) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not malloc os_rel");
+	  printerror(__func__, "could not malloc os_rel");
 	  goto err;
 	}
 
@@ -146,7 +141,7 @@ int scamper_osinfo_init(void)
 	{
 	  if(string_tolong(str, &osinfo->os_rel[i]) != 0)
 	    {
-	      printerror(errno, strerror, __func__, "could not tolong");
+	      printerror(__func__, "could not tolong");
 	      goto err;
 	    }
 	  i++;

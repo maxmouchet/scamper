@@ -1,7 +1,7 @@
 /*
  * scamper_sniff_do.c
  *
- * $Id: scamper_sniff_do.c,v 1.13 2016/09/17 05:39:10 mjl Exp $
+ * $Id: scamper_sniff_do.c,v 1.17 2020/06/09 20:07:53 mjl Exp $
  *
  * Copyright (C) 2011 The University of Waikato
  * Author: Matthew Luckie
@@ -20,11 +20,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_sniff_do.c,v 1.13 2016/09/17 05:39:10 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -122,7 +117,7 @@ static void do_sniff_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
   scamper_sniff_t *sniff = sniff_getdata(task);
   sniff_state_t *state = sniff_getstate(task);
   scamper_sniff_pkt_t *pkt;
-  int cap = 0;
+  int i = 0;
 
   if(SCAMPER_DL_IS_ICMP(dl))
     {
@@ -132,26 +127,28 @@ static void do_sniff_handle_dl(scamper_task_t *task, scamper_dl_rec_t *dl)
 	 (SCAMPER_DL_IS_ICMP_Q_ICMP_ECHO(dl) &&
 	  dl->dl_icmp_icmp_id == sniff->icmpid &&
 	  scamper_addr_raw_cmp(sniff->src, dl->dl_icmp_ip_src) == 0))
-	cap = 1;
+	i = 1;
     }
 
-  if(cap == 0)
+  if(i == 0)
     return;
 
   pkt = scamper_sniff_pkt_alloc(dl->dl_net_raw, dl->dl_ip_size, &dl->dl_tv);
   if(pkt == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc pkt");
+      printerror(__func__, "could not alloc pkt");
       goto err;
     }
 
   if(slist_tail_push(state->list, pkt) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not push pkt");
+      printerror(__func__, "could not push pkt");
       goto err;
     }
 
-  if(slist_count(state->list) >= sniff->limit_pktc)
+  if((i = slist_count(state->list)) < 0)
+    goto err;
+  if((uint32_t)i >= sniff->limit_pktc)
     sniff_finish(task, SCAMPER_SNIFF_STOP_LIMIT_PKTC);
 
   return;
@@ -205,13 +202,13 @@ static int sniff_state_alloc(scamper_task_t *task)
 
   if((state->list = slist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc list");
+      printerror(__func__, "could not alloc list");
       goto err;
     }
 
   if((state->fd = scamper_fd_dl(ifindex)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not get dl");
+      printerror(__func__, "could not get dl");
       goto err;
     }
 
@@ -248,7 +245,7 @@ static void do_sniff_write(scamper_file_t *sf, scamper_task_t *task)
   return;
 }
 
-static int sniff_arg_param_validate(int optid, char *param, long *out)
+static int sniff_arg_param_validate(int optid, char *param, long long *out)
 {
   long tmp = 0;
 
@@ -277,7 +274,7 @@ static int sniff_arg_param_validate(int optid, char *param, long *out)
     }
 
   if(out != NULL)
-    *out = tmp;
+    *out = (long long)tmp;
   return 0;
 
  err:
@@ -300,7 +297,7 @@ void *scamper_do_sniff_alloc(char *str)
   long icmpid = -1;
   char *expr = NULL;
   char *src = NULL;
-  long tmp = 0;
+  long long tmp = 0;
 
   /* try and parse the string passed in */
   if(scamper_options_parse(str, opts, opts_cnt, &opts_out, &expr) != 0)
@@ -351,7 +348,7 @@ void *scamper_do_sniff_alloc(char *str)
 
   if(src == NULL)
     {
-      printerror(errno, strerror, __func__, "missing -S parameter");
+      printerror(__func__, "missing -S parameter");
       goto err;
     }
 
@@ -360,7 +357,7 @@ void *scamper_do_sniff_alloc(char *str)
 
   if((sniff->src = scamper_addrcache_resolve(addrcache,AF_UNSPEC,src)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not resolve %s", src);
+      printerror(__func__, "could not resolve %s", src);
       goto err;
     }
 

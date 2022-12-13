@@ -2,9 +2,11 @@
  * scamper_file_text_tbit.c
  *
  * Copyright (C) 2009-2011 The University of Waikato
+ * Copyright (C) 2021      Matthew Luckie
+ *
  * Authors: Ben Stasiewicz, Matthew Luckie
  *
- * $Id: scamper_tbit_text.c,v 1.16 2016/09/17 08:40:13 mjl Exp $
+ * $Id: scamper_tbit_text.c,v 1.18 2021/08/29 08:55:39 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -123,11 +120,16 @@ int scamper_file_text_tbit_write(const scamper_file_t *sf,
 		case IPPROTO_HOPOPTS:
 		case IPPROTO_DSTOPTS:
 		case IPPROTO_ROUTING:
+		  if(pkt->data[iphlen+1] == 0 ||
+		     255 - iphlen <= (pkt->data[iphlen+1] * 8) + 8)
+		    break;
 		  proto = pkt->data[iphlen+0];
 		  iphlen += (pkt->data[iphlen+1] * 8) + 8;
 		  continue;
 
 		case IPPROTO_FRAGMENT:
+		  if(255 - iphlen <= 8)
+		    break;
 		  if(pkt->data[iphlen+3] & 0x1)
 		    mf = 1;
 		  snprintf(ipid, sizeof(ipid), "%x",

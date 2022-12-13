@@ -2,7 +2,7 @@
  * linked list routines
  * by Matthew Luckie
  *
- * Copyright (C) 2004-2013 Matthew Luckie. All rights reserved.
+ * Copyright (C) 2004-2019 Matthew Luckie. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: mjl_list.h,v 1.39 2015/05/19 23:05:48 mjl Exp $
+ * $Id: mjl_list.h,v 1.41 2019/05/22 06:12:57 mjl Exp $
  *
  */
 
@@ -98,16 +98,20 @@ void slist_lock(slist_t *list);
 void slist_unlock(slist_t *list);
 int slist_islocked(slist_t *list);
 void slist_empty(slist_t *list);
+void slist_empty_cb(slist_t *list, slist_free_t func);
 void slist_free(slist_t *list);
 void slist_free_cb(slist_t *list, slist_free_t func);
 
 #ifndef DMALLOC
 dlist_t *dlist_alloc(void);
+dlist_t *dlist_dup(dlist_t *list, const dlist_foreach_t func, void *param);
 dlist_node_t *dlist_node_alloc(void *item);
 dlist_node_t *dlist_head_push(dlist_t *list, void *item);
 dlist_node_t *dlist_tail_push(dlist_t *list, void *item);
 #else
 dlist_t *dlist_alloc_dm(const char *file, const int line);
+dlist_t *dlist_dup_dm(dlist_t *oldlist,const dlist_foreach_t func,void *param,
+		      const char *file, const int line);
 dlist_node_t *dlist_node_alloc_dm(void *item,const char *file,const int line);
 dlist_node_t *dlist_head_push_dm(dlist_t *list, void *item,
 				 const char *file, const int line);
@@ -131,6 +135,7 @@ void *dlist_tail_item(const dlist_t *list);
 void *dlist_node_pop(dlist_t *list, dlist_node_t *node);
 void *dlist_node_item(const dlist_node_t *node);
 dlist_node_t *dlist_head_node(const dlist_t *list);
+dlist_node_t *dlist_tail_node(const dlist_t *list);
 dlist_node_t *dlist_node_next(const dlist_node_t *node);
 dlist_node_t *dlist_node_prev(const dlist_node_t *node);
 void dlist_node_eject(dlist_t *list, dlist_node_t *node);
@@ -144,6 +149,7 @@ void dlist_lock(dlist_t *list);
 void dlist_unlock(dlist_t *list);
 int dlist_islocked(dlist_t *list);
 void dlist_empty(dlist_t *list);
+void dlist_empty_cb(dlist_t *list, dlist_free_t func);
 void dlist_free(dlist_t *list);
 void dlist_free_cb(dlist_t *list, dlist_free_t func);
 

@@ -4,9 +4,10 @@
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2014      The Regents of the University of California
+ * Copyright (C) 2020      Matthew Luckie
  * Author: Matthew Luckie
  *
- * $Id: scamper_trace_text.c,v 1.22.4.1 2017/06/22 08:21:29 mjl Exp $
+ * $Id: scamper_trace_text.c,v 1.27 2020/04/17 21:29:06 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,11 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_trace_text.c,v 1.22.4.1 2017/06/22 08:21:29 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -189,21 +185,21 @@ static char *icmp_tostr(const scamper_trace_hop_t *hop,
  */
 static char *header_tostr(const scamper_trace_t *trace)
 {
-  char src[64], dst[64], header[192];
+  char addr[64], header[256];
+  size_t off = 0;
 
   if(trace->dst == NULL)
     return NULL;
-  scamper_addr_tostr(trace->dst, dst, sizeof(dst));
 
+  string_concat(header, sizeof(header), &off, "traceroute");
   if(trace->src != NULL)
-    {
-      scamper_addr_tostr(trace->src, src, sizeof(src));
-      snprintf(header, sizeof(header), "traceroute from %s to %s", src, dst);
-    }
-  else
-    {
-      snprintf(header, sizeof(header), "traceroute to %s", dst);
-    }
+    string_concat(header, sizeof(header), &off, " from %s",
+		  scamper_addr_tostr(trace->src, addr, sizeof(addr)));
+  string_concat(header, sizeof(header), &off, " to %s",
+		scamper_addr_tostr(trace->dst, addr, sizeof(addr)));
+  if(trace->rtr != NULL)
+    string_concat(header, sizeof(header), &off, " via %s",
+		  scamper_addr_tostr(trace->rtr, addr, sizeof(addr)));
 
   return strdup(header);
 }
@@ -224,10 +220,10 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
   size_t  *len_rtts = NULL;
   size_t   len;
   int      i;
-  char     str_hop[128];
+  char     str_hop[256];
   char     str_addr[64];
   char     str_rtt[24];
-  char     str_icmp[48];
+  char     str_icmp[128];
   int      spare;
   int      replyc;
 
@@ -260,7 +256,7 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
     {
       hop = trace->hops[h];
       scamper_addr_tostr(hop->hop_addr, str_addr, sizeof(str_addr));
-      timeval_tostr(&hop->hop_rtt, str_rtt, sizeof(str_rtt));
+      timeval_tostr_us(&hop->hop_rtt, str_rtt, sizeof(str_rtt));
       icmp_tostr(hop, str_icmp, sizeof(str_icmp));
 
       snprintf(str_hop, sizeof(str_hop),
@@ -301,7 +297,7 @@ static char *hop_tostr(const scamper_trace_t *trace, const int h)
        * calculate the length of the rtt and icmp data for this hop probe,
        * and then generate and store the string
        */
-      timeval_tostr(&hop->hop_rtt, str_rtt, sizeof(str_rtt));
+      timeval_tostr_us(&hop->hop_rtt, str_rtt, sizeof(str_rtt));
       icmp_tostr(hop, str_icmp, sizeof(str_icmp));
       len = strlen(str_rtt) + 3 + strlen(str_icmp);
       if((str_rtts[i] = malloc_zero(len+1)) == NULL)

@@ -1,7 +1,7 @@
 /*
  * scamper_queue.c
  *
- * $Id: scamper_queue.c,v 1.42 2016/07/15 09:16:27 mjl Exp $
+ * $Id: scamper_queue.c,v 1.44 2020/03/17 07:32:16 mjl Exp $
  *
  * Copyright (C) 2005-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -22,11 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_queue.c,v 1.42 2016/07/15 09:16:27 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -187,7 +182,7 @@ int scamper_queue_event_update_time(scamper_queue_t *sq,
     {
       if((sq->node = heap_insert(event_queue, sq)) == NULL)
 	{
-	  printerror(errno, strerror, __func__, "could not add to heap");
+	  printerror(__func__, "could not add to heap");
 	  return -1;
 	}
       sq->queue = event_queue;
@@ -219,7 +214,7 @@ scamper_queue_t *scamper_queue_event(const struct timeval *tv,
 
   if((sq = malloc_zero(sizeof(scamper_queue_t))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc sq");
+      printerror(__func__, "could not alloc sq");
       goto err;
     }
   timeval_cpy(&sq->timeout, tv);
@@ -228,7 +223,7 @@ scamper_queue_t *scamper_queue_event(const struct timeval *tv,
   sq->cb = cb;
   if((sq->node = heap_insert(event_queue, sq)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could add to heap");
+      printerror(__func__, "could add to heap");
       goto err;
     }
 
@@ -252,7 +247,7 @@ int scamper_queue_probe_head(scamper_queue_t *sq)
 
   if((node = dlist_head_push(probe_queue, sq)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not push node");
+      printerror(__func__, "could not push node");
       return -1;
     }
 
@@ -479,28 +474,28 @@ int scamper_queue_init()
 {
   if((probe_queue = dlist_alloc()) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc probe_queue");
+      printerror(__func__, "could not alloc probe_queue");
       return -1;
     }
   dlist_onremove(probe_queue, queue_onremove);
 
   if((wait_queue = heap_alloc((heap_cmp_t)queue_cmp)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc wait_queue");
+      printerror(__func__, "could not alloc wait_queue");
       return -1;
     }
   heap_onremove(wait_queue, queue_onremove);
 
   if((done_queue = heap_alloc((heap_cmp_t)queue_cmp)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc done_queue");
+      printerror(__func__, "could not alloc done_queue");
       return -1;
     }
   heap_onremove(done_queue, queue_onremove);
 
   if((event_queue = heap_alloc((heap_cmp_t)queue_cmp)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not alloc event_queue");
+      printerror(__func__, "could not alloc event_queue");
       return -1;
     }
   heap_onremove(event_queue, queue_onremove);

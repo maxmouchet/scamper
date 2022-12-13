@@ -5,7 +5,7 @@
  * Copyright (C) 2006-2010 The University of Waikato
  * Author: Matthew Luckie
  *
- * $Id: scamper_file_text.c,v 1.87 2011/09/16 03:15:44 mjl Exp $
+ * $Id: scamper_file_text.c,v 1.88 2020/03/17 07:32:16 mjl Exp $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_file_text.c,v 1.87 2011/09/16 03:15:44 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

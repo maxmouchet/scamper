@@ -1,6 +1,10 @@
 /*
  * heap routines
- * by Matthew Luckie
+ *
+ * $Id: mjl_heap.c,v 1.12 2020/03/17 07:32:15 mjl Exp $
+ *
+ *        Matthew Luckie
+ *        mjl@luckie.org.nz
  *
  * Adapted from the priority queue in "Robert Sedgewick's Algorithms in C++"
  *
@@ -28,11 +32,6 @@
  * SUCH DAMAGE.
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: mjl_heap.c,v 1.11 2012/04/27 05:20:42 mjl Exp $";
-#endif
 
 #include <stdlib.h>
 #include <assert.h>

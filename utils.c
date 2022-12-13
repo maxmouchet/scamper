@@ -1,13 +1,13 @@
 /*
  * utils.c
  *
- * $Id: utils.c,v 1.184 2016/09/17 05:30:49 mjl Exp $
+ * $Id: utils.c,v 1.200.2.1 2022/02/09 07:23:22 mjl Exp $
  *
  * Copyright (C) 2003-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2011      Matthew Luckie
  * Copyright (C) 2012-2015 The Regents of the University of California
- * Copyright (C) 2015-2016 Matthew Luckie
+ * Copyright (C) 2015-2021 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,11 +24,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: utils.c,v 1.184 2016/09/17 05:30:49 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -435,6 +430,7 @@ const char *addr_tostr(int af, const void *addr, char *buf, size_t len)
 void *memdup(const void *ptr, const size_t len)
 {
   void *d;
+  assert(ptr != NULL);
   if((d = malloc(len)) != NULL)
     {
       memcpy(d, ptr, len);
@@ -901,7 +897,7 @@ int timeval_inrange_us(const struct timeval *a, const struct timeval *b, int c)
   return 1;
 }
 
-char *timeval_tostr(const struct timeval *rtt, char *str, size_t len)
+char *timeval_tostr_us(const struct timeval *rtt, char *str, size_t len)
 {
   uint32_t usec = (rtt->tv_sec * 1000000) + rtt->tv_usec;
   snprintf(str, len, "%d.%03d", usec / 1000, usec % 1000);
@@ -944,6 +940,43 @@ int fcntl_set(const int fd, const int flags)
 }
 #endif
 
+char *json_esc(const char *in, char *out, size_t len)
+{
+  size_t off = 0;
+
+  while(*in != '\0')
+    {
+      if(isprint(*in) == 0)
+	break;
+
+      switch(*in)
+	{
+	case '"':
+	  if(off + 2 >= len)
+	    goto done;
+	  out[off++] = '\\';
+	  out[off++] = '"';
+	  break;
+
+	case '\\':
+	  if(off + 2 >= len)
+	    goto done;
+	  out[off++] = '\\';
+	  out[off++] = '\\';
+	  break;
+
+	default:
+	  out[off++] = *in;
+	  break;
+	}
+      in++;
+    }
+  out[off++] = '\0';
+
+ done:
+  return out;
+}
+
 int string_isprint(const char *str, const size_t len)
 {
   size_t i = 0;
@@ -964,20 +997,106 @@ int string_isprint(const char *str, const size_t len)
   return 1;
 }
 
+char *string_toupper(char *buf, size_t len, const char *in)
+{
+  size_t off = 0;
+  while(in[off] != '\0' && len - off > 1)
+    {
+      buf[off] = toupper(in[off]);
+      off++;
+    }
+  buf[off] = '\0';
+  return buf;
+}
+
 int string_tolong(const char *str, long *l)
 {
   char *endptr;
 
+  errno = 0;
   *l = strtol(str, &endptr, 0);
   if(*l == 0)
     {
-      if(errno == EINVAL) return -1;
+      if(errno == EINVAL)
+	return -1;
     }
   else if(*l == LONG_MIN || *l == LONG_MAX)
     {
-      if(errno == ERANGE) return -1;
+      if(errno == ERANGE)
+	return -1;
     }
 
+  return 0;
+}
+
+int string_tollong(const char *str, long long *l)
+{
+  char *endptr;
+
+  errno = 0;
+  *l = strtoll(str, &endptr, 0);
+  if(*l == 0)
+    {
+      if(errno == EINVAL)
+	return -1;
+    }
+  else if(*l == LLONG_MIN || *l == LLONG_MAX)
+    {
+      if(errno == ERANGE)
+	return -1;
+    }
+
+  return 0;
+}
+
+/*
+ * string_isalnum
+ *
+ * scan the word to establish if it is made up entirely of
+ * alphanumeric characters.
+ */
+int string_isalnum(const char *str)
+{
+  if(*str == '\0')
+    return 0;
+  while(isalnum(*str) != 0)
+    str++;
+  if(*str == '\0')
+    return 1;
+  return 0;
+}
+
+/*
+ * string_isdigit
+ *
+ * scan the word to establish if it is made up entirely of digits,
+ * with no + or - at the start.
+ */
+int string_isdigit(const char *str)
+{
+  if(*str == '\0')
+    return 0;
+  while(isdigit(*str) != 0)
+    str++;
+  if(*str == '\0')
+    return 1;
+  return 0;
+}
+
+/*
+ * string_isalpha
+ *
+ * scan the string to establish if it is made up entirely of alphabetic
+ * characters.
+ */
+int string_isalpha(const char *str)
+{
+  if(*str == '\0')
+    return 0;
+  while(isalpha(*str) != 0)
+    str++;
+  if(*str == '\0')
+    return 1;
   return 0;
 }
 
@@ -1321,6 +1440,15 @@ int string_addrport(const char *in, char **first, int *port)
   return -1;
 }
 
+#ifndef NDEBUG
+int string_isdash(const char *str)
+{
+  if(str[0] == '-' && str[1] == '\0')
+    return 1;
+  return 0;
+}
+#endif
+
 void mem_concat(void *dst,const void *src,size_t len,size_t *off,size_t size)
 {
   assert(*off + len <= size);
@@ -1567,7 +1695,7 @@ int stat_mtime(const char *filename, time_t *mtime)
   return 0;
 }
 
-#if !defined(__sun__) && !defined(_WIN32)
+#if defined(HAVE_SYSCTL) && !defined(__linux__)
 int sysctl_wrap(int *mib, u_int len, void **buf, size_t *size)
 {
   if(sysctl(mib, len, NULL, size, NULL, 0) != 0)
@@ -1709,6 +1837,16 @@ int shuffle32(uint32_t *array, int len)
     }
 
   return 0;
+}
+
+int min_array(int *array, int len)
+{
+  int x, i;
+  x = array[0];
+  for(i=1; i<len; i++)
+    if(x > array[i])
+      x = array[i];
+  return x;
 }
 
 uint16_t in_cksum(const void *buf, size_t len)
@@ -2125,69 +2263,78 @@ uint32_t byteswap32(const uint32_t word)
 	  ((word & 0xff00) << 8) | ((word >> 8) & 0xff00));
 }
 
-/* process a text file, line by line */
-int file_lines(const char *filename, int (*func)(char *, void *), void *param)
+int fd_lines(int fd, int (*func)(char *, void *), void *param)
 {
-  struct stat sb;
-  off_t off, start;
   char *readbuf = NULL;
-  int fd = -1;
+  size_t readbuf_len, readbuf_off;
+  size_t start, end, off;
+  int rc = -1;
+  ssize_t ss;
 
-  if((fd = open(filename, O_RDONLY)) < 0)
-    goto err;
+  readbuf_len = 8192; readbuf_off = 0;
+  if((readbuf = malloc(readbuf_len)) == NULL)
+    goto done;
 
-  if(fstat(fd, &sb) != 0)
-    goto err;
-
-  /* don't process a zero length file */
-  if(sb.st_size == 0)
+  while((ss = read(fd, readbuf+readbuf_off, readbuf_len-readbuf_off-1)) >= 0)
     {
-      close(fd);
-      return 0;
-    }
+      start = 0; off = 0;
+      end = readbuf_off + ss;
 
-  if((readbuf = malloc(sb.st_size+1)) == NULL)
-    goto err;
-  if(read_wrap(fd, readbuf, NULL, sb.st_size) != 0)
-    goto err;
-  readbuf[sb.st_size] = '\0';
-  close(fd); fd = -1;
-
-  /* parse the contents of the file */
-  start = 0; off = 0;
-  while(off < sb.st_size+1)
-    {
-      if(readbuf[off] == '\n' || readbuf[off] == '\0')
+      while(off <= end)
 	{
-	  if(start == off)
+	  if(off == end && ss != 0)
+	    break;
+	  if(readbuf[off] == '\n' || (off == end && start < off))
 	    {
+	      readbuf[off] = '\0';
+	      if(func(readbuf+start, param) != 0)
+		goto done;
 	      start = ++off;
-	      continue;
 	    }
+	  else
+	    {
+	      ++off;
+	    }
+	}
 
-	  readbuf[off] = '\0';
-	  if(func(readbuf+start, param) != 0)
-	    goto err;
-	  start = ++off;
+      if(ss == 0)
+	{
+	  rc = 0;
+	  break;
+	}
+      else if(start == 0)
+	{
+	  readbuf_len += 8192;
+	  readbuf_off = off;
+	  if(realloc_wrap((void **)&readbuf, readbuf_len) != 0)
+	    goto done;
 	}
       else
 	{
-	  ++off;
+	  memmove(readbuf, readbuf+start, end - start);
+	  readbuf_off = end - start;
 	}
     }
 
-  free(readbuf);
-  return 0;
-
- err:
+ done:
   if(readbuf != NULL) free(readbuf);
-  if(fd != -1) close(fd);
-  return -1;
+  return rc;
+}
+
+/* process a text file, line by line */
+int file_lines(const char *filename, int (*func)(char *, void *), void *param)
+{
+  int rc, fd = -1;
+  if((fd = open(filename, O_RDONLY)) < 0)
+    return -1;
+  rc = fd_lines(fd, func, param);
+  close(fd);
+  return rc;
 }
 
 char *offt_tostr(char *buf, size_t len, off_t off, int lz, char c)
 {
-  char sp[8];
+  char sp[16];
 
   assert(lz >= 0);
 

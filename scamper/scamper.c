@@ -1,7 +1,7 @@
 /*
  * scamper
  *
- * $Id: scamper.c,v 1.261 2016/09/17 11:58:01 mjl Exp $
+ * $Id: scamper.c,v 1.280.10.3 2022/08/25 19:33:16 mjl Exp $
  *
  *        Matthew Luckie
  *        mjl@luckie.org.nz
@@ -10,7 +10,7 @@
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2012      Matthew Luckie
  * Copyright (C) 2014      The Regents of the University of California
- * Copyright (C) 2014-2016 Matthew Luckie
+ * Copyright (C) 2014-2022 Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,11 +26,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper.c,v 1.261 2016/09/17 11:58:01 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -72,6 +67,7 @@ static const char rcsid[] =
 #include "neighbourdisc/scamper_neighbourdisc_do.h"
 #include "tbit/scamper_tbit_do.h"
 #include "sniff/scamper_sniff_do.h"
+#include "host/scamper_host_do.h"
 
 #include "utils.h"
 
@@ -96,6 +92,7 @@ static const char rcsid[] =
 #define OPT_CTRL_INET       0x01000000 /* P: */
 #define OPT_CTRL_UNIX       0x02000000 /* U: */
 #define OPT_CTRL_REMOTE     0x04000000 /* R: */
+#define OPT_NAMESERVER      0x08000000 /* n: */
 
 #define FLAG_NOINITNDC       0x00000001
 #define FLAG_OUTCOPY         0x00000002
@@ -105,8 +102,11 @@ static const char rcsid[] =
 #define FLAG_EPOLL           0x00000020
 #define FLAG_RAWTCP          0x00000040
 #define FLAG_DEBUGFILEAPPEND 0x00000080
-#define FLAG_TLS             0x00000100
+#define FLAG_NOTLS_REMOTE    0x00000100
 #define FLAG_NOTLS           0x00000200
+#if defined(IP_RECVERR) || defined(IPV6_RECVERR)
+#define FLAG_ICMP_RECVERR    0x00000400
+#endif
 
 /*
  * parameters configurable by the command line:
@@ -124,6 +124,7 @@ static const char rcsid[] =
  * ctrl_rem_port: port on remote host to connect to for direction
  * ctrl_rem_name: name or IP address of remote host to connect to
  * monitorname: canonical name of monitor assigned by human
+ * nameserver:  IP address of a nameserver to use
  * listname:    name of list assigned by human
  * listid:      id of list assigned by human
  * cycleid:     id of cycle assigned by human
@@ -136,8 +137,8 @@ static const char rcsid[] =
 static uint32_t options    = 0;
 static uint32_t flags      = 0;
 static char  *command      = NULL;
-static int    pps          = SCAMPER_PPS_DEF;
-static int    window       = SCAMPER_WINDOW_DEF;
+static int    pps          = SCAMPER_OPTION_PPS_DEF;
+static int    window       = SCAMPER_OPTION_WINDOW_DEF;
 static char  *outfile      = "-";
 static char  *outtype      = "text";
 static char  *intype       = NULL;
@@ -147,6 +148,7 @@ static char  *ctrl_unix    = NULL;
 static int    ctrl_rem_port = 0;
 static char  *ctrl_rem_name = NULL;
 static char  *monitorname  = NULL;
+static char  *nameserver   = NULL;
 static char  *listname     = NULL;
 static int    listid       = -1;
 static int    cycleid      = -1;
@@ -166,12 +168,20 @@ static char  *debugfile    = NULL;
  * probe_window:   maximum extension of probing window before truncation
  * exit_when_done: exit scamper when current window of tasks is completed
  */
-static int    wait_between   = 1000000 / SCAMPER_PPS_DEF;
+static int    wait_between   = 1000000 / SCAMPER_OPTION_PPS_DEF;
 static int    probe_window   = 250000;
 static int    exit_when_done = 1;
 
 /* central cache of addresses that scamper is dealing with */
 scamper_addrcache_t *addrcache = NULL;
+
+/* central TLS context with CA certificates loaded for remote control */
+#ifdef HAVE_OPENSSL
+SSL_CTX *remote_tls_ctx = NULL;
+static char *remote_cafile = NULL;
+static char *remote_client_privfile = NULL;
+static char *remote_client_certfile = NULL;
+#endif
 
 /* Source port to use in our probes */
 static uint16_t default_sport = 0;
@@ -210,6 +220,7 @@ static void usage(uint32_t opt_mask)
     "usage: scamper [-?Dv] [-c command] [-p pps] [-w window]\n"
     "               [-M monitorname] [-l listname] [-L listid] [-C cycleid]\n"
     "               [-o outfile] [-O options] [-F firewall] [-e pidfile]\n"
+    "               [-n nameserver]\n"
 #ifndef WITHOUT_DEBUGFILE
     "               [-d debugfile]\n"
 #endif
@@ -229,8 +240,8 @@ static void usage(uint32_t opt_mask)
 
   if((opt_mask & OPT_COMMAND) != 0)
     {
-      (void)snprintf(buf, sizeof(buf),
-		     "command string (default: %s)", SCAMPER_COMMAND_DEF);
+      (void)snprintf(buf, sizeof(buf), "command string (default: %s)",
+		     SCAMPER_OPTION_COMMAND_DEF);
       usage_str('c', buf);
     }
 
@@ -286,9 +297,15 @@ static void usage(uint32_t opt_mask)
       usage_line("noinitndc: do not initialise neighbour discovery cache");
       usage_line("outcopy: output copy of all results collected to file");
       usage_line("rawtcp: use raw socket to send IPv4 TCP probes");
+#if defined(IP_RECVERR) || defined(IPV6_RECVERR)
+      usage_line("icmp-rxerr: use recverr cmsg to receive ICMP responses");
+#endif
 #ifdef HAVE_OPENSSL
       usage_line("notls: do not use TLS anywhere in scamper");
-      usage_line("tls: require TLS on remote control sockets");
+      usage_line("notls-remote: do not use TLS on remote control sockets");
+      usage_line("cafile=file: use the CA certs in file for remote auth");
+      usage_line("client-certfile=file: use cert in file for remote auth");
+      usage_line("client-privfile=file: use privkey in file for remote auth");
 #endif
 #ifndef _WIN32
       usage_line("select: use select(2) rather than poll(2)");
@@ -308,7 +325,7 @@ static void usage(uint32_t opt_mask)
     {
       snprintf(buf, sizeof(buf),
 	       "number of packets per second to send (%d <= pps <= %d)",
-	       SCAMPER_PPS_MIN, SCAMPER_PPS_MAX);
+	       SCAMPER_OPTION_PPS_MIN, SCAMPER_OPTION_PPS_MAX);
       usage_str('p', buf);
     }
 
@@ -366,8 +383,7 @@ static int multicall_do(const scamper_multicall_t *mc, int argc, char *argv[])
     }
   if((str = malloc_zero(len)) == NULL)
     {
-      printerror(errno, strerror, __func__,
-		 "could not assemble %s command", mc->cmd);
+      printerror(__func__, "could not assemble %s command", mc->cmd);
       return -1;
     }
   off = strlen(mc->cmd);
@@ -383,7 +399,7 @@ static int multicall_do(const scamper_multicall_t *mc, int argc, char *argv[])
   str[off] = '\0';
 
   /* set the command */
-  scamper_command_set(str);
+  scamper_option_command_set(str);
   free(str);
 
   options |= OPT_IP;
@@ -421,7 +437,7 @@ static int ppswindow_set(int p, int w)
 
   if(p != pps)
     {
-      if(p != 0 && (p < SCAMPER_PPS_MIN || p > SCAMPER_PPS_MAX))
+      if(p != 0 && (p < SCAMPER_OPTION_PPS_MIN || p > SCAMPER_OPTION_PPS_MAX))
 	return -1;
 
       /*
@@ -440,7 +456,8 @@ static int ppswindow_set(int p, int w)
 
   if(w != window)
     {
-      if(w != 0 && (w < SCAMPER_WINDOW_MIN || w > SCAMPER_WINDOW_MAX))
+      if(w != 0 &&
+	 (w < SCAMPER_OPTION_WINDOW_MIN || w > SCAMPER_OPTION_WINDOW_MAX))
 	return -1;
       window = w;
     }
@@ -467,6 +484,8 @@ static int check_options(int argc, char *argv[])
      scamper_do_tbit_arg_validate, scamper_do_tbit_usage},
     {"scamper-sniff", "sniff",
      scamper_do_sniff_arg_validate, scamper_do_sniff_usage},
+    {"scamper-host", "host",
+     scamper_do_host_arg_validate, scamper_do_host_usage},
   };
   int   i;
   long  lo_w = window, lo_p = pps;
@@ -475,6 +494,7 @@ static int check_options(int argc, char *argv[])
   char *opt_ctrl_inet = NULL, *opt_ctrl_unix = NULL, *opt_monitorname = NULL;
   char *opt_pps = NULL, *opt_command = NULL, *opt_window = NULL;
   char *opt_firewall = NULL, *opt_pidfile = NULL, *opt_ctrl_remote = NULL;
+  char *opt_nameserver = NULL;
 
 #ifndef WITHOUT_DEBUGFILE
   char *opt_debugfile = NULL;
@@ -495,7 +515,7 @@ static int check_options(int argc, char *argv[])
     }
 
   off = 0;
-  string_concat(opts, sizeof(opts), &off, "c:C:e:fF:iIl:L:M:o:O:p:P:R:vw:?");
+  string_concat(opts, sizeof(opts), &off, "c:C:e:fF:iIl:L:M:n:o:O:p:P:R:vw:?");
 #ifndef WITHOUT_DEBUGFILE
   string_concat(opts, sizeof(opts), &off, "d:");
 #endif
@@ -570,6 +590,11 @@ static int check_options(int argc, char *argv[])
 	  opt_monitorname = optarg;
 	  break;
 
+	case 'n':
+	  options |= OPT_NAMESERVER;
+	  opt_nameserver = optarg;
+	  break;
+
         case 'o':
           options |= OPT_OUTFILE;
           outfile = optarg;
@@ -594,12 +619,15 @@ static int check_options(int argc, char *argv[])
 	    flags |= FLAG_OUTCOPY;
 	  else if(strcasecmp(optarg, "rawtcp") == 0)
 	    flags |= FLAG_RAWTCP;
-#ifdef HAVE_OPENSSL
-	  else if(strcasecmp(optarg, "tls") == 0)
-	    flags |= FLAG_TLS;
+#if defined(IP_RECVERR) || defined(IPV6_RECVERR)
+	  else if(strcasecmp(optarg, "icmp-rxerr") == 0 ||
+		  strcasecmp(optarg, "rxerr-icmp") == 0)
+	    flags |= FLAG_ICMP_RECVERR;
+#endif
+	  else if(strcasecmp(optarg, "notls-remote") == 0)
+	    flags |= FLAG_NOTLS_REMOTE;
 	  else if(strcasecmp(optarg, "notls") == 0)
 	    flags |= FLAG_NOTLS;
-#endif
 #ifndef _WIN32
 	  else if(strcasecmp(optarg, "select") == 0)
 	    flags |= FLAG_SELECT;
@@ -615,6 +643,14 @@ static int check_options(int argc, char *argv[])
 #ifndef WITHOUT_DEBUGFILE
 	  else if(strcasecmp(optarg, "debugfileappend") == 0)
 	    flags |= FLAG_DEBUGFILEAPPEND;
+#endif
+#ifdef HAVE_OPENSSL
+	  else if(strncasecmp(optarg, "cafile=", 7) == 0)
+	    remote_cafile = optarg+7;
+	  else if(strncasecmp(optarg, "client-privfile=", 16) == 0)
+	    remote_client_privfile = optarg+16;
+	  else if(strncasecmp(optarg, "client-certfile=", 16) == 0)
+	    remote_client_certfile = optarg+16;
 #endif
 	  else
 	    {
@@ -658,8 +694,7 @@ static int check_options(int argc, char *argv[])
 	  return -1;
 
 	default:
-	  printerror(errno, strerror, __func__,
-		     "could not parse command line options");
+	  printerror(__func__, "could not parse command line options");
 	  return -1;
 	}
     }
@@ -702,20 +737,27 @@ static int check_options(int argc, char *argv[])
 
   if(options & OPT_FIREWALL && (firewall = strdup(opt_firewall)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup firewall");
+      printerror(__func__, "could not strdup firewall");
       return -1;
     }
 
   if(options & OPT_MONITORNAME &&
      (monitorname = strdup(opt_monitorname)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup monitorname");
+      printerror(__func__, "could not strdup monitorname");
+      return -1;
+    }
+
+  if(options & OPT_NAMESERVER &&
+     (nameserver = strdup(opt_nameserver)) == NULL)
+    {
+      printerror(__func__, "could not strdup nameserver");
       return -1;
     }
 
   if(options & OPT_LISTNAME && (listname = strdup(opt_listname)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup listname");
+      printerror(__func__, "could not strdup listname");
       return -1;
     }
 
@@ -735,21 +777,14 @@ static int check_options(int argc, char *argv[])
 #ifndef WITHOUT_DEBUGFILE
   if(options & OPT_DEBUGFILE && (debugfile = strdup(opt_debugfile)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup debugfile");
+      printerror(__func__, "could not strdup debugfile");
       return -1;
     }
 #endif
 
   if(options & OPT_PIDFILE && (pidfile = strdup(opt_pidfile)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup pidfile");
-      return -1;
-    }
-
-  /* make sure incompatible flags were not specified */
-  if((flags & (FLAG_TLS|FLAG_NOTLS)) == (FLAG_TLS|FLAG_NOTLS))
-    {
-      usage(OPT_OPTION);
+      printerror(__func__, "could not strdup pidfile");
       return -1;
     }
 
@@ -759,8 +794,8 @@ static int check_options(int argc, char *argv[])
 
   /* if one of -PUi is used, then a default command must be set */
   if((options & (OPT_CTRL_INET | OPT_CTRL_UNIX | OPT_IP | OPT_INFILE)) != 0 &&
-     scamper_command_set((options & OPT_COMMAND) ?
-			 opt_command : SCAMPER_COMMAND_DEF) != 0)
+     scamper_option_command_set((options & OPT_COMMAND) ?
+				opt_command : SCAMPER_OPTION_COMMAND_DEF) != 0)
     {
       return -1;
     }
@@ -804,7 +839,6 @@ static int check_options(int argc, char *argv[])
 	  if(arglist_len != 0 ||
 	     string_addrport(opt_ctrl_remote, &ctrl_rem_name, &ctrl_rem_port) != 0)
 	    {
-	      scamper_debug(__func__, "hello %s %d", opt_ctrl_remote, arglist_len);
 	      usage(OPT_CTRL_REMOTE);
 	      return -1;
 	    }
@@ -857,16 +891,39 @@ static int check_options(int argc, char *argv[])
 	}
     }
 
+#ifdef HAVE_OPENSSL
+  if(options & OPT_CTRL_REMOTE)
+    {
+      /* need both client private key and certificate if either is specified */
+      if((remote_client_privfile != NULL && remote_client_certfile == NULL) ||
+	 (remote_client_privfile == NULL && remote_client_certfile != NULL))
+	{
+	  usage(OPT_CTRL_REMOTE);
+	  return -1;
+	}
+    }
+  else
+    {
+      /* TLS things are only valid with remote controller */
+      if(remote_cafile != NULL || remote_client_privfile != NULL ||
+	 remote_client_certfile != NULL)
+	{
+	  usage(OPT_CTRL_REMOTE);
+	  return -1;
+	}
+    }
+#endif
+
   return 0;
 }
 
-const char *scamper_command_get(void)
+const char *scamper_option_command_get(void)
 {
   assert(command != NULL);
   return command;
 }
 
-int scamper_command_set(const char *command_in)
+int scamper_option_command_set(const char *command_in)
 {
   char *d;
 
@@ -877,7 +934,7 @@ int scamper_command_set(const char *command_in)
 
   if((d = strdup(command_in)) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not strdup command");
+      printerror(__func__, "could not strdup command");
       return -1;
     }
 
@@ -897,32 +954,32 @@ void scamper_exitwhendone(int on)
   return;
 }
 
-int scamper_pps_get()
+int scamper_option_pps_get()
 {
   return pps;
 }
 
-int scamper_pps_set(const int p)
+int scamper_option_pps_set(const int p)
 {
   return ppswindow_set(p, window);
 }
 
-int scamper_window_get()
+int scamper_option_window_get()
 {
   return window;
 }
 
-int scamper_window_set(const int w)
+int scamper_option_window_set(const int w)
 {
   return ppswindow_set(pps, w);
 }
 
-const char *scamper_monitorname_get()
+const char *scamper_option_monitorname_get()
 {
   return monitorname;
 }
 
-int scamper_monitorname_set(const char *mn)
+int scamper_option_monitorname_set(const char *mn)
 {
   char *tmp;
 
@@ -949,6 +1006,11 @@ int scamper_monitorname_set(const char *mn)
 
   monitorname = tmp;
   return 0;
+}
+
+const char *scamper_option_nameserver_get(void)
+{
+  return nameserver;
 }
 
 int scamper_option_planetlab(void)
@@ -987,22 +1049,32 @@ int scamper_option_rawtcp(void)
   return 0;
 }
 
+int scamper_option_icmp_rxerr(void)
+{
+#ifdef __ANDROID__
+  return 1;
+#else
+#if defined(IP_RECVERR) || defined(IPV6_RECVERR)
+  if(flags & FLAG_ICMP_RECVERR) return 1;
+#endif
+  return 0;
+#endif
+}
+
 int scamper_option_debugfileappend(void)
 {
   if(flags & FLAG_DEBUGFILEAPPEND) return 1;
   return 0;
 }
 
-int scamper_option_tls(void)
-{
-  if(flags & FLAG_TLS) return 1;
-  return 0;
-}
-
 int scamper_option_notls(void)
 {
+#ifdef HAVE_OPENSSL
   if(flags & FLAG_NOTLS) return 1;
   return 0;
+#else
+  return 1;
+#endif
 }
 
 int scamper_option_daemon(void)
@@ -1016,7 +1088,7 @@ static int scamper_pidfile(void)
   char buf[32];
   mode_t mode;
   size_t len;
-  int fd, flags = O_WRONLY | O_TRUNC | O_CREAT;
+  int fd, fd_flags = O_WRONLY | O_TRUNC | O_CREAT;
 
 #ifndef _WIN32
   pid_t pid = getpid();
@@ -1027,14 +1099,14 @@ static int scamper_pidfile(void)
 #endif
 
 #if defined(WITHOUT_PRIVSEP)
-  fd = open(pidfile, flags, mode);
+  fd = open(pidfile, fd_flags, mode);
 #else
-  fd = scamper_privsep_open_file(pidfile, flags, mode);
+  fd = scamper_privsep_open_file(pidfile, fd_flags, mode);
 #endif
 
   if(fd == -1)
     {
-      printerror(errno, strerror, __func__, "could not open %s", pidfile);
+      printerror(__func__, "could not open %s", pidfile);
       goto err;
     }
 
@@ -1042,7 +1114,7 @@ static int scamper_pidfile(void)
   len = strlen(buf);
   if(write_wrap(fd, buf, NULL, len) != 0)
     {
-      printerror(errno, strerror, __func__, "could not write pid");
+      printerror(__func__, "could not write pid");
       goto err;
     }
   close(fd);
@@ -1174,7 +1246,7 @@ static int scamper(int argc, char *argv[])
   scamper_task_t          *task;
   scamper_outfile_t       *sof, *sof2;
   scamper_file_t          *file;
-  int                      rc;
+  int                      x;
 
   if(check_options(argc, argv) == -1)
     {
@@ -1182,21 +1254,27 @@ static int scamper(int argc, char *argv[])
     }
 
 #ifdef HAVE_DAEMON
-  if((options & OPT_DAEMON) != 0 && daemon(1, 0) != 0)
+  if((options & OPT_DAEMON) != 0)
     {
-      printerror(errno, strerror, __func__, "could not daemon");
-      return -1;
+      if(daemon(1, 0) != 0)
+	{
+	  printerror(__func__, "could not daemon");
+	  return -1;
+	}
+      scamper_debug_daemon();
     }
 #endif
 
-  scamper_debug_init();
-
+#ifndef WITHOUT_DEBUGFILE
   /*
-   * now that we've forked for privsep and again for daemon, write the
-   * pidfile.
+   * open the debug file immediately so initialisation debugging information
+   * makes it to the file
    */
-  if((options & OPT_PIDFILE) != 0 && scamper_pidfile() != 0)
-    return -1;
+  if(debugfile != NULL && scamper_debug_open(debugfile) != 0)
+    {
+      return -1;
+    }
+#endif
 
   if(scamper_osinfo_init() != 0)
     return -1;
@@ -1213,7 +1291,55 @@ static int scamper(int argc, char *argv[])
 
 #ifdef HAVE_OPENSSL
   if((flags & FLAG_NOTLS) == 0)
-    SSL_library_init();
+    {
+      SSL_library_init();
+      if((remote_tls_ctx = SSL_CTX_new(SSLv23_client_method())) == NULL)
+	{
+	  printerror_msg(__func__, "could not create ssl_ctx");
+	  return -1;
+	}
+      SSL_CTX_set_options(remote_tls_ctx,
+			  SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1);
+      SSL_CTX_set_verify(remote_tls_ctx, SSL_VERIFY_PEER, NULL);
+
+      if(remote_cafile == NULL)
+	{
+	  /* load the default set of certs into the SSL context */
+	  if(SSL_CTX_set_default_verify_paths(remote_tls_ctx) != 1)
+	    {
+	      printerror_ssl(__func__, "could not load default CA certs");
+	      return -1;
+	    }
+	}
+      else
+	{
+	  if(SSL_CTX_load_verify_locations(remote_tls_ctx,
+					   remote_cafile, NULL) != 1)
+	    {
+	      printerror_ssl(__func__, "could not load certs from %s",
+			     remote_cafile);
+	      return -1;
+	    }
+	}
+
+      /* load the client key materials */
+      if(remote_client_certfile != NULL &&
+	 SSL_CTX_use_certificate_chain_file(remote_tls_ctx,
+					    remote_client_certfile) != 1)
+	{
+	  printerror_ssl(__func__, "could load client cert from %s",
+			 remote_client_certfile);
+	  return -1;
+	}
+      if(remote_client_privfile != NULL &&
+	 SSL_CTX_use_PrivateKey_file(remote_tls_ctx, remote_client_privfile,
+				     SSL_FILETYPE_PEM) != 1)
+	{
+	  printerror_ssl(__func__, "could not load client privkey from %s",
+			 remote_client_privfile);
+	  return -1;
+	}
+    }
 #endif
 
 #ifndef WITHOUT_PRIVSEP
@@ -1224,6 +1350,10 @@ static int scamper(int argc, char *argv[])
     }
 #endif
 
+  /* now that we've forked for privsep, write the pidfile */
+  if((options & OPT_PIDFILE) != 0 && scamper_pidfile() != 0)
+    return -1;
+
   random_seed();
 
   if(firewall != NULL)
@@ -1233,17 +1363,6 @@ static int scamper(int argc, char *argv[])
       free(firewall);
       firewall = NULL;
     }
-
-#ifndef WITHOUT_DEBUGFILE
-  /*
-   * open the debug file immediately so initialisation debugging information
-   * makes it to the file
-   */
-  if(debugfile != NULL && scamper_debug_open(debugfile) != 0)
-    {
-      return -1;
-    }
-#endif
 
   /* determine a suitable default value for the source port in packets */
   scamper_sport_init();
@@ -1266,24 +1385,6 @@ static int scamper(int argc, char *argv[])
   if(scamper_fds_init() == -1)
     {
       return -1;
-    }
-
-  if(options & (OPT_CTRL_INET|OPT_CTRL_UNIX|OPT_CTRL_REMOTE))
-    {
-      if(scamper_control_init() != 0)
-	return -1;
-      if(options & OPT_CTRL_INET &&
-	 scamper_control_add_inet(ctrl_inet_addr, ctrl_inet_port) != 0)
-	return -1;
-      if(options & OPT_CTRL_UNIX &&
-	 scamper_control_add_unix(ctrl_unix) != 0)
-	return -1;
-      if(options & OPT_CTRL_REMOTE &&
-	 scamper_control_add_remote(ctrl_rem_name, ctrl_rem_port) != 0)
-	return -1;
-
-      /* wait for more tasks when finished with the active window */
-      exit_when_done = 0;
     }
 
   /* initialise the subsystem responsible for obtaining source addresses */
@@ -1335,9 +1436,38 @@ static int scamper(int argc, char *argv[])
      scamper_do_sting_init() != 0 ||
      scamper_do_neighbourdisc_init() != 0 ||
      scamper_do_tbit_init() != 0 ||
-     scamper_do_sniff_init() != 0)
+     scamper_do_sniff_init() != 0 ||
+     scamper_do_host_init() != 0)
     {
       return -1;
+    }
+
+  if(options & (OPT_CTRL_INET|OPT_CTRL_UNIX|OPT_CTRL_REMOTE))
+    {
+      if(scamper_control_init() != 0)
+	return -1;
+      if(options & OPT_CTRL_INET &&
+	 scamper_control_add_inet(ctrl_inet_addr, ctrl_inet_port) != 0)
+	return -1;
+      if(options & OPT_CTRL_UNIX &&
+	 scamper_control_add_unix(ctrl_unix) != 0)
+	return -1;
+      if(options & OPT_CTRL_REMOTE)
+	{
+#ifdef HAVE_OPENSSL
+	  if(flags & FLAG_NOTLS || flags & FLAG_NOTLS_REMOTE)
+	    x = 0;
+	  else
+	    x = 1;
+#else
+	  x = 0;
+#endif
+	  if(scamper_control_add_remote(ctrl_rem_name, ctrl_rem_port, x) != 0)
+	    return -1;
+	}
+
+      /* wait for more tasks when finished with the active window */
+      exit_when_done = 0;
     }
 
   /* parameters for the default list */
@@ -1387,7 +1517,7 @@ static int scamper(int argc, char *argv[])
 
   for(;;)
     {
-      if((rc = scamper_timeout(&timeout, &nextprobe, &lastprobe)) == 0)
+      if((x = scamper_timeout(&timeout, &nextprobe, &lastprobe)) == 0)
 	{
 	  /*
 	   * we've been told to calculate a timeout value.  figure out what
@@ -1400,7 +1530,7 @@ static int scamper(int argc, char *argv[])
 	    timeval_diff_tv(&tv, &tv, &timeout);
 	  timeout_ptr = &tv;
 	}
-      else if(rc == 1)
+      else if(x == 1)
 	{
 	  timeout_ptr = NULL;
 	}
@@ -1536,6 +1666,7 @@ static void cleanup(void)
   scamper_do_neighbourdisc_cleanup();
   scamper_do_tbit_cleanup();
   scamper_do_sniff_cleanup();
+  scamper_do_host_cleanup();
 
   scamper_dl_cleanup();
 
@@ -1575,6 +1706,12 @@ static void cleanup(void)
       monitorname = NULL;
     }
 
+  if(nameserver != NULL)
+    {
+      free(nameserver);
+      nameserver = NULL;
+    }
+
   if(firewall != NULL)
     {
       free(firewall);
@@ -1610,6 +1747,14 @@ static void cleanup(void)
       free(pidfile);
       pidfile = NULL;
     }
+
+#ifdef HAVE_OPENSSL
+  if(remote_tls_ctx != NULL)
+    {
+      SSL_CTX_free(remote_tls_ctx);
+      remote_tls_ctx = NULL;
+    }
+#endif
 
   return;
 }
@@ -1648,7 +1793,7 @@ int main(int argc, char *argv[])
 #ifndef _WIN32
   if(signal(SIGPIPE, SIG_IGN) == SIG_ERR)
     {
-      printerror(errno, strerror, __func__, "could not ignore SIGPIPE");
+      printerror(__func__, "could not ignore SIGPIPE");
       return -1;
     }
 
@@ -1657,8 +1802,7 @@ int main(int argc, char *argv[])
   si_sa.sa_handler = scamper_chld;
   if(sigaction(SIGCHLD, &si_sa, 0) == -1)
     {
-      printerror(errno, strerror, __func__,
-		 "could not set sigaction for SIGCHLD");
+      printerror(__func__, "could not set sigaction for SIGCHLD");
       return -1;
     }
 #endif

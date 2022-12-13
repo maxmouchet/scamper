@@ -1,12 +1,12 @@
 /*
  * scamper_privsep.c: code that does root-required tasks
  *
- * $Id: scamper_privsep.c,v 1.88 2016/08/26 22:09:27 mjl Exp $
+ * $Id: scamper_privsep.c,v 1.93.10.1 2022/12/10 04:57:38 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
  * Copyright (C) 2013-2014 The Regents of the University of California
- * Copyright (C) 2016      Matthew Luckie
+ * Copyright (C) 2016-2022 Matthew Luckie
  * Author: Matthew Luckie
  *
  * This program is free software; you can redistribute it and/or modify
@@ -29,11 +29,6 @@
 #endif
 
 #ifndef WITHOUT_PRIVSEP
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_privsep.c,v 1.88 2016/08/26 22:09:27 mjl Exp $";
-#endif
 
 #include "internal.h"
 
@@ -132,7 +127,7 @@ static int privsep_open_rtsock(uint16_t plen, const uint8_t *param)
 {
   if(plen != 0)
     {
-      scamper_debug(__func__, "plen %d != 0", plen, 0);
+      scamper_debug(__func__, "plen %d != 0", plen);
       errno = EINVAL;
       return -1;
     }
@@ -204,14 +199,13 @@ static int privsep_open_sock(uint16_t plen, const uint8_t *param)
     {
       if((fd = socket(AF_INET, type, protocol)) == -1)
 	{
-	  printerror(errno, strerror, __func__, "could not open IPv4 socket");
+	  printerror(__func__, "could not open IPv4 socket");
 	  goto err;
 	}
       sockaddr_compose((struct sockaddr *)&sin4, AF_INET, NULL, port);
       if(bind(fd, (struct sockaddr *)&sin4, sizeof(sin4)) == -1)
 	{
-	  printerror(errno, strerror, __func__,
-		     "could not bind to IPv4 protocol %d port %d",
+	  printerror(__func__, "could not bind to IPv4 protocol %d port %d",
 		     protocol, port);
 	  goto err;
 	}
@@ -220,14 +214,13 @@ static int privsep_open_sock(uint16_t plen, const uint8_t *param)
     {
       if((fd = socket(AF_INET6, type, protocol)) == -1)
 	{
-	  printerror(errno, strerror, __func__, "could not open IPv6 socket");
+	  printerror(__func__, "could not open IPv6 socket");
 	  goto err;
 	}
       sockaddr_compose((struct sockaddr *)&sin6, AF_INET6, NULL, port);
       if(bind(fd, (struct sockaddr *)&sin6, sizeof(sin6)) == -1)
 	{
-	  printerror(errno, strerror, __func__,
-		     "could not bind to IPv6 protocol %d port %d",
+	  printerror(__func__, "could not bind to IPv6 protocol %d port %d",
 		     protocol, port);
 	  goto err;
 	}
@@ -429,7 +422,7 @@ static int privsep_pf_init(uint16_t plen, const uint8_t *param)
   const char *name = (const char *)param;
   if(plen == 0)
     {
-      scamper_debug(__func__, "plen == 0", plen);
+      scamper_debug(__func__, "plen == 0");
       errno = EINVAL;
       return -1;
     }
@@ -749,12 +742,12 @@ static int privsep_send_fd(int fd, int error, uint8_t msg_type)
       cmsg->cmsg_len = CMSG_LEN(sizeof(fd));
       cmsg->cmsg_level = SOL_SOCKET;
       cmsg->cmsg_type = SCM_RIGHTS;
-      *(int *)CMSG_DATA(cmsg) = fd;
+      memcpy(CMSG_DATA(cmsg), &fd, sizeof(int));
     }
 
   if(sendmsg(root_fd, &msg, 0) == -1)
     {
-      printerror(errno, strerror, __func__, "couldnt send fd");
+      printerror(__func__, "couldnt send fd");
       return -1;
     }
 
@@ -766,7 +759,7 @@ static int privsep_recv_fd(void)
   struct msghdr   msg;
   struct iovec    vec;
   ssize_t         rc;
-  int             fd = -1, error = 0;
+  int             fd = -1, error = 0, *ptr;
   struct cmsghdr *cmsg;
 
   memset(&vec, 0, sizeof(vec));
@@ -783,7 +776,7 @@ static int privsep_recv_fd(void)
 
   if((rc = recvmsg(lame_fd, &msg, 0)) == -1)
     {
-      printerror(errno, strerror, __func__, "recvmsg failed");
+      printerror(__func__, "recvmsg failed");
       return -1;
     }
   else if(rc != sizeof(error))
@@ -796,7 +789,8 @@ static int privsep_recv_fd(void)
       cmsg = CMSG_FIRSTHDR(&msg);
       if(cmsg != NULL && cmsg->cmsg_type == SCM_RIGHTS)
 	{
-	  fd = (*(int *)CMSG_DATA(cmsg));
+	  ptr = (int *)CMSG_DATA(cmsg);
+	  fd = *ptr;
 	}
     }
   else
@@ -862,7 +856,7 @@ static int privsep_do(void)
       if((ret = read_wrap(root_fd, (uint8_t *)&msg, NULL, sizeof(msg))) != 0)
 	{
 	  if(ret == -1)
-	    printerror(errno, strerror, __func__, "could not read msg hdr");
+	    printerror(__func__, "could not read msg hdr");
 	  break;
 	}
 
@@ -882,14 +876,14 @@ static int privsep_do(void)
 	{
 	  if((data = malloc_zero(msg.plen)) == NULL)
 	    {
-	      printerror(errno, strerror, __func__, "couldnt malloc data");
+	      printerror(__func__, "couldnt malloc data");
 	      ret = (-errno);
 	      break;
 	    }
 
 	  if((ret = read_wrap(root_fd, data, NULL, msg.plen)) != 0)
 	    {
-	      printerror(errno, strerror, __func__, "couldnt read data");
+	      printerror(__func__, "couldnt read data");
 	      free(data);
 	      break;
 	    }
@@ -935,14 +929,14 @@ static int privsep_lame_send(const uint16_t type, const uint16_t len,
   msg.plen = len;
   if(write_wrap(lame_fd, &msg, NULL, sizeof(msg)) == -1)
     {
-      printerror(errno, strerror, __func__, "could not send msg header");
+      printerror(__func__, "could not send msg header");
       return -1;
     }
 
   /* if there is a parameter data to send, send it now */
   if(len != 0 && write_wrap(lame_fd, param, NULL, len) == -1)
     {
-      printerror(errno, strerror, __func__, "could not send msg param");
+      printerror(__func__, "could not send msg param");
       return -1;
     }
 
@@ -1226,15 +1220,19 @@ int scamper_privsep_init()
 	   * get the uid of the user who will get ownership of the directory.
 	   * by default, this will be root.
 	   */
-	  if((pw = getpwnam(PRIVSEP_DIR_USER)) == NULL)
+	  if((pw = getpwnam(PRIVSEP_DIR_OWNER)) == NULL)
 	    {
-	      printerror(errno, strerror, __func__,
-			 "could not getpwnam " PRIVSEP_DIR_USER);
+	      printerror(__func__, "could not getpwnam " PRIVSEP_DIR_OWNER);
+#if defined(HAVE_ENDPWENT)
 	      endpwent();
+#endif
 	      return -1;
 	    }
 	  uid = pw->pw_uid;
+
+#if defined(HAVE_ENDPWENT)
 	  endpwent();
+#endif
 
 	  gid = 0;
 
@@ -1242,23 +1240,21 @@ int scamper_privsep_init()
 	  mode = S_IRUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;
 	  if(mkdir(PRIVSEP_DIR, mode) == -1)
 	    {
-	      printerror(errno, strerror, __func__,
-			 "could not mkdir " PRIVSEP_DIR);
+	      printerror(__func__, "could not mkdir " PRIVSEP_DIR);
 	      return -1;
 	    }
 
 	  /* assign ownership appropriately */
 	  if(chown(PRIVSEP_DIR, uid, gid) == -1)
 	    {
-	      printerror(errno, strerror, __func__,
-			 "could not chown " PRIVSEP_DIR);
+	      printerror(__func__, "could not chown " PRIVSEP_DIR);
 	      rmdir(PRIVSEP_DIR);
 	      return -1;
 	    }
 	}
       else
 	{
-	  printerror(errno, strerror, __func__, "could not stat " PRIVSEP_DIR);
+	  printerror(__func__, "could not stat " PRIVSEP_DIR);
 	  return -1;
 	}
     }
@@ -1269,7 +1265,7 @@ int scamper_privsep_init()
    */
   if(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == -1)
     {
-      printerror(errno, strerror, __func__, "could not socketpair");
+      printerror(__func__, "could not socketpair");
       return -1;
     }
 
@@ -1278,13 +1274,13 @@ int scamper_privsep_init()
 
   if((cmsgbuf = malloc_zero(CMSG_SPACE(sizeof(int)))) == NULL)
     {
-      printerror(errno, strerror, __func__, "could not malloc cmsgbuf");
+      printerror(__func__, "could not malloc cmsgbuf");
       return -1;
     }
 
   if((pid = fork()) == -1)
     {
-      printerror(errno, strerror, __func__, "could not fork");
+      printerror(__func__, "could not fork");
       return -1;
     }
   else if(pid == 0) /* child */
@@ -1313,14 +1309,16 @@ int scamper_privsep_init()
    */
   if((pw = getpwnam(PRIVSEP_USER)) == NULL)
     {
-      printerror(errno, strerror, __func__,
-		 "could not getpwnam " PRIVSEP_USER);
+      printerror(__func__, "could not getpwnam " PRIVSEP_USER);
       return -1;
     }
   uid = pw->pw_uid;
   gid = pw->pw_gid;
   memset(pw->pw_passwd, 0, strlen(pw->pw_passwd));
+
+#if defined(HAVE_ENDPWENT)
   endpwent();
+#endif
 
   /*
    * call localtime now, as then the unpriviledged process will have the
@@ -1346,34 +1344,33 @@ int scamper_privsep_init()
   /* change the root directory of the unpriviledged directory */
   if(chroot(PRIVSEP_DIR) == -1)
     {
-      printerror(errno, strerror, __func__,
-		 "could not chroot to " PRIVSEP_DIR);
+      printerror(__func__, "could not chroot to " PRIVSEP_DIR);
       return -1;
     }
 
   /* go into the chroot environment */
   if(chdir("/") == -1)
     {
-      printerror(errno, strerror, __func__, "could not chdir /");
+      printerror(__func__, "could not chdir /");
       return -1;
     }
 
   /* change the operating group */
   if(setgroups(1, &gid) == -1)
     {
-      printerror(errno, strerror, __func__, "could not setgroups");
+      printerror(__func__, "could not setgroups");
       return -1;
     }
   if(setgid(gid) == -1)
     {
-      printerror(errno, strerror, __func__, "could not setgid");
+      printerror(__func__, "could not setgid");
       return -1;
     }
 
   /* change the operating user */
   if(setuid(uid) == -1)
     {
-      printerror(errno, strerror, __func__, "could not setuid");
+      printerror(__func__, "could not setuid");
       return -1;
     }
 

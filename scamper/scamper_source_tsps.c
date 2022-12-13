@@ -1,7 +1,7 @@
 /*
  * scamper_source_tsps.c
  *
- * $Id: scamper_source_tsps.c,v 1.9 2014/09/24 04:34:21 mjl Exp $
+ * $Id: scamper_source_tsps.c,v 1.13 2021/08/22 08:11:53 mjl Exp $
  *
  * Copyright (C) 2004-2006 Matthew Luckie
  * Copyright (C) 2006-2011 The University of Waikato
@@ -21,11 +21,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$Id: scamper_source_tsps.c,v 1.9 2014/09/24 04:34:21 mjl Exp $";
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -96,7 +91,7 @@ static int ssf_open(const char *filename)
   int fd = -1;
 
   /* get a file descriptor to the file */
-  if(strcmp(filename, "-") != 0)
+  if(string_isdash(filename) == 0)
     {
 #if defined(WITHOUT_PRIVSEP)
       fd = open(filename, O_RDONLY);
@@ -209,7 +204,7 @@ static void ssf_read(const int fd, void *param)
        * if probe queue for this source is sufficiently large, then
        * don't read any more for the time being
        */
-      if(scamper_source_getcommandcount(source) >= scamper_pps_get())
+      if(scamper_source_getcommandcount(source) >= scamper_option_pps_get())
 	{
 	  scamper_fd_read_pause(ssf->fd);
 	}
@@ -224,7 +219,7 @@ static void ssf_read(const int fd, void *param)
     {
       if(errno != EAGAIN && errno != EINTR)
 	{
-	  printerror(errno, strerror, __func__, "read failed");
+	  printerror(__func__, "read failed");
 	  goto err;
 	}
     }
@@ -245,7 +240,7 @@ static int ssf_take(void *data)
 {
   scamper_source_tsps_t *ssf = (scamper_source_tsps_t *)data;
 
-  if(scamper_source_getcommandcount(ssf->source) < scamper_pps_get() &&
+  if(scamper_source_getcommandcount(ssf->source) < scamper_option_pps_get() &&
      ssf->done == 0)
     {
       scamper_fd_read_unpause(ssf->fd);
